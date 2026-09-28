@@ -19,18 +19,26 @@ import sys
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional
 
-try:
-    from config.settings import MODELS_DIR, ISOLATION_FOREST_PATH, LSTM_MODEL_PATH, AUTOENCODER_PATH
-    from config.settings import BASE_DIR
-except Exception:
-    # If imported outside repo root, fall back to environment variables
-    MODELS_DIR = os.getenv("MODELS_DIR", "models")
-    ISOLATION_FOREST_PATH = os.path.join(MODELS_DIR, "isolation_forest.pkl")
-    LSTM_MODEL_PATH = os.path.join(MODELS_DIR, "lstm_model.pt")
-    AUTOENCODER_PATH = os.path.join(MODELS_DIR, "autoencoder.pt")
-    BASE_DIR = os.getcwd()
+# Anchor everything to the repository root (parent of this file's directory),
+# never to the current working directory: the import of config.settings and
+# all default path resolution must behave identically no matter where the
+# checker is invoked from.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
-DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production"
+from config.settings import MODELS_DIR, ISOLATION_FOREST_PATH, LSTM_MODEL_PATH, AUTOENCODER_PATH
+from config.settings import BASE_DIR, SECRET_KEY as SETTINGS_SECRET_KEY
+
+# Values that must never be accepted as a production SECRET_KEY. This includes
+# the actual default from config/settings.py (not just a guessed placeholder).
+INSECURE_SECRET_VALUES = {
+    "default-secure-key",  # config/settings.py default
+    "dev-secret-key-change-in-production",
+    "changeme",
+    "secret",
+    "password",
+}
 
 CRITICAL_MODEL_FILES = [
     ISOLATION_FOREST_PATH,
@@ -121,16 +129,12 @@ def check_env_secret(env_path: Optional[str] = None) -> Tuple[bool, str]:
 
     # Fall back to runtime settings if not found in .env
     if not secret_value:
-        try:
-            from config.settings import SECRET_KEY
-            secret_value = SECRET_KEY
-        except Exception:
-            secret_value = None
+        secret_value = SETTINGS_SECRET_KEY or None
 
     if not secret_value:
         return (False, "SECRET_KEY not set; recommend setting a strong SECRET_KEY in .env or env vars.")
 
-    if secret_value == DEFAULT_SECRET_KEY or len(secret_value) < 20:
+    if secret_value in INSECURE_SECRET_VALUES or len(secret_value) < 32:
         return (False, f"Insecure SECRET_KEY detected (length {len(secret_value)}). Replace with a strong secret in .env.")
 
     return (True, "SECRET_KEY appears configured and sufficiently long.")

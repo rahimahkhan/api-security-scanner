@@ -57,7 +57,10 @@ class DeepLearningDetector:
             with open(vocab_path, "r", encoding="utf-8") as f:
                 vocab = json.load(f)
             model = PayloadLSTM(vocab_size=len(vocab))
-            model.load_state_dict(torch.load(lstm_path))
+            # weights_only=True: these are plain state_dict tensors; never
+            # execute pickle payloads from model files. map_location="cpu"
+            # keeps GPU-trained checkpoints loadable on CPU-only hosts.
+            model.load_state_dict(torch.load(lstm_path, map_location="cpu", weights_only=True))
             model.eval()
             return model
         except Exception as exc:
@@ -71,7 +74,7 @@ class DeepLearningDetector:
             return None
         try:
             model = FeatureAutoencoder(input_dim=17, bottleneck_dim=6)
-            model.load_state_dict(torch.load(ae_path))
+            model.load_state_dict(torch.load(ae_path, map_location="cpu", weights_only=True))
             model.eval()
             return model
         except Exception as exc:

@@ -111,7 +111,7 @@ def build_sarif_document(
             "driver": {
                 "name": "API Security & Anomaly Platform",
                 "version": tool_version,
-                "informationUri": "https://github.com/m-zohaibk/api-security-platform",
+                "informationUri": "https://github.com/rahimahkhan/api-security-scanner",
                 "rules": list(rules.values()),
             }
         },

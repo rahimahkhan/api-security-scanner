@@ -6,6 +6,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.logging_config import logger
+from core.http_client import build_client as _build_client, client_kwargs
+
 
 class RequestEngine:
     """
@@ -13,12 +15,21 @@ class RequestEngine:
     to specified API target endpoints and collects full request/response telemetry.
     """
 
-    def __init__(self, timeout: float = 30.0, headers: Optional[Dict[str, str]] = None):
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        headers: Optional[Dict[str, str]] = None,
+        trust_env: bool = True,
+    ):
         self.timeout = timeout
+        self.trust_env = trust_env
         self.default_headers = headers or {
             "User-Agent": "APISecurityPlatform/1.0",
             "Accept": "application/json, text/html, */*"
         }
+
+    def _client_kwargs(self, follow_redirects: bool) -> Dict[str, Any]:
+        return client_kwargs(self.timeout, follow_redirects, self.trust_env)
 
     def send_request(
         self,
@@ -68,7 +79,7 @@ class RequestEngine:
         start_time = time.time()
 
         try:
-            with httpx.Client(timeout=self.timeout, follow_redirects=follow_redirects) as client:
+            with _build_client(httpx.Client, **self._client_kwargs(follow_redirects)) as client:
                 response = client.request(
                     method=method_upper,
                     url=url,
@@ -176,7 +187,7 @@ class RequestEngine:
         start_time = time.time()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=follow_redirects) as client:
+            async with _build_client(httpx.AsyncClient, **self._client_kwargs(follow_redirects)) as client:
                 response = await client.request(
                     method=method_upper,
                     url=url,

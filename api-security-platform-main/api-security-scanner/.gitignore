@@ -25,7 +25,12 @@ database/*.db
 *.db
 
 # Machine Learning & Deep Learning Model Weights
+models/*.pkl
+models/*.pt
+models/*.pth
 ml_artifacts/
+*.pkl
+*.pt
 
 # Raw and Processed Datasets
 datasets/raw/
@@ -34,6 +39,11 @@ datasets/self_generated/
 datasets/evaluation_results.json
 
 # Generated Export Reports
+reports/*.pdf
+reports/*.json
+reports/*.html
+reports/*.sarif
+scan_reports/
 
 # IDE / Editor Files
 .vscode/

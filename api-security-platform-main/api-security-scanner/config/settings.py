@@ -5,15 +5,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Core Directories & Safe Fallbacks
 MODELS_DIR = os.path.join(BASE_DIR, "models")
-REPORTS_DIR = os.path.join(BASE_DIR, "reports")
+# NOTE: scan outputs go here, NOT into the reports/ Python package directory.
+# Pointing REPORTS_DIR at the package dir would mix generated artifacts with
+# source code (and risk them being committed or packaged accidentally).
+REPORTS_DIR = os.path.join(BASE_DIR, "scan_reports")
 PAYLOADS_DIR = os.path.join(BASE_DIR, "payloads")
 DATASETS_DIR = str(BASE_DIR / "datasets")
 
 # Model File Paths
+# NOTE: Layer 3 (detection/deep_learning.py) loads these with torch.load() on a
+# state_dict, so they must be the .pt files written by training/train_lstm.py
+# and training/train_autoencoder.py (see models/model_manifest.json).
 ISOLATION_FOREST_PATH = os.path.join(MODELS_DIR, "isolation_forest.pkl")
 TABULAR_RANKER_PATH = os.path.join(MODELS_DIR, "tabular_ranker.pkl")
-LSTM_MODEL_PATH = os.path.join(MODELS_DIR, "lstm_model.h5")
-AUTOENCODER_PATH = os.path.join(MODELS_DIR, "autoencoder.pkl")
+LSTM_MODEL_PATH = os.path.join(MODELS_DIR, "lstm_model.pt")
+AUTOENCODER_PATH = os.path.join(MODELS_DIR, "autoencoder.pt")
 
 # Application & Scanner Limits
 MAX_ENDPOINTS = int(os.getenv("MAX_ENDPOINTS", 20))

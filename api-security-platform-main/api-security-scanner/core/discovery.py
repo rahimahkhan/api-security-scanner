@@ -11,6 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.logging_config import logger
+from core.http_client import build_client, client_kwargs
 
 class EndpointDiscovery:
     """
@@ -175,7 +176,7 @@ class EndpointDiscovery:
         import json
         import yaml
 
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+        with build_client(httpx.Client, **client_kwargs(self.timeout)) as client:
             for spec_path in self.OPENAPI_SPEC_PATHS:
                 target_url = f"{self.base_url}{spec_path}"
                 try:
@@ -235,7 +236,7 @@ class EndpointDiscovery:
         self.visited_urls.add(current_url)
 
         try:
-            with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+            with build_client(httpx.Client, **client_kwargs(self.timeout)) as client:
                 response = client.get(current_url)
 
                 # GraphQL commonly returns 400 JSON when no query is supplied; that still proves the endpoint exists.
@@ -308,7 +309,7 @@ class EndpointDiscovery:
             logger.error(f"Unexpected error crawling {current_url}: {exc}")
 
     def _probe_common_paths(self) -> None:
-        with httpx.Client(timeout=self.timeout, follow_redirects=True) as client:
+        with build_client(httpx.Client, **client_kwargs(self.timeout)) as client:
             for relative_path in self.COMMON_API_PATHS:
                 target_url = f"{self.base_url}{relative_path}"
                 if target_url not in self.visited_urls:
