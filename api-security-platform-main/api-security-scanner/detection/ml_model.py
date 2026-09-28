@@ -7,6 +7,10 @@ import joblib
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from detection.numpy_compat import ensure_numpy2_pickle_compat  # noqa: E402  (applies NumPy 2.x pickle shim)
+
+ensure_numpy2_pickle_compat()
+
 from config.logging_config import logger
 from config.settings import ISOLATION_FOREST_PATH, TABULAR_RANKER_PATH
 
