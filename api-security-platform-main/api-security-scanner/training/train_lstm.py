@@ -66,11 +66,57 @@ def encode_text(text: str, vocab: Dict[str, int]) -> List[int]:
 
 # --- Training Script ---
 
+def load_csic_texts(csv_path: Path, max_per_class: int = 30000) -> Tuple[List[str], List[int]]:
+    """Load (payload_text, label) pairs from the raw CSIC 2010 CSV.
+
+    Prefers the ``content`` column, falling back to the URL query string.
+    Returns balanced-ish samples capped at ``max_per_class`` per class.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(csv_path, usecols=lambda c: c in {"content", "URL", "classification"},
+                     dtype=str, keep_default_na=False)
+    texts: List[str] = []
+    labels: List[int] = []
+    counts = {0: 0, 1: 0}
+    for _, row in df.iterrows():
+        try:
+            label = int(float(row.get("classification", "0") or "0"))
+        except ValueError:
+            continue
+        if label not in (0, 1) or counts[label] >= max_per_class:
+            continue
+        content = (row.get("content") or "").strip()
+        if not content:
+            url = row.get("URL") or ""
+            content = url.split("?", 1)[1].split(" HTTP")[0] if "?" in url else ""
+        content = content.strip()
+        if not content:
+            continue
+        texts.append(content[:500])
+        labels.append(label)
+        counts[label] += 1
+    logger.info(f"Loaded {len(texts)} CSIC texts (normal={counts[0]}, attack={counts[1]})")
+    return texts, labels
+
+
 def train_lstm_model():
     logger.info("Starting Layer 3 LSTM model training...")
     os.makedirs(MODELS_DIR, exist_ok=True)
     payloads_dir = Path(PAYLOADS_DIR)
 
+    texts: List[str] = []
+    labels: List[int] = []
+
+    # Primary: CSIC 2010 request payloads (tens of thousands of real samples).
+    csic_csv = Path(__file__).resolve().parent.parent / "datasets" / "raw" / "csic_2010" / "csic_database.csv"
+    if csic_csv.exists():
+        try:
+            texts, labels = load_csic_texts(csic_csv)
+        except Exception as exc:
+            logger.warning(f"Could not load CSIC texts ({exc}); falling back to payload files.")
+
+    # Augment with hand-written payload files (attack samples).
     malicious_texts = []
     for file_name in ["sqli.txt", "xss.txt", "cmd_injection.txt", "bola.txt", "auth.txt"]:
         fpath = payloads_dir / file_name
@@ -105,8 +151,14 @@ def train_lstm_model():
     ]
     malicious_texts.extend(additional_malicious)
 
-    # Benign text samples
-    benign_base = [
+    if texts and labels:
+        # CSIC path: merge hand-written attacks in as extra positives.
+        all_texts = texts + malicious_texts
+        all_labels = labels + [1] * len(malicious_texts)
+    else:
+        # Legacy fallback: tiny hand-written lists only.
+        # Benign text samples
+        benign_base = [
         "user_login_request", "page=1&sort=asc", "id=10&category=books",
         "search_query=python", "action=view_profile", "status=active",
         "format=json&version=1.0", "limit=20&offset=0", "filter=recent",
@@ -118,14 +170,15 @@ def train_lstm_model():
         "token=abc123&action=view",
         "filter=active&type=user"
     ]
-    benign_texts = (benign_base * (len(malicious_texts) // len(benign_base) + 1))[:len(malicious_texts)]
+        benign_texts = (benign_base * (len(malicious_texts) // len(benign_base) + 1))[:len(malicious_texts)]
 
     if not malicious_texts:
         logger.warning("No payload files found. Using fallback payload samples for training.")
         malicious_texts = ["' OR 1=1 --", "<script>alert(1)</script>", "; cat /etc/passwd"] * 50
 
-    all_texts = list(malicious_texts) + list(benign_texts)
-    all_labels = [1] * len(malicious_texts) + [0] * len(benign_texts)
+    if not (texts and labels):
+        all_texts = list(malicious_texts) + list(benign_texts)
+        all_labels = [1] * len(malicious_texts) + [0] * len(benign_texts)
 
     # Stratified train/test split (80/20)
     X_train_texts, X_test_texts, y_train, y_test = train_test_split(

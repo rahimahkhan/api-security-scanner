@@ -195,10 +195,15 @@ class CSICModelBundle:
                 pass
 
         # 4. Character LSTM Payload Probability
+        # Feed the model exactly what it was trained on: the request content,
+        # falling back to the URL query string (never the full URL). Requests
+        # with neither carry no payload signal -> 0.0, not a false positive.
         lstm_prob = 0.0
         payload_text = str(req_data.get("content") if req_data.get("content") is not None else (req_data.get("payload") or ""))
-        if not payload_text and req_data.get("URL"):
-            payload_text = str(req_data["URL"])
+        if not payload_text.strip():
+            url_txt = str(req_data.get("URL") or req_data.get("url") or "")
+            payload_text = url_txt.split("?", 1)[1].split(" HTTP")[0] if "?" in url_txt else ""
+        payload_text = payload_text.strip()[:500]
         if self.lstm is not None and payload_text:
             try:
                 encoded = encode_text_vocab(payload_text, self.char_vocab)

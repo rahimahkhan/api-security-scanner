@@ -61,20 +61,24 @@ class FeatureAutoencoder(nn.Module):
 def train_autoencoder():
     logger.info("Starting Layer 3 Autoencoder reconstruction model training...")
     processed_dir = Path(DATASETS_DIR) / "processed"
-    train_path = processed_dir / "train.csv"
+    # NOTE: train on RAW features from features.csv, not the pre-scaled train.csv.
+    # Fitting the scaler on already-standardized data yields a near-identity
+    # scaler, so inference-time raw features would enter the model unscaled and
+    # reconstruction error would explode. See models/metrics history.
+    raw_features_path = processed_dir / "features.csv"
 
-    if not train_path.exists():
-        logger.error(f"Train dataset file not found at {train_path}. Run training/prepare_dataset.py first.")
-        print(f"[!] Missing train.csv dataset in {processed_dir}")
+    if not raw_features_path.exists():
+        logger.error(f"Raw features file not found at {raw_features_path}. Run training/prepare_dataset.py first.")
+        print(f"[!] Missing features.csv dataset in {processed_dir}")
         return
 
-    df = pd.read_csv(train_path).fillna(0.0)
-    
+    df = pd.read_csv(raw_features_path).fillna(0.0)
+
     # Filter normal traffic only (label == 0)
     normal_df = df[df["label"] == 0]
     X_normal = normal_df[FEATURE_COLUMNS].values
 
-    # Scale features
+    # Scale RAW features; this scaler is what inference applies to raw requests.
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_normal)
 

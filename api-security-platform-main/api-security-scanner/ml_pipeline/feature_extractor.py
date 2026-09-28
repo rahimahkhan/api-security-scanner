@@ -78,26 +78,54 @@ def extract_features_from_request(req_data: Dict[str, Any]) -> Dict[str, Any]:
     payload = str(req_data.get("content") if req_data.get("content") is not None else (req_data.get("payload") or ""))
     payload_length = len(payload)
     payload_entropy = calculate_shannon_entropy(payload)
-    special_char_count = count_special_characters(payload)
+    # Match training (prepare_dataset.py): special chars counted over payload + URL
+    # with the same explicit character set.
+    _TRAIN_SPECIAL = set("'\";<>(){}[]&|`!@#$%^*\\=+")
+    special_char_count = sum(1 for c in (payload + url_clean) if c in _TRAIN_SPECIAL)
 
-    # Header analysis
-    headers = req_data.get("request_headers") or {}
-    if not isinstance(headers, dict):
-        headers = {}
-    header_count = len(headers)
-    if "host" in req_data and req_data["host"]:
-        header_count += 1
-    if "cookie" in req_data and req_data["cookie"]:
-        header_count += 1
-    if "content-type" in req_data and req_data["content-type"]:
-        header_count += 1
-    header_count = max(header_count, 1)
+    # Header analysis. For CSIC-2010-format dicts, replicate the training count:
+    # number of non-empty values among the 10 recorded header columns.
+    # For scanner-format dicts, count the request_headers mapping instead.
+    _CSIC_HEADER_COLS = (
+        "User-Agent", "Pragma", "Cache-Control", "Accept", "Accept-encoding",
+        "Accept-charset", "language", "cookie", "content-type", "connection",
+    )
+    if any(col in req_data for col in _CSIC_HEADER_COLS):
+        header_count = sum(
+            1 for col in _CSIC_HEADER_COLS
+            if str(req_data.get(col, "")).strip() not in ("", "nan")
+        )
+    else:
+        headers = req_data.get("request_headers") or {}
+        if not isinstance(headers, dict):
+            headers = {}
+        header_count = len(headers)
+        if "host" in req_data and req_data["host"]:
+            header_count += 1
+        if "cookie" in req_data and req_data["cookie"]:
+            header_count += 1
+        if "content-type" in req_data and req_data["content-type"]:
+            header_count += 1
+        header_count = max(header_count, 1)
 
-    # Auth header check
+    # Auth header check (match training: any auth material or a session cookie)
     auth_header_present = 0
     cookie_str = str(req_data.get("cookie") or "").lower()
     if "session" in cookie_str or "auth" in cookie_str or "token" in cookie_str or "jwt" in cookie_str:
         auth_header_present = 1
+    elif cookie_str.strip():
+        # Training marks any present cookie as auth material.
+        auth_header_present = 1
+    headers = req_data.get("request_headers") or {}
+    if isinstance(headers, dict):
+        for h, hv in headers.items():
+            h_l = str(h).lower()
+            if h_l in ["authorization", "x-api-key", "x-access-token"]:
+                auth_header_present = 1
+                break
+            if isinstance(hv, str) and hv.strip().lower().startswith("bearer "):
+                auth_header_present = 1
+                break
     for h, hv in headers.items():
         h_l = str(h).lower()
         if h_l in ["authorization", "x-api-key", "x-access-token"]:
@@ -107,9 +135,12 @@ def extract_features_from_request(req_data: Dict[str, Any]) -> Dict[str, Any]:
             auth_header_present = 1
             break
 
-    # Request-only CSIC dataset records have no response telemetry
-    status_code = int(req_data.get("status_code", 0))
-    response_size = int(req_data.get("response_size", 0))
+    # Request-only CSIC dataset records have no response telemetry.
+    # prepare_dataset.py trains with status_code=200 and response_size=min(payload_len*2, 5000),
+    # so the defaults here must match the training assumption; otherwise the
+    # standardized features explode (e.g. status_code 0 -> z-score -200).
+    status_code = int(req_data.get("status_code") or 200)
+    response_size = int(req_data.get("response_size") or min(payload_length * 2, 5000))
 
     risk_keywords = [
         "select", "union", "insert", "drop",

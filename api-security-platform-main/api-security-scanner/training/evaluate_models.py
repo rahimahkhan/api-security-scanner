@@ -64,6 +64,18 @@ class PlatformEvaluator:
             test_df = pd.read_csv(self.test_csv_path).fillna(0.0)
             y_true = test_df["label"].values
 
+            # test.csv stores STANDARDIZED features, but the production detectors
+            # (MLAnomalyDetector, DeepLearningDetector) apply their own scalers to
+            # RAW features. Feeding scaled values in would double-scale them and
+            # invalidate the measurement. Inverse-transform back to raw first.
+            feature_cols = [c for c in self.ml_detector.FEATURE_KEYS if c in test_df.columns]
+            try:
+                import joblib
+                _feat_scaler = joblib.load(Path(BASE_DIR) / "models" / "feature_scaler.pkl")
+                test_df[feature_cols] = _feat_scaler.inverse_transform(test_df[feature_cols].values)
+            except Exception as exc:
+                logger.warning(f"Could not inverse-transform test features ({exc}); metrics may be skewed.")
+
             y_l1, y_l2, y_l3, y_comb = [], [], [], []
 
             for _, row in test_df.iterrows():

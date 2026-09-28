@@ -1,0 +1,12 @@
+{
+  "samples": 61065,
+  "train_samples": 48852,
+  "test_samples": 12213,
+  "positive_rate": 0.41046425939572584,
+  "precision": 0.7049978822532825,
+  "recall": 0.6640734091362458,
+  "f1": 0.6839239856189009,
+  "average_precision": 0.7938069891081945,
+  "brier_score": 0.16321061482528038,
+  "evaluation_warning": "Random row split; use target/endpoint/payload-family grouped splits for production claims."
+}
