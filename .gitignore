@@ -10,9 +10,6 @@ env/
 *.db
 *.sqlite3
 *.log
-*.pkl
-*.pt
-*.pth
 
 # IDE
 .vscode/

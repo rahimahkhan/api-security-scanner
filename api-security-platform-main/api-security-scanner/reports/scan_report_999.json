@@ -1,0 +1,25 @@
+{
+  "platform": "API Security & Anomaly Platform",
+  "generated_at": "2026-09-18T08:21:43.611855Z",
+  "session_summary": {
+    "session_id": 999,
+    "target_url": "http://example-target.org",
+    "scan_start_time": "None",
+    "overall_risk_score": 55.5,
+    "overall_severity": "Medium",
+    "total_endpoints_found": 0,
+    "total_vulnerabilities_found": 0
+  },
+  "discovered_endpoints": [
+    {
+      "url": "http://example-target.org/api",
+      "method": "GET"
+    }
+  ],
+  "findings_detail": [
+    {
+      "attack_type": "Security_Misconfiguration",
+      "risk_score": 55.5
+    }
+  ]
+}

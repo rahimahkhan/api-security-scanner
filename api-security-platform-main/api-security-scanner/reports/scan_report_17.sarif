@@ -1,0 +1,1255 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "API Security & Anomaly Platform",
+          "version": "0.1.0",
+          "informationUri": "https://github.com/m-zohaibk/api-security-platform",
+          "rules": [
+            {
+              "id": "api-security/sql-injection",
+              "name": "SQL_Injection",
+              "shortDescription": {
+                "text": "SQL Injection"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "SQL_Injection"
+              }
+            },
+            {
+              "id": "api-security/xss",
+              "name": "XSS",
+              "shortDescription": {
+                "text": "XSS"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "XSS"
+              }
+            },
+            {
+              "id": "api-security/command-injection",
+              "name": "Command_Injection",
+              "shortDescription": {
+                "text": "Command Injection"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "Command_Injection"
+              }
+            },
+            {
+              "id": "api-security/security-misconfiguration",
+              "name": "Security_Misconfiguration",
+              "shortDescription": {
+                "text": "Security Misconfiguration"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "Security_Misconfiguration"
+              }
+            },
+            {
+              "id": "api-security/none",
+              "name": "None",
+              "shortDescription": {
+                "text": "None"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "None"
+              }
+            },
+            {
+              "id": "api-security/verbose-error-exposure",
+              "name": "Verbose_Error_Exposure",
+              "shortDescription": {
+                "text": "Verbose Error Exposure"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "Verbose_Error_Exposure"
+              }
+            },
+            {
+              "id": "api-security/sensitive-data-exposure",
+              "name": "Sensitive_Data_Exposure",
+              "shortDescription": {
+                "text": "Sensitive Data Exposure"
+              },
+              "helpUri": "https://owasp.org/API-Security/",
+              "properties": {
+                "category": "Sensitive_Data_Exposure"
+              }
+            }
+          ]
+        }
+      },
+      "automationDetails": {
+        "id": "api-security/session-17"
+      },
+      "invocations": [
+        {
+          "executionSuccessful": true,
+          "properties": {
+            "target_url": "http://127.0.0.1:5000",
+            "overall_risk_score": 65.09,
+            "overall_severity": "HIGH",
+            "total_endpoints_found": 16,
+            "total_vulnerabilities_found": 2
+          }
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/ Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "6fefbc6547b0509a551c66f52dcc7e11"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 62.22,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 0.9255490303039551,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/ Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "d046b5324b0cc12f55ca5a1f4e80d25e"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.92,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 0.9299206733703613,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/ Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "667bbcec8a8b39ff899be64e1a831933"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 59.14,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 0.9191339015960693,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000/ Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "0f623400b2e49e7ccb43f25586f549bf"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 31.91,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 0.9100868701934814,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/books/v1 Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "6e9eebc3dd2f0e063cd9240e59c52690"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 61.96,
+            "response_status": 200,
+            "response_size": 230,
+            "response_time": 1.2929613590240479,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/books/v1 Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "49c7b6319b29c68378c28fc40f43fcd5"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.03,
+            "response_status": 200,
+            "response_size": 230,
+            "response_time": 1.2950706481933594,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/books/v1 Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "100d5f9ac66ca06399150af78adf9af9"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 58.5,
+            "response_status": 200,
+            "response_size": 230,
+            "response_time": 0.7830910682678223,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000/books/v1 Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "a4d4d87ee3eeaaec0e7563c40a33aa31"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 31.66,
+            "response_status": 200,
+            "response_size": 230,
+            "response_time": 1.2764818668365479,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/books/v1/admin Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/admin",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "ee92ebf6c0708ed5668664c1f8e09d12"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 65.09,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8103094100952148,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/books/v1/admin Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/admin",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "00fdd63bff54cd7d25746265ef73e2ec"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.4,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8059258460998535,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/books/v1/admin Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/admin",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "cadefac2363c124b0009c6f5be1e27e5"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.4,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8337972164154053,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/books/v1/admin Proof/evidence: No vulnerability proof criteria met Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/admin",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "1adc2ea551b981cdba6b07446ede8ed0"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 13.42,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.7899031639099121,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/createdb Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/createdb",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "e6f6bd97f47a522b2b604dadbfc23615"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 58.73,
+            "response_status": 200,
+            "response_size": 36,
+            "response_time": 0.8599669933319092,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/createdb Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/createdb",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "883e740fe11f842ddde4e4bd4f29bb70"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.72,
+            "response_status": 200,
+            "response_size": 36,
+            "response_time": 0.9691870212554932,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/createdb Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/createdb",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "02beee60efa63f69dfe0c0251e115cf0"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 56.08,
+            "response_status": 200,
+            "response_size": 36,
+            "response_time": 1.1921939849853516,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/verbose-error-exposure",
+          "level": "error",
+          "message": {
+            "text": "Confirmed Verbose_Error_Exposure on GET http://127.0.0.1:5000/createdb Proof/evidence: Verbose stack trace trace exposed in response: Traceback \\(most recent call last\\): Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/createdb",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "973ef2788f815ce27f9c9bfac1b60238"
+          },
+          "properties": {
+            "finding_status": "Confirmed",
+            "confirmed": true,
+            "severity": "HIGH",
+            "risk_score": 43.08,
+            "response_status": 500,
+            "response_size": 66772,
+            "response_time": 1.2253148555755615,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/me Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/me",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "8ba99da83cefbae4b598bb8589ab42f3"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.27,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8060107231140137,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/me Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/me",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "81916249982d83ac38e6965f48e0d7d5"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 59.25,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.7989907264709473,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/me Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/me",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "14d9b40ac4353745154712c57dee955e"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.4,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8316507339477539,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/me Proof/evidence: No vulnerability proof criteria met Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/me",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "333c11bf92b0ddc606620d331e3f1b6d"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 10.55,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8553392887115479,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000/users/v1 Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "1058f74b8f2b80eeb396272ba4132f34"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 31.66,
+            "response_status": 200,
+            "response_size": 236,
+            "response_time": 0.8115041255950928,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sensitive-data-exposure",
+          "level": "error",
+          "message": {
+            "text": "Confirmed Sensitive_Data_Exposure on GET http://127.0.0.1:5000/users/v1/_debug Proof/evidence: Sensitive credentials exposed in response: (?i)[\\\"']?password[\\\"']?\\s*[:=]\\s*[\\\"'][^\\\"']+[\\\"'] Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1/_debug",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "990bdabd140e0915b8037fb45bba0bd4"
+          },
+          "properties": {
+            "finding_status": "Confirmed",
+            "confirmed": true,
+            "severity": "HIGH",
+            "risk_score": 50.43,
+            "response_status": 200,
+            "response_size": 382,
+            "response_time": 0.7099320888519287,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000/users/v1/admin Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1/admin",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "360d8fad7806123b69e989d604bb1be9"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 35.62,
+            "response_status": 200,
+            "response_size": 48,
+            "response_time": 0.7513742446899414,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/users/v1/admin/email Proof/evidence: HTTP 405 WAF / Edge Block - Request blocked or endpoint non-existent Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1/admin/email",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "f948812d29bfb3ed32396a1c42f69a83"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 13.31,
+            "response_status": 405,
+            "response_size": 142,
+            "response_time": 0.7249414920806885,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/users/v1/admin/password Proof/evidence: HTTP 405 WAF / Edge Block - Request blocked or endpoint non-existent Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1/admin/password",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "42389ba2c091d638ee11845f243b980b"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 13.31,
+            "response_status": 405,
+            "response_size": 142,
+            "response_time": 0.7635738849639893,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000 Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "ad9d7598f82d4387c7754e260d4d3611"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 62.22,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 1.089888572692871,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000 Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "c766c8ecbc8804de01652f226ae8a4ea"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.92,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 1.0776417255401611,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000 Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "a87137718cf4453723968cd4e3e87de1"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 59.14,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 1.0451250076293945,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000 Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "09ef77f216224d782b979e96c60ea1ed"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 31.91,
+            "response_status": 200,
+            "response_size": 271,
+            "response_time": 1.0627245903015137,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/security-misconfiguration",
+          "level": "warning",
+          "message": {
+            "text": "Suspected Security_Misconfiguration on GET http://127.0.0.1:5000/users/v1/name1 Proof/evidence: Missing security headers: Content-Security-Policy, X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security Recommendation: Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/users/v1/name1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "ded9c46830135d5f71c19ffa39c962b5"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "MEDIUM",
+            "risk_score": 29.55,
+            "response_status": 200,
+            "response_size": 48,
+            "response_time": 0.7035279273986816,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/books/v1/1 Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "4ff147eed30e346369199c40b313fb2d"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.27,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.7941973209381104,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/books/v1/1 Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "a1ea38c5bf7d8c6e132be8a6202fe06e"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 58.09,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8470249176025391,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/books/v1/1 Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "8cd3b628395c1eaa4fd337670b2406f8"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 56.67,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.7707555294036865,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/books/v1/1 Proof/evidence: No vulnerability proof criteria met Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "7346e61bf9140ae3ca1516bb445f821b"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 10.48,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8420464992523193,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected SQL_Injection on GET http://127.0.0.1:5000/books/v1/book1 Proof/evidence: SQL parameter payload caused a differential response without database-error or timing proof: status_changed=False, size_delta=0, body_difference_ratio=1.0000 Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/book1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "b48b94d3dbca18026b613b18d57a05e0"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 60.17,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8140342235565186,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/xss",
+          "level": "error",
+          "message": {
+            "text": "Suspected XSS on GET http://127.0.0.1:5000/books/v1/book1 Proof/evidence: Payload syntax matched but missing verbatim HTML/XML unescaped reflection Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/book1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "8e1e53822d338b76160f0551d0f09f2b"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.4,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.868119478225708,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/command-injection",
+          "level": "error",
+          "message": {
+            "text": "Suspected Command_Injection on GET http://127.0.0.1:5000/books/v1/book1 Proof/evidence: Command payload syntax matched without shell output or execution delay Recommendation: Significant anomaly or signature match detected. Review input validation and database query parameterization."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/book1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "d0a23dc45e2616bb683d3322f77fa98c"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "HIGH",
+            "risk_score": 57.17,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8995082378387451,
+            "request_payload": ""
+          }
+        },
+        {
+          "ruleId": "api-security/none",
+          "level": "note",
+          "message": {
+            "text": "Suspected None on GET http://127.0.0.1:5000/books/v1/book1 Proof/evidence: No vulnerability proof criteria met Recommendation: Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "GET http://127.0.0.1:5000/books/v1/book1",
+                  "kind": "endpoint"
+                }
+              ]
+            }
+          ],
+          "partialFingerprints": {
+            "apiSecurityIdentity": "759577140e3d2ec61b93f97786415398"
+          },
+          "properties": {
+            "finding_status": "Suspected",
+            "confirmed": false,
+            "severity": "LOW",
+            "risk_score": 10.48,
+            "response_status": 401,
+            "response_size": 119,
+            "response_time": 0.8457057476043701,
+            "request_payload": ""
+          }
+        }
+      ]
+    }
+  ],
+  "properties": {
+    "generated_at": "2026-09-17T13:52:19.806504+00:00",
+    "confirmed_results": 2
+  }
+}

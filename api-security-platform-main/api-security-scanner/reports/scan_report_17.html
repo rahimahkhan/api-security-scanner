@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>API Security Report — Session #17</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 2rem; }
+        .container { max-width: 1000px; margin: 0 auto; background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 2rem; }
+        h1 { color: #38bdf8; font-size: 1.8rem; margin-top: 0; }
+        h2 { color: #f8fafc; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; margin-top: 1.5rem; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .card { background-color: #0f172a; border: 1px solid #334155; padding: 1rem; border-radius: 6px; }
+        .score { font-size: 2rem; font-weight: bold; color: #38bdf8; }
+        .badge { padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.75rem; font-weight: bold; text-transform: uppercase; }
+        .badge.low { background-color: #166534; color: #4ade80; }
+        .badge.medium { background-color: #854d0e; color: #facc15; }
+        .badge.high { background-color: #991b1b; color: #f87171; }
+        .badge.critical { background-color: #7f1d1d; color: #fca5a5; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { padding: 0.75rem; border-bottom: 1px solid #334155; text-align: left; }
+        th { background-color: #0f172a; color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; }
+        code { background-color: #0f172a; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; color: #38bdf8; }
+        footer { margin-top: 2rem; font-size: 0.8rem; color: #64748b; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>API Security & Anomaly Inspection Report</h1>
+        <p>Target: <code>http://127.0.0.1:5000</code> | Generated: 2026-09-17 13:52 UTC</p>
+
+        <div class="summary-grid">
+            <div class="card">
+                <div>Overall Risk Score</div>
+                <div class="score">65.09 / 100</div>
+            </div>
+            <div class="card">
+                <div>Overall Severity</div>
+                <div style="margin-top:0.5rem;"><span class="badge high">HIGH</span></div>
+            </div>
+            <div class="card">
+                <div>Total Endpoints</div>
+                <div class="score">16</div>
+            </div>
+            <div class="card">
+                <div>Vulnerabilities</div>
+                <div class="score">2</div>
+            </div>
+        </div>
+
+        <h2>Inspection Findings</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Endpoint</th>
+                    <th>Attack Type</th>
+                    <th>Severity</th>
+                    <th>Risk Score</th>
+                    <th>Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+            <tr>
+                <td><code>http://127.0.0.1:5000/</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>62.22</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.92</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>59.14</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>31.91</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>61.96</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.03</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>58.5</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>31.66</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/admin</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>65.09</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/admin</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.4</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/admin</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.4</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/admin</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>13.42</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/createdb</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>58.73</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/createdb</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.72</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/createdb</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>56.08</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/createdb</code></td>
+                <td>Verbose_Error_Exposure</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>43.08</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/me</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.27</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/me</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>59.25</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/me</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.4</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/me</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>10.55</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>31.66</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1/_debug</code></td>
+                <td>Sensitive_Data_Exposure</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>50.43</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1/admin</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>35.62</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1/admin/email</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>13.31</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1/admin/password</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>13.31</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>62.22</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.92</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>59.14</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>31.91</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/users/v1/name1</code></td>
+                <td>Security_Misconfiguration</td>
+                <td><span class="badge medium">MEDIUM</span></td>
+                <td><strong>29.55</strong></td>
+                <td>Elevated structural anomaly or header misconfiguration detected. Audit API endpoint input parameters.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/1</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.27</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/1</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>58.09</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/1</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>56.67</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/1</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>10.48</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/book1</code></td>
+                <td>SQL_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>60.17</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/book1</code></td>
+                <td>XSS</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.4</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/book1</code></td>
+                <td>Command_Injection</td>
+                <td><span class="badge high">HIGH</span></td>
+                <td><strong>57.17</strong></td>
+                <td>Significant anomaly or signature match detected. Review input validation and database query parameterization.</td>
+            </tr>
+            
+            <tr>
+                <td><code>http://127.0.0.1:5000/books/v1/book1</code></td>
+                <td>None</td>
+                <td><span class="badge low">LOW</span></td>
+                <td><strong>10.48</strong></td>
+                <td>Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.</td>
+            </tr>
+            
+            </tbody>
+        </table>
+
+        <h2>Detection Layer Methodology</h2>
+        <ul>
+            <li><strong>Layer 1 (Signature Rules):</strong> Deterministic regex rules for missing security headers, stack traces, and structural attack indicators.</li>
+            <li><strong>Layer 2 (ML Anomaly Isolation Forest):</strong> Unsupervised anomaly scoring trained on the defined HTTP telemetry feature schema (17 features).</li>
+            <li><strong>Layer 3 (Deep Learning):</strong> Character-level LSTM payload classification + PyTorch Autoencoder reconstruction error analysis.</li>
+        </ul>
+
+        <footer>Generated by API Security Platform &copy; 2026</footer>
+    </div>
+</body>
+</html>
