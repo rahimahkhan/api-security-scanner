@@ -1,20 +1,24 @@
 import os
 import sys
 import secrets
+import threading
 from functools import wraps
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from config.logging_config import logger
 from config.settings import (
     DASHBOARD_AUTH_ENABLED,
     DASHBOARD_ADMIN_USER,
     DASHBOARD_ADMIN_PASSWORD,
     CSRF_ENABLED,
+    APP_VERSION,
 )
 from sqlalchemy.orm import joinedload
 from database.db import (
     save_scan_session, save_endpoint, save_finding, complete_scan_session,
+    fail_scan_session,
     get_all_sessions, get_session_findings, get_finding_by_id, delete_session, SessionLocal
 )
 from database.models import ScanSession, Finding, Endpoint
@@ -25,9 +29,39 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from main import run_pipeline
+from main import run_pipeline, validate_target_url
 
 dashboard_bp = Blueprint("dashboard", __name__)
+
+
+def _scan_worker(target_url: str, session_id: int) -> None:
+    """Background thread entry point: run the pipeline against the pre-created session."""
+    try:
+        run_pipeline(target_url, return_session_id=True, session_id=session_id)
+    except Exception as exc:  # never let the thread die silently
+        logger.error(f"Background scan {session_id} crashed: {exc}")
+        try:
+            fail_scan_session(session_id, str(exc))
+        except Exception:
+            pass
+
+
+def _launch_background_scan(target_url: str) -> int:
+    """Create the session row immediately and run the scan in a daemon thread.
+
+    Returns the session id at once so HTTP clients never block on (or time
+    out during) a long scan.
+    """
+    session_obj = save_scan_session(target_url=target_url, status="running")
+    thread = threading.Thread(
+        target=_scan_worker,
+        args=(target_url, session_obj.id),
+        daemon=True,
+        name=f"scan-{session_obj.id}",
+    )
+    thread.start()
+    logger.info(f"Launched background scan {session_obj.id} for {target_url}")
+    return session_obj.id
 
 
 def get_or_create_csrf_token() -> str:
@@ -62,6 +96,7 @@ def inject_globals():
         csrf_token=get_or_create_csrf_token,
         auth_enabled=is_auth_enabled(),
         is_authenticated=bool(session.get("authenticated")),
+        app_version=APP_VERSION,
     )
 
 
@@ -117,9 +152,12 @@ def start_scan():
     if not target_url:
         return redirect(url_for("dashboard.index"))
 
-    session_id = run_pipeline(target_url, return_session_id=True)
-    if not isinstance(session_id, int):
-        return "Scan failed", 500
+    valid, normalized_or_reason = validate_target_url(target_url)
+    if not valid:
+        return f"Invalid target URL: {normalized_or_reason}", 400
+
+    # Scans run in the background; the results page polls until completion.
+    session_id = _launch_background_scan(normalized_or_reason)
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 @dashboard_bp.route("/results/<int:session_id>")
@@ -307,6 +345,7 @@ def api_get_session(session_id):
                 "target_url": session_obj.target_url,
                 "scan_start_time": session_obj.scan_start_time.isoformat() if session_obj.scan_start_time else None,
                 "scan_end_time": session_obj.scan_end_time.isoformat() if session_obj.scan_end_time else None,
+                "scan_status": getattr(session_obj, "status", "complete"),
                 "overall_risk_score": session_obj.overall_risk_score,
                 "overall_severity": session_obj.overall_severity,
                 "total_endpoints_found": session_obj.total_endpoints_found,
@@ -334,22 +373,19 @@ def api_trigger_scan():
     if not target_url:
         return jsonify({"status": "error", "message": "target_url is required"}), 400
 
-    session_id = run_pipeline(target_url, return_session_id=True)
-    if not isinstance(session_id, int):
-        return jsonify({"status": "error", "message": "scan failed"}), 500
+    valid, normalized_or_reason = validate_target_url(target_url)
+    if not valid:
+        return jsonify({"status": "error", "message": f"Invalid target_url: {normalized_or_reason}"}), 400
 
-    db = SessionLocal()
-    try:
-        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
-        return jsonify({
-            "status": "success",
-            "session_id": session_id,
-            "target_url": target_url,
-            "overall_risk_score": session_obj.overall_risk_score if session_obj else None,
-            "overall_severity": session_obj.overall_severity if session_obj else None,
-            "total_vulnerabilities": session_obj.total_vulnerabilities_found if session_obj else None,
-            "results_url": url_for("dashboard.results", session_id=session_id),
-            "sarif_url": url_for("dashboard.export_report", session_id=session_id, format="sarif"),
-        }), 200
-    finally:
-        db.close()
+    # Run in the background: return 202 immediately so long scans never hit
+    # HTTP timeouts. Poll GET /api/sessions/<id> (scan_status) for completion.
+    session_id = _launch_background_scan(normalized_or_reason)
+    return jsonify({
+        "status": "accepted",
+        "message": "Scan started in background; poll the session until scan_status is complete.",
+        "session_id": session_id,
+        "target_url": normalized_or_reason,
+        "status_url": url_for("dashboard.api_get_session", session_id=session_id),
+        "results_url": url_for("dashboard.results", session_id=session_id),
+        "sarif_url": url_for("dashboard.export_report", session_id=session_id, format="sarif"),
+    }), 202

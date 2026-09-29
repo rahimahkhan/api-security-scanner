@@ -16,6 +16,9 @@ class ScanSession(Base):
     total_vulnerabilities_found = Column(Integer, default=0)
     overall_risk_score = Column(Float, default=0.0)
     overall_severity = Column(String(20), default="Low")
+    # Lifecycle: "running" -> "complete" | "failed". Web scans run in a
+    # background thread so long targets don't hit HTTP timeouts.
+    status = Column(String(20), default="running")
 
     endpoints = relationship("Endpoint", back_populates="session", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="session", cascade="all, delete-orphan")

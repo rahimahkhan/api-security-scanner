@@ -556,3 +556,16 @@ footer {
     font-size: 0.85rem;
     font-weight: 500;
 }
+
+/* Scan progress / failure banners (background scan polling) */
+.scan-progress-banner { border-left: 4px solid #38bdf8; margin-bottom: 1.25rem; }
+.scan-progress-banner h3 { margin: 0 0 0.4rem; color: #38bdf8; }
+.scan-failed-banner { border-left: 4px solid #f87171; margin-bottom: 1.25rem; }
+.scan-failed-banner h3 { margin: 0 0 0.4rem; color: #f87171; }
+.progress-bar { height: 8px; border-radius: 4px; background: #1e293b; overflow: hidden; margin-top: 0.75rem; }
+.progress-fill { height: 100%; width: 40%; border-radius: 4px; background: #38bdf8; animation: scan-progress-slide 1.6s ease-in-out infinite; }
+@keyframes scan-progress-slide {
+    0% { margin-left: -40%; }
+    100% { margin-left: 100%; }
+}
+.app-version { color: #64748b; font-size: 0.8rem; }

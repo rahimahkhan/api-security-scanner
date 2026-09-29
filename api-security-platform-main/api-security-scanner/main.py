@@ -1,7 +1,9 @@
 import argparse
 import json
+import re
 import sys
 import os
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
 
@@ -15,7 +17,7 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session
+from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session
 from database.models import ScanSession, Endpoint, Finding, Report
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
@@ -156,7 +158,57 @@ def _safe_extract_auth_token(login_response: Dict[str, Any]) -> str:
     return ""
 
 
-def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False):
+_HOSTNAME_RE = re.compile(
+    r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
+    r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
+)
+_IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
+
+
+def validate_target_url(target_url: Any) -> "tuple[bool, str]":
+    """Validate a scan target. Returns (True, normalized_url) or (False, reason).
+
+    Rejects payload-looking junk (e.g. "<script>alert(1)</script>",
+    "; cat /etc/passwd") that previously created garbage scan sessions.
+    """
+    if not isinstance(target_url, str):
+        return False, "target URL must be a string"
+    candidate = target_url.strip()
+    if not candidate:
+        return False, "target URL is empty"
+    if len(candidate) > 2048:
+        return False, "target URL is too long"
+    if any(ch in candidate for ch in "<>\"' \t\r\n\\"):
+        return False, "target URL contains illegal characters"
+    try:
+        parsed = urllib.parse.urlparse(candidate)
+    except ValueError as exc:
+        return False, f"target URL could not be parsed: {exc}"
+    if parsed.scheme not in ("http", "https"):
+        return False, "target URL must start with http:// or https://"
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return False, "target URL must include a host name"
+    is_ipv6 = host.startswith("[") or ":" in host
+    if not (is_ipv6 or _IPV4_RE.match(host) or _HOSTNAME_RE.match(host)):
+        return False, "target URL host name looks invalid"
+    if _IPV4_RE.match(host) and not all(0 <= int(o) <= 255 for o in host.split(".")):
+        return False, "target URL IPv4 address is invalid"
+    return True, candidate
+
+
+def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None):
+    """Run the full scan pipeline.
+
+    session_id: when given (background web scans), reuse the already-created
+    scan session instead of creating a new one, and mark it failed if the
+    pipeline raises.
+    """
+    valid, normalized_or_reason = validate_target_url(target_url)
+    if not valid:
+        raise ValueError(f"Invalid target URL: {normalized_or_reason}")
+    target_url = normalized_or_reason
+
     print("\n" + "="*65)
     print("      API SECURITY & ANOMALY DETECTION PLATFORM")
     print("="*65)
@@ -174,6 +226,17 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
         before = len(discovered_endpoints)
         discovered_endpoints = [ep for ep in discovered_endpoints if _is_safe_read_only_endpoint(ep)]
         logger.info("Read-only safe mode retained %d of %d discovered endpoints", len(discovered_endpoints), before)
+
+    # Gate for the VAmPI-style identity/BOLA proof probes further below: they
+    # are written for /users/v1/* APIs, so only arm them when discovery
+    # actually surfaced those paths. Computed pre-budget so the endpoint
+    # cap cannot hide them.
+    vampi_identity_found = any(
+        "/users/v1/" in urllib.parse.urlparse((ep or {}).get("url", "")).path
+        for ep in (discovered_endpoints or [])
+    )
+    if not vampi_identity_found:
+        logger.info("Skipping VAmPI identity/BOLA probes: no /users/v1/* paths discovered")
 
     # Apply the configured safety/performance budget. MAX_ENDPOINTS was
     # previously defined but never enforced, allowing a crawl to expand into
@@ -194,134 +257,148 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
     dl_detector = DeepLearningDetector()
     risk_scorer = RiskScorer()
 
-    # Save Session
-    session_obj = save_scan_session(target_url=target_url, total_endpoints=len(discovered_endpoints))
+    # Save Session (or reuse the pre-created one for background web scans)
+    if session_id is not None:
+        db = SessionLocal()
+        try:
+            session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+            if session_obj is None:
+                raise ValueError(f"Scan session {session_id} not found")
+            session_obj.total_endpoints_found = len(discovered_endpoints)
+            db.commit()
+            db.refresh(session_obj)
+        finally:
+            db.close()
+    else:
+        session_obj = save_scan_session(target_url=target_url, total_endpoints=len(discovered_endpoints))
     vulnerability_count = 0
     total_scores = []
 
     try:
-        # --- BOLA setup: create two real, distinct identities to test cross-object access ---
-        attacker_creds = {"username": "attacker_qa", "password": "AttackerPass123!", "email": "attacker_qa@test.local"}
-        victim_creds = {"username": "victim_qa", "password": "VictimPass123!", "email": "victim_qa@test.local"}
+        # --- Identity/BOLA proof probes (VAmPI-style /users/v1/* only) ---
+        if vampi_identity_found:
+            # --- BOLA setup: create two real, distinct identities to test cross-object access ---
+            attacker_creds = {"username": "attacker_qa", "password": "AttackerPass123!", "email": "attacker_qa@test.local"}
+            victim_creds = {"username": "victim_qa", "password": "VictimPass123!", "email": "victim_qa@test.local"}
 
-        for creds in (attacker_creds, victim_creds):
+            for creds in (attacker_creds, victim_creds):
+                request_engine.send_request(
+                    "POST",
+                    target_url.rstrip("/") + "/users/v1/register",
+                    json_payload={"username": creds["username"], "password": creds["password"], "email": creds["email"]},
+                    custom_headers={"Content-Type": "application/json"}
+                )
+
+            mass_assign_creds = {
+                "username": "mass_assign_qc",
+                "password": "MassAssignPass123!",
+                "email": "mass_assign_qc@test.local",
+                "admin": True,
+            }
+            canary_creds = {
+                "username": "canary_delete_qc",
+                "password": "CanaryPass123!",
+                "email": "canary_delete_qc@test.local",
+            }
             request_engine.send_request(
                 "POST",
                 target_url.rstrip("/") + "/users/v1/register",
-                json_payload={"username": creds["username"], "password": creds["password"], "email": creds["email"]},
+                json_payload=mass_assign_creds,
                 custom_headers={"Content-Type": "application/json"}
             )
-
-        mass_assign_creds = {
-            "username": "mass_assign_qc",
-            "password": "MassAssignPass123!",
-            "email": "mass_assign_qc@test.local",
-            "admin": True,
-        }
-        canary_creds = {
-            "username": "canary_delete_qc",
-            "password": "CanaryPass123!",
-            "email": "canary_delete_qc@test.local",
-        }
-        request_engine.send_request(
-            "POST",
-            target_url.rstrip("/") + "/users/v1/register",
-            json_payload=mass_assign_creds,
-            custom_headers={"Content-Type": "application/json"}
-        )
-        request_engine.send_request(
-            "POST",
-            target_url.rstrip("/") + "/users/v1/register",
-            json_payload=canary_creds,
-            custom_headers={"Content-Type": "application/json"}
-        )
-        def run_direct_probe(test_type, method, path_suffix, headers, json_payload, marker_key):
-            nonlocal vulnerability_count
-
-            url = target_url.rstrip("/") + path_suffix
-            req_data = request_engine.send_request(
-                method,
-                url,
-                json_payload=json_payload,
-                custom_headers=headers
+            request_engine.send_request(
+                "POST",
+                target_url.rstrip("/") + "/users/v1/register",
+                json_payload=canary_creds,
+                custom_headers={"Content-Type": "application/json"}
             )
-            req_data["attack_category"] = test_type
-            req_data[marker_key] = True
-            req_data["payload_had_effect"] = True
-            payload_str = json.dumps(json_payload) if json_payload else ""
-            features = response_parser.extract_features(req_data)
-            sig_res = signature_detector.analyze(req_data, baseline_telemetry={})
-            ml_res = ml_detector.predict(features)
-            dl_res = dl_detector.analyze(payload_str, features)
-            risk_summary = risk_scorer.calculate_risk(
-                signature_result=sig_res,
-                ml_result=ml_res,
-                dl_result=dl_res,
-                endpoint_url=url,
-                http_method=method,
-                payload_had_effect=True,
-                telemetry_data=req_data
-            )
-            score = risk_summary["total_score"]
-            total_scores.append(score)
-            confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
-            if confirmed:
-                vulnerability_count += 1
+            def run_direct_probe(test_type, method, path_suffix, headers, json_payload, marker_key):
+                nonlocal vulnerability_count
 
-            ep_obj = save_endpoint(session_id=session_obj.id, url=url, method=method)
-            if score > 0 or sig_res.get("matched"):
-                save_finding(
-                    session_id=session_obj.id,
-                    endpoint_id=ep_obj.id,
-                    attack_type=sig_res.get("attack_type", "None"),
-                    severity=risk_summary["severity"],
-                    risk_score=score,
-                    finding_status=risk_summary.get("finding_status", "Informational"),
-                    signature_triggered=sig_res.get("proof_of_concept") or sig_res.get("pattern_matched", ""),
-                    ml_score=ml_res.get("points", 0.0),
-                    lstm_score=dl_res.get("lstm_points", 0.0),
-                    autoencoder_score=dl_res.get("autoencoder_points", 0.0),
-                    recommendation=risk_summary.get("recommendation", ""),
-                    request_payload=json.dumps(json_payload) if json_payload is not None else "",
-                    response_status=req_data.get("status_code", 200),
-                    response_size=req_data.get("response_size", 0),
-                    response_time=req_data.get("response_time", 0.0)
+                url = target_url.rstrip("/") + path_suffix
+                req_data = request_engine.send_request(
+                    method,
+                    url,
+                    json_payload=json_payload,
+                    custom_headers=headers
                 )
-            print(f"  [{test_type}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{risk_summary['severity']}]")
-            return sig_res
+                req_data["attack_category"] = test_type
+                req_data[marker_key] = True
+                req_data["payload_had_effect"] = True
+                payload_str = json.dumps(json_payload) if json_payload else ""
+                features = response_parser.extract_features(req_data)
+                sig_res = signature_detector.analyze(req_data, baseline_telemetry={})
+                ml_res = ml_detector.predict(features)
+                dl_res = dl_detector.analyze(payload_str, features)
+                risk_summary = risk_scorer.calculate_risk(
+                    signature_result=sig_res,
+                    ml_result=ml_res,
+                    dl_result=dl_res,
+                    endpoint_url=url,
+                    http_method=method,
+                    payload_had_effect=True,
+                    telemetry_data=req_data
+                )
+                score = risk_summary["total_score"]
+                total_scores.append(score)
+                confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
+                if confirmed:
+                    vulnerability_count += 1
 
-        # --- Direct, one-shot proof probes: refresh tokens immediately before use. ---
-        attacker_login = request_engine.send_request(
-            "POST",
-            target_url.rstrip("/") + "/users/v1/login",
-            json_payload={"username": attacker_creds["username"], "password": attacker_creds["password"]},
-            custom_headers={"Content-Type": "application/json"}
-        )
-        attacker_token = _safe_extract_auth_token(attacker_login)
-        run_direct_probe(
-            "BOLA_IDOR",
-            "PUT",
-            f"/users/v1/{victim_creds['username']}/password",
-            {"Authorization": f"Bearer {attacker_token}", "Content-Type": "application/json"},
-            {"password": "hijacked_by_attacker_qa"},
-            "cross_identity_probe"
-        )
+                ep_obj = save_endpoint(session_id=session_obj.id, url=url, method=method)
+                if score > 0 or sig_res.get("matched"):
+                    save_finding(
+                        session_id=session_obj.id,
+                        endpoint_id=ep_obj.id,
+                        attack_type=sig_res.get("attack_type", "None"),
+                        severity=risk_summary["severity"],
+                        risk_score=score,
+                        finding_status=risk_summary.get("finding_status", "Informational"),
+                        signature_triggered=sig_res.get("proof_of_concept") or sig_res.get("pattern_matched", ""),
+                        ml_score=ml_res.get("points", 0.0),
+                        lstm_score=dl_res.get("lstm_points", 0.0),
+                        autoencoder_score=dl_res.get("autoencoder_points", 0.0),
+                        recommendation=risk_summary.get("recommendation", ""),
+                        request_payload=json.dumps(json_payload) if json_payload is not None else "",
+                        response_status=req_data.get("status_code", 200),
+                        response_size=req_data.get("response_size", 0),
+                        response_time=req_data.get("response_time", 0.0)
+                    )
+                print(f"  [{test_type}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{risk_summary['severity']}]")
+                return sig_res
 
-        mass_login = request_engine.send_request(
-            "POST",
-            target_url.rstrip("/") + "/users/v1/login",
-            json_payload={"username": mass_assign_creds["username"], "password": mass_assign_creds["password"]},
-            custom_headers={"Content-Type": "application/json"}
-        )
-        mass_assign_token = _safe_extract_auth_token(mass_login)
-        run_direct_probe(
-            "Mass_Assignment",
-            "DELETE",
-            f"/users/v1/{canary_creds['username']}",
-            {"Authorization": f"Bearer {mass_assign_token}"},
-            None,
-            "mass_assignment_probe"
-        )
+            # --- Direct, one-shot proof probes: refresh tokens immediately before use. ---
+            attacker_login = request_engine.send_request(
+                "POST",
+                target_url.rstrip("/") + "/users/v1/login",
+                json_payload={"username": attacker_creds["username"], "password": attacker_creds["password"]},
+                custom_headers={"Content-Type": "application/json"}
+            )
+            attacker_token = _safe_extract_auth_token(attacker_login)
+            run_direct_probe(
+                "BOLA_IDOR",
+                "PUT",
+                f"/users/v1/{victim_creds['username']}/password",
+                {"Authorization": f"Bearer {attacker_token}", "Content-Type": "application/json"},
+                {"password": "hijacked_by_attacker_qa"},
+                "cross_identity_probe"
+            )
+
+            mass_login = request_engine.send_request(
+                "POST",
+                target_url.rstrip("/") + "/users/v1/login",
+                json_payload={"username": mass_assign_creds["username"], "password": mass_assign_creds["password"]},
+                custom_headers={"Content-Type": "application/json"}
+            )
+            mass_assign_token = _safe_extract_auth_token(mass_login)
+            run_direct_probe(
+                "Mass_Assignment",
+                "DELETE",
+                f"/users/v1/{canary_creds['username']}",
+                {"Authorization": f"Bearer {mass_assign_token}"},
+                None,
+                "mass_assignment_probe"
+            )
 
         active_test_queue = [
             {"type": "GraphQL_Introspection", "payload": "{ __schema { queryType { fields { name } } } }", "method": "POST", "json_payload": {"query": "{ __schema { queryType { fields { name } } } }",}, "headers": {"Content-Type": "application/json"}},
@@ -505,10 +582,15 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     )
 
         overall_score = round(max(total_scores), 2) if total_scores else 0.0
+        overall_severity = RiskScorer.classify_severity(overall_score)
+        # Session-level calibration: with zero confirmed vulnerabilities the
+        # session is never CRITICAL, mirroring the per-finding proof cap.
+        if vulnerability_count == 0 and overall_severity == "CRITICAL":
+            overall_severity = "HIGH"
         complete_scan_session(
             session_id=session_obj.id,
             overall_risk_score=overall_score,
-            overall_severity=RiskScorer.classify_severity(overall_score),
+            overall_severity=overall_severity,
             total_vulnerabilities=vulnerability_count
         )
 
@@ -556,6 +638,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
     except Exception as exc:
         logger.error(f"Error during scan pipeline execution: {exc}")
+        if session_id is not None:
+            try:
+                fail_scan_session(session_id, str(exc))
+            except Exception as mark_exc:
+                logger.error(f"Could not mark scan session {session_id} as failed: {mark_exc}")
         return None
 
 

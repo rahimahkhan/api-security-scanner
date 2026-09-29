@@ -78,3 +78,29 @@ def test_confirmed_proof_gets_full_confidence_without_layer_agreement():
     assert result["total_score"] == 40.0
     assert result["finding_status"] == "Confirmed"
 
+
+def test_suspected_findings_capped_below_critical():
+    """A strong multi-layer anomaly WITHOUT exploit proof is capped at HIGH;
+    CRITICAL is reserved for confirmed (proof-backed) findings."""
+    scorer = RiskScorer()
+    mock_sig = {"matched": True, "has_proof": False, "attack_type": "XSS", "points": 40.0}
+    mock_ml = {"is_anomaly": True, "points": 20.0}
+    mock_dl = {"is_anomaly": True, "lstm_points": 15.0, "autoencoder_points": 20.0}
+
+    res = scorer.calculate_risk(
+        mock_sig, mock_ml, mock_dl, "http://localhost/api", "GET",
+        telemetry_data={"status_code": 200, "response_size": 100, "response_time": 0.1},
+    )
+    assert res["total_score"] >= 70.0  # raw strength would be CRITICAL
+    assert res["severity"] == "HIGH"   # ...but proof-gating caps it
+    assert res["is_vulnerable"] is False
+    assert res["finding_status"] == "Suspected"
+
+    # With proof, CRITICAL is allowed.
+    mock_sig["has_proof"] = True
+    res_confirmed = scorer.calculate_risk(
+        mock_sig, mock_ml, mock_dl, "http://localhost/api", "GET",
+        telemetry_data={"status_code": 200, "response_size": 100, "response_time": 0.1},
+    )
+    assert res_confirmed["severity"] == "CRITICAL"
+    assert res_confirmed["finding_status"] == "Confirmed"

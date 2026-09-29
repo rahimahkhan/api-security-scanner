@@ -9,6 +9,33 @@
     <p><span class="badge badge-lg low">Complete proof-gated pipeline</span> Confirmed findings are counted separately from suspected and informational signals.</p>
 </div>
 
+{% if session_data.status == "running" %}
+<div class="card scan-progress-banner" id="scan-progress">
+    <h3>Scan in progress&hellip;</h3>
+    <p>Testing <strong>{{ session_data.target_url }}</strong>. This page refreshes automatically when the scan completes.</p>
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+</div>
+<script>
+(function() {
+    var sessionId = {{ session_data.id }};
+    var timer = setInterval(function() {
+        fetch("/api/sessions/" + sessionId)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var st = data && data.session && data.session.scan_status;
+                if (st && st !== "running") { clearInterval(timer); location.reload(); }
+            })
+            .catch(function() { /* keep polling through transient errors */ });
+    }, 5000);
+})();
+</script>
+{% elif session_data.status == "failed" %}
+<div class="card scan-failed-banner">
+    <h3>Scan failed</h3>
+    <p>The background scan did not complete. Check the application logs for details, then start a new scan.</p>
+</div>
+{% endif %}
+
 <div class="summary-cards-grid">
     <div class="card summary-card">
         <h3>Overall Risk Score</h3>

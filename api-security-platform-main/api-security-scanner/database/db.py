@@ -35,6 +35,14 @@ def init_db():
                 conn.execute(text("ALTER TABLE findings ADD COLUMN finding_status VARCHAR(30) DEFAULT 'Informational' NOT NULL"))
                 conn.commit()
                 logger.info("Migrated findings table: added finding_status column.")
+            # Ensure scan_sessions.status exists for existing SQLite database.
+            # Backfill as 'complete': every pre-existing row finished its scan.
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "status" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN status VARCHAR(20) DEFAULT 'complete' NOT NULL"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added status column.")
         except Exception as exc:
             logger.warning(f"Database migration check: {exc}")
     logger.info("Database tables initialized successfully.")
@@ -53,7 +61,8 @@ def save_scan_session(
     total_endpoints: int = 0,
     total_vulnerabilities: int = 0,
     overall_risk_score: float = 0.0,
-    overall_severity: str = "Low"
+    overall_severity: str = "Low",
+    status: str = "running"
 ) -> ScanSession:
     db = SessionLocal()
     try:
@@ -63,7 +72,8 @@ def save_scan_session(
             total_endpoints_found=total_endpoints,
             total_vulnerabilities_found=total_vulnerabilities,
             overall_risk_score=overall_risk_score,
-            overall_severity=overall_severity
+            overall_severity=overall_severity,
+            status=status
         )
         db.add(session_obj)
         db.commit()
@@ -144,6 +154,24 @@ def complete_scan_session(
             session_obj.overall_severity = overall_severity
             session_obj.total_vulnerabilities_found = total_vulnerabilities
             session_obj.scan_end_time = datetime.utcnow()
+            session_obj.status = "complete"
+            db.commit()
+            db.refresh(session_obj)
+            return session_obj
+        return None
+    finally:
+        db.close()
+
+def fail_scan_session(session_id: int, error: str = "") -> Optional[ScanSession]:
+    """Mark a background scan as failed so the UI stops polling it."""
+    db = SessionLocal()
+    try:
+        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+        if session_obj:
+            session_obj.status = "failed"
+            session_obj.scan_end_time = datetime.utcnow()
+            if error:
+                logger.error(f"Scan session {session_id} failed: {error}")
             db.commit()
             db.refresh(session_obj)
             return session_obj

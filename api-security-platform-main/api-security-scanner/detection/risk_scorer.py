@@ -69,7 +69,9 @@ class RiskScorer:
     ) -> Dict[str, Any]:
         """
         Calculates combined risk score from all 3 detection layers using Hybrid Confidence Multiplier.
-        A finding is only HIGH or CRITICAL when at least 2 layers agree.
+        A finding is only HIGH or CRITICAL when at least 2 layers agree, and
+        CRITICAL is reserved for findings with verified exploit proof —
+        suspected (unproven) findings are capped at HIGH.
         """
         telemetry = kwargs.get("telemetry_data", {}) or {}
         resp_status = telemetry.get("status_code", kwargs.get("status_code", 200))
@@ -183,6 +185,13 @@ class RiskScorer:
         raw_total = sig_points + ml_points + lstm_points + ae_points + supervised_points
         final_risk_score = round(max(0.0, min(self.MAX_TOTAL_POINTS, raw_total * confidence)), 2)
         severity = self.classify_severity(final_risk_score)
+
+        # Severity must reflect proof, not just anomaly strength. A strong
+        # multi-layer anomaly score without verified exploit proof is a
+        # lead, not an incident — cap suspected findings at HIGH and
+        # reserve CRITICAL for confirmed vulnerabilities.
+        if not has_proof and severity == "CRITICAL":
+            severity = "HIGH"
 
         # A high anomaly score is useful for triage, but it is not exploit
         # proof. Only a verified response indicator is a vulnerability.
