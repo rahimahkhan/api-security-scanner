@@ -185,23 +185,31 @@ class SignatureDetector:
         target_string = f"{url} {payload}"
         content_type = str(resp_headers.get("content-type", "") or resp_headers.get("Content-Type", "")).lower()
 
-        # Hard Response Gate 1: Network / Unreachable / Status 0 or None.
-        # If the baseline was healthy and only the active probe disconnected,
+        # Hard Response Gate 1: Network / Unreachable / Timeout.
+        # Status 0/None means the connection dropped; our synthetic 408 means the
+        # probe timed out with no usable response. Either way there is no response
+        # to analyze, so payload-syntax matching below must not fire.
+        # If the baseline was healthy and only the active probe failed,
         # preserve that differential as a suspected request-impact signal.
-        if resp_status in [0, None]:
+        if resp_status in [0, None, 408]:
             baseline_status = (baseline_telemetry or {}).get("status_code")
-            baseline_reachable = baseline_status is not None and 200 <= int(baseline_status) < 500 and baseline_status != 404
+            # A timed-out baseline (408) is not a usable reference: no response
+            # was ever received, so no differential can be claimed from it.
+            baseline_reachable = (baseline_status is not None
+                                  and 200 <= int(baseline_status) < 500
+                                  and baseline_status not in (404, 408))
+            timed_out = (resp_status == 408)
             if baseline_reachable and payload:
                 return {
                     "matched": True,
                     "has_proof": False,
                     "is_vulnerable": False,
-                    "attack_type": "Application_Connection_Reset",
-                    "pattern_matched": "Active payload caused target connection reset",
+                    "attack_type": "Application_Request_Timeout" if timed_out else "Application_Connection_Reset",
+                    "pattern_matched": "Active payload caused request timeout" if timed_out else "Active payload caused target connection reset",
                     "finding_status": "Suspected",
                     "confidence": "Low",
                     "points": 10,
-                    "proof_of_concept": "Target disconnected during an active probe after a healthy baseline; exploit proof not established",
+                    "proof_of_concept": "Target timed out during an active probe after a healthy baseline; exploit proof not established" if timed_out else "Target disconnected during an active probe after a healthy baseline; exploit proof not established",
                     "missing_headers": []
                 }
             return {
@@ -209,11 +217,11 @@ class SignatureDetector:
                 "has_proof": False,
                 "is_vulnerable": False,
                 "attack_type": "Network_Error",
-                "pattern_matched": "HTTP Status 0 / Network Dropped",
+                "pattern_matched": "HTTP 408 / Probe request timed out" if timed_out else "HTTP Status 0 / Network Dropped",
                 "finding_status": "UNREACHABLE / NETWORK_DROPPED",
                 "confidence": "None",
                 "points": 0,
-                "proof_of_concept": "HTTP request failed or network connection dropped (Status 0/None)",
+                "proof_of_concept": "Probe request timed out with no usable response (HTTP 408); target unreachable or network stalled" if timed_out else "HTTP request failed or network connection dropped (Status 0/None)",
                 "missing_headers": []
             }
 

@@ -79,9 +79,14 @@ class RiskScorer:
         resp_time = telemetry.get("response_time", kwargs.get("response_time", 0.0))
 
         # Section 1: Hard Response Gate (Circuit Breaker)
-        # Status 0 or None -> UNREACHABLE / NETWORK_DROPPED
-        if resp_status in [0, None]:
+        # Status 0/None (connection dropped) or our synthetic 408 (probe timed out
+        # with no usable response) -> UNREACHABLE / NETWORK_DROPPED, scored 0.
+        # Timeouts must never become findings: there is no response to analyze.
+        if resp_status in [0, None, 408]:
             timestamp = datetime.utcnow().isoformat() + "Z"
+            proof = ("Probe request timed out with no usable response (HTTP 408); "
+                     "target unreachable or network stalled") if resp_status == 408 else \
+                    "HTTP request failed or network connection dropped (Status 0/None)"
             return {
                 "endpoint": endpoint_url,
                 "method": http_method.upper(),
@@ -94,7 +99,7 @@ class RiskScorer:
                 "confidence_level": 0,
                 "layers_triggered": 0,
                 "confidence_multiplier": 0.0,
-                "proof_of_concept": "HTTP request failed or network connection dropped (Status 0/None)",
+                "proof_of_concept": proof,
                 "telemetry_status": {
                     "status_code": resp_status,
                     "response_size": resp_size,
