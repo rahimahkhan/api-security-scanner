@@ -33,9 +33,10 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'database.db'}")
 
 # Dashboard Auth & Security
-DASHBOARD_AUTH_ENABLED = os.getenv("DASHBOARD_AUTH_ENABLED", "False") == "True"
-DASHBOARD_ADMIN_USER = os.getenv("DASHBOARD_ADMIN_USER", "admin")
-DASHBOARD_ADMIN_PASSWORD = os.getenv("DASHBOARD_ADMIN_PASSWORD", "admin")
+# Auth is ON by default: every dashboard page/API needs a user account, and
+# each user only sees their own scans. Set DASHBOARD_AUTH_ENABLED=False to
+# run a fully public instance.
+DASHBOARD_AUTH_ENABLED = os.getenv("DASHBOARD_AUTH_ENABLED", "True") == "True"
 CSRF_ENABLED = os.getenv("CSRF_ENABLED", "True") == "True"
 
 

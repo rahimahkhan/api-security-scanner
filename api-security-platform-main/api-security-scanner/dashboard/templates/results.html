@@ -12,17 +12,46 @@
 {% if session_data.status == "running" %}
 <div class="card scan-progress-banner" id="scan-progress">
     <h3>Scan in progress&hellip;</h3>
-    <p>Testing <strong>{{ session_data.target_url }}</strong>. This page refreshes automatically when the scan completes.</p>
-    <div class="progress-bar"><div class="progress-fill"></div></div>
+    <p id="scan-progress-text">{% if session_data.progress_total and session_data.progress_done %}{{ session_data.progress_stage or "Scanning" }}: endpoint {{ session_data.progress_done }} of {{ session_data.progress_total }}{% if progress_eta %} &mdash; {{ progress_eta }}{% endif %}{% else %}{{ session_data.progress_stage or "Starting scan" }}&hellip;{% endif %}</p>
+    <div class="progress-bar"><div class="progress-fill{% if session_data.progress_total and session_data.progress_done %} determinate{% endif %}" id="scan-progress-fill"{% if session_data.progress_total and session_data.progress_done %} style="width: {{ (100 * session_data.progress_done / session_data.progress_total)|round(1) }}%"{% endif %}></div></div>
 </div>
 <script>
 (function() {
     var sessionId = {{ session_data.id }};
+    var missing = 0;
+    function renderProgress(s) {
+        var done = s.progress_done || 0, total = s.progress_total || 0;
+        var text = document.getElementById("scan-progress-text");
+        var fill = document.getElementById("scan-progress-fill");
+        if (total > 0 && done > 0) {
+            var pct = Math.min(100, Math.round(done / total * 100));
+            var label = (s.progress_stage || "Scanning") + ": endpoint " + done + " of " + total;
+            if (s.progress_eta) { label += " \u2014 " + s.progress_eta; }
+            if (text) { text.textContent = label; }
+            if (fill) { fill.style.width = pct + "%"; fill.classList.add("determinate"); }
+        } else if (text) {
+            text.textContent = (s.progress_stage || "Starting scan") + "\u2026";
+        }
+    }
     var timer = setInterval(function() {
         fetch("/api/sessions/" + sessionId)
-            .then(function(r) { return r.json(); })
+            .then(function(r) {
+                if (r.status === 404) { missing += 1; return null; }
+                missing = 0;
+                return r.json();
+            })
             .then(function(data) {
-                var st = data && data.session && data.session.scan_status;
+                if (!data) {
+                    if (missing >= 3) {
+                        clearInterval(timer);
+                        var banner = document.getElementById("scan-progress");
+                        if (banner) { banner.innerHTML = "<h3>Session no longer exists</h3><p>This scan was deleted. <a href=\"/\">Start a new scan</a>.</p>"; }
+                    }
+                    return;
+                }
+                var s = data.session || {};
+                renderProgress(s);
+                var st = s.scan_status;
                 if (st && st !== "running") { clearInterval(timer); location.reload(); }
             })
             .catch(function() { /* keep polling through transient errors */ });
@@ -32,7 +61,7 @@
 {% elif session_data.status == "failed" %}
 <div class="card scan-failed-banner">
     <h3>Scan failed</h3>
-    <p>The background scan did not complete. Check the application logs for details, then start a new scan.</p>
+    <p>The background scan did not complete &mdash; this can happen if the server restarted mid-scan. Start a new scan to try again.</p>
 </div>
 {% endif %}
 

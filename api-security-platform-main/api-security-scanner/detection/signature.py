@@ -74,6 +74,7 @@ class SignatureDetector:
     SQL_ERROR_PATTERNS = [
         r"(?i)SQLAlchemyError",
         r"(?i)SyntaxError.*SQL",
+        r"(?i)SQL syntax",
         r"(?i)MySQL server version",
         r"(?i)SQLite3::SQLException",
         r"(?i)ORA-\d{5}",

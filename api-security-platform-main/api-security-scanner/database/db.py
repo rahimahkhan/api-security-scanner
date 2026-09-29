@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import DATABASE_URL
 from config.logging_config import logger
-from database.models import Base, ScanSession, Endpoint, Finding, Report
+from database.models import Base, ScanSession, Endpoint, Finding, Report, User
 
 db_path = DATABASE_URL.replace("sqlite:///", "")
 if os.path.dirname(db_path):
@@ -43,6 +43,30 @@ def init_db():
                 conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN status VARCHAR(20) DEFAULT 'complete' NOT NULL"))
                 conn.commit()
                 logger.info("Migrated scan_sessions table: added status column.")
+            # Heartbeat for the stale-scan reaper (worker died -> "running" forever).
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "updated_at" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN updated_at DATETIME"))
+                conn.execute(text("UPDATE scan_sessions SET updated_at = scan_start_time WHERE updated_at IS NULL"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added updated_at column.")
+            # Owner of each scan for per-user isolation.
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "user_id" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added user_id column.")
+            # Live progress tracking for the "time left" banner (done/total + stage).
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "progress_done" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_done INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_total INTEGER DEFAULT 0"))
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_stage VARCHAR(80) DEFAULT ''"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added progress tracking columns.")
         except Exception as exc:
             logger.warning(f"Database migration check: {exc}")
     logger.info("Database tables initialized successfully.")
@@ -62,7 +86,8 @@ def save_scan_session(
     total_vulnerabilities: int = 0,
     overall_risk_score: float = 0.0,
     overall_severity: str = "Low",
-    status: str = "running"
+    status: str = "running",
+    user_id: Optional[int] = None
 ) -> ScanSession:
     db = SessionLocal()
     try:
@@ -73,12 +98,111 @@ def save_scan_session(
             total_vulnerabilities_found=total_vulnerabilities,
             overall_risk_score=overall_risk_score,
             overall_severity=overall_severity,
-            status=status
+            status=status,
+            updated_at=datetime.utcnow(),
+            user_id=user_id
         )
         db.add(session_obj)
         db.commit()
         db.refresh(session_obj)
         return session_obj
+    finally:
+        db.close()
+
+
+def touch_scan_session(session_id: int) -> None:
+    """Heartbeat: mark a running scan as alive (stale-scan reaper input)."""
+    db = SessionLocal()
+    try:
+        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+        if session_obj:
+            session_obj.updated_at = datetime.utcnow()
+            db.commit()
+    finally:
+        db.close()
+
+
+def update_scan_progress(session_id: int, done: int = None, total: int = None,
+                         stage: str = None) -> None:
+    """Record scan progress for the live 'time left' banner. Only the
+    arguments that are not None are updated, so the worker can bump just
+    the counter per endpoint without rewriting the rest."""
+    db = SessionLocal()
+    try:
+        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+        if not session_obj:
+            return
+        if done is not None:
+            session_obj.progress_done = max(0, int(done))
+        if total is not None:
+            session_obj.progress_total = max(0, int(total))
+        if stage is not None:
+            session_obj.progress_stage = str(stage)[:80]
+        session_obj.updated_at = datetime.utcnow()
+        db.commit()
+    finally:
+        db.close()
+
+
+def format_scan_eta(scan) -> str:
+    """Human-friendly remaining-time estimate for a running scan, e.g.
+    'about 2 minutes left'. Returns '' when there is nothing sensible to say."""
+    try:
+        done = int(scan.progress_done or 0)
+        total = int(scan.progress_total or 0)
+        if total <= 0 or done <= 0:
+            return ""
+        start = scan.scan_start_time
+        if not start:
+            return ""
+        elapsed = (datetime.utcnow() - start).total_seconds()
+        if elapsed <= 0:
+            return ""
+        remaining = elapsed / done * (total - done)
+        if remaining < 15:
+            return "less than 15 seconds left"
+        if remaining < 90:
+            return f"about {int(round(remaining / 5) * 5)} seconds left"
+        minutes = remaining / 60
+        if minutes < 90:
+            return f"about {int(round(minutes))} minute{'s' if int(round(minutes)) != 1 else ''} left"
+        return f"about {int(round(minutes / 5) * 5)} minutes left"
+    except Exception:
+        return ""
+
+
+def create_user(username: str, password_hash: str) -> User:
+    db = SessionLocal()
+    try:
+        user = User(username=username, password_hash=password_hash)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        # Detach so the caller can use user.id/username after close.
+        db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def get_user_by_username(username: str) -> Optional[User]:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).first()
+        if user:
+            db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def get_user_by_id(user_id: int) -> Optional[User]:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            db.expunge(user)
+        return user
     finally:
         db.close()
 
@@ -179,10 +303,28 @@ def fail_scan_session(session_id: int, error: str = "") -> Optional[ScanSession]
     finally:
         db.close()
 
-def get_all_sessions() -> List[ScanSession]:
+def get_all_sessions(user_id: Optional[int] = None) -> List[ScanSession]:
+    """List scan sessions, newest first. When user_id is given, only that
+    user's sessions are returned (per-user isolation)."""
     db = SessionLocal()
     try:
-        return db.query(ScanSession).order_by(ScanSession.scan_start_time.desc()).all()
+        query = db.query(ScanSession)
+        if user_id is not None:
+            query = query.filter(ScanSession.user_id == user_id)
+        return query.order_by(ScanSession.scan_start_time.desc()).all()
+    finally:
+        db.close()
+
+
+def get_session_for_user(session_id: int, user_id: Optional[int]) -> Optional[ScanSession]:
+    """Fetch one session only if it belongs to the given user (else None,
+    so callers can 404 without leaking other users' scans)."""
+    db = SessionLocal()
+    try:
+        query = db.query(ScanSession).filter(ScanSession.id == session_id)
+        if user_id is not None:
+            query = query.filter(ScanSession.user_id == user_id)
+        return query.first()
     finally:
         db.close()
 

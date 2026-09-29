@@ -52,7 +52,7 @@ def test_dashboard_api_scan_uses_shared_pipeline_and_returns_sarif_url(monkeypat
     session = save_scan_session(target_url="http://example.test", total_endpoints=1)
     calls = []
 
-    def fake_launch(target_url):
+    def fake_launch(target_url, user_id=None):
         calls.append(target_url)
         return session.id
 
@@ -83,7 +83,7 @@ def test_dashboard_form_scan_uses_shared_pipeline(monkeypatch):
     session = save_scan_session(target_url="http://example.test", total_endpoints=1)
     calls = []
 
-    def fake_launch(target_url):
+    def fake_launch(target_url, user_id=None):
         calls.append(target_url)
         return session.id
 
@@ -126,28 +126,24 @@ def test_dashboard_csrf_enforcement():
 
 
 def test_dashboard_auth_workflow():
+    """Signup -> login -> logout round-trip with auth explicitly enabled."""
+    from database.db import get_user_by_username, SessionLocal
+    from database.models import User
     app = create_app()
     app.config["TESTING"] = True
     app.config["DASHBOARD_AUTH_ENABLED"] = True
-    app.config["DASHBOARD_ADMIN_USER"] = "admin_test"
-    app.config["DASHBOARD_ADMIN_PASSWORD"] = "pass_test_123"
     client = app.test_client()
+    username = "authwf_user"
 
     # Unauthenticated access redirects to /login
     res = client.get("/")
     assert res.status_code == 302
     assert "/login" in res.headers["Location"]
 
-    # Login with wrong credentials fails
-    res_bad_login = client.post("/login", data={"username": "admin_test", "password": "wrong"})
-    assert res_bad_login.status_code == 200
-    assert b"Invalid username or password" in res_bad_login.data
-
-    # Login with correct credentials succeeds
-    res_login = client.post("/login", data={"username": "admin_test", "password": "pass_test_123"})
-    assert res_login.status_code == 302
-
-    # Now authenticated access to / succeeds
+    # Signup creates the account and logs in
+    res_signup = client.post("/signup", data={
+        "username": username, "password": "pass_test_123", "confirm_password": "pass_test_123"})
+    assert res_signup.status_code == 302
     res_auth = client.get("/")
     assert res_auth.status_code == 200
 
@@ -156,5 +152,27 @@ def test_dashboard_auth_workflow():
     assert res_logout.status_code == 302
     res_after = client.get("/")
     assert res_after.status_code == 302
+
+    # Login with wrong credentials fails
+    res_bad_login = client.post("/login", data={"username": username, "password": "wrong"})
+    assert res_bad_login.status_code == 200
+    assert b"Invalid username or password" in res_bad_login.data
+
+    # Login with correct credentials succeeds
+    res_login = client.post("/login", data={"username": username, "password": "pass_test_123"})
+    assert res_login.status_code == 302
+    assert client.get("/").status_code == 200
+
+    # cleanup
+    db = SessionLocal()
+    try:
+        u = db.query(User).filter(User.username == username).first()
+        if u:
+            for s in list(u.sessions):
+                db.delete(s)
+            db.delete(u)
+            db.commit()
+    finally:
+        db.close()
     assert "/login" in res_after.headers["Location"]
 

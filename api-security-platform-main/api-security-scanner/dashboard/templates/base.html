@@ -19,9 +19,11 @@
                 <a href="{{ url_for('dashboard.history') }}">History</a>
                 {% if auth_enabled %}
                     {% if is_authenticated %}
+                        <span class="nav-user" title="Signed in">👤 {{ current_username or 'user' }}</span>
                         <a href="{{ url_for('dashboard.logout') }}">Logout</a>
                     {% else %}
                         <a href="{{ url_for('dashboard.login') }}">Login</a>
+                        <a href="{{ url_for('dashboard.signup') }}">Sign up</a>
                     {% endif %}
                 {% endif %}
             </nav>

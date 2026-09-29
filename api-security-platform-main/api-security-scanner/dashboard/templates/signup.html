@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Sign Up - API Security Platform{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Create Your Account</h1>
+    <p>Sign up to run scans. Each account only ever sees its own scan history.</p>
+</div>
+
+<div class="card form-container" style="max-width: 480px; margin: 2rem auto;">
+    {% if error %}
+    <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        {{ error }}
+    </div>
+    {% endif %}
+
+    <form action="{{ url_for('dashboard.signup') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="form-group">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" placeholder="pick-a-username" required autofocus>
+        </div>
+
+        <div class="form-group">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" placeholder="min. 8 characters" required>
+        </div>
+
+        <div class="form-group">
+            <label for="confirm_password">Confirm password</label>
+            <input type="password" id="confirm_password" name="confirm_password" placeholder="repeat password" required>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">Create Account</button>
+    </form>
+
+    <p style="text-align: center; margin-top: 1rem;">Already have an account? <a href="{{ url_for('dashboard.login') }}">Log in</a></p>
+</div>
+{% endblock %}

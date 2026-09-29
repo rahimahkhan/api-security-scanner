@@ -19,10 +19,33 @@ class ScanSession(Base):
     # Lifecycle: "running" -> "complete" | "failed". Web scans run in a
     # background thread so long targets don't hit HTTP timeouts.
     status = Column(String(20), default="running")
+    # Heartbeat touched by the scan worker; a "running" session whose
+    # heartbeat goes stale is treated as failed (worker died, e.g. restart).
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    # Owner of the scan; NULL for pre-auth legacy rows (hidden from everyone).
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    # Scan progress for live ETA display: done/total work units plus a
+    # human-readable stage label ("Discovering endpoints", "Testing endpoints", ...).
+    progress_done = Column(Integer, default=0)
+    progress_total = Column(Integer, default=0)
+    progress_stage = Column(String(80), default="")
 
     endpoints = relationship("Endpoint", back_populates="session", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="session", cascade="all, delete-orphan")
     reports = relationship("Report", back_populates="session", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="sessions")
+
+
+class User(Base):
+    """Dashboard account. Each user only ever sees their own scan sessions."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(80), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    sessions = relationship("ScanSession", back_populates="user", cascade="all, delete-orphan")
 
 
 class Endpoint(Base):

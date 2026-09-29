@@ -1,25 +1,28 @@
 import os
+import re
 import sys
 import secrets
 import threading
+from datetime import datetime, timedelta
 from functools import wraps
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app
+from werkzeug.security import generate_password_hash, check_password_hash
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.logging_config import logger
 from config.settings import (
     DASHBOARD_AUTH_ENABLED,
-    DASHBOARD_ADMIN_USER,
-    DASHBOARD_ADMIN_PASSWORD,
     CSRF_ENABLED,
     APP_VERSION,
 )
 from sqlalchemy.orm import joinedload
 from database.db import (
     save_scan_session, save_endpoint, save_finding, complete_scan_session,
-    fail_scan_session,
-    get_all_sessions, get_session_findings, get_finding_by_id, delete_session, SessionLocal
+    fail_scan_session, touch_scan_session, format_scan_eta,
+    get_all_sessions, get_session_for_user, get_session_findings,
+    get_finding_by_id, delete_session, SessionLocal,
+    create_user, get_user_by_username,
 )
 from database.models import ScanSession, Finding, Endpoint
 from core.discovery import EndpointDiscovery
@@ -33,9 +36,26 @@ from main import run_pipeline, validate_target_url
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
+# A "running" scan whose worker heartbeat is older than this is considered
+# dead (e.g. the process was restarted, killing the daemon thread) and is
+# reaped as failed so the UI stops polling it forever.
+STALE_SCAN_AFTER_SECONDS = 600
+HEARTBEAT_INTERVAL_SECONDS = 60
+
 
 def _scan_worker(target_url: str, session_id: int) -> None:
     """Background thread entry point: run the pipeline against the pre-created session."""
+    stop_heartbeat = threading.Event()
+
+    def _heartbeat() -> None:
+        while not stop_heartbeat.wait(HEARTBEAT_INTERVAL_SECONDS):
+            try:
+                touch_scan_session(session_id)
+            except Exception:
+                pass
+
+    hb_thread = threading.Thread(target=_heartbeat, daemon=True, name=f"heartbeat-{session_id}")
+    hb_thread.start()
     try:
         run_pipeline(target_url, return_session_id=True, session_id=session_id)
     except Exception as exc:  # never let the thread die silently
@@ -44,15 +64,17 @@ def _scan_worker(target_url: str, session_id: int) -> None:
             fail_scan_session(session_id, str(exc))
         except Exception:
             pass
+    finally:
+        stop_heartbeat.set()
 
 
-def _launch_background_scan(target_url: str) -> int:
+def _launch_background_scan(target_url: str, user_id=None) -> int:
     """Create the session row immediately and run the scan in a daemon thread.
 
     Returns the session id at once so HTTP clients never block on (or time
     out during) a long scan.
     """
-    session_obj = save_scan_session(target_url=target_url, status="running")
+    session_obj = save_scan_session(target_url=target_url, status="running", user_id=user_id)
     thread = threading.Thread(
         target=_scan_worker,
         args=(target_url, session_obj.id),
@@ -64,6 +86,27 @@ def _launch_background_scan(target_url: str) -> int:
     return session_obj.id
 
 
+def reap_stale_scan(db_session, session_obj) -> bool:
+    """Mark a 'running' scan as failed when its worker heartbeat went stale.
+
+    Returns True when the session was reaped. The caller owns the commit.
+    """
+    if session_obj is None or getattr(session_obj, "status", None) != "running":
+        return False
+    heartbeat = getattr(session_obj, "updated_at", None) or session_obj.scan_start_time
+    if heartbeat is None:
+        return False
+    if datetime.utcnow() - heartbeat > timedelta(seconds=STALE_SCAN_AFTER_SECONDS):
+        session_obj.status = "failed"
+        session_obj.scan_end_time = datetime.utcnow()
+        logger.warning(
+            f"Reaped stale scan {session_obj.id}: no worker heartbeat for "
+            f">{STALE_SCAN_AFTER_SECONDS}s; marked failed."
+        )
+        return True
+    return False
+
+
 def get_or_create_csrf_token() -> str:
     if "csrf_token" not in session:
         session["csrf_token"] = secrets.token_hex(32)
@@ -71,7 +114,20 @@ def get_or_create_csrf_token() -> str:
 
 
 def is_auth_enabled() -> bool:
-    return current_app.config.get("DASHBOARD_AUTH_ENABLED", DASHBOARD_AUTH_ENABLED)
+    if "DASHBOARD_AUTH_ENABLED" in current_app.config:
+        return bool(current_app.config["DASHBOARD_AUTH_ENABLED"])
+    if current_app.config.get("TESTING"):
+        # Existing tests exercise the UI without accounts; keep them green
+        # unless a test opts into auth explicitly.
+        return False
+    return DASHBOARD_AUTH_ENABLED
+
+
+def get_current_user_id():
+    """Logged-in user's id, or None when auth is disabled / not logged in."""
+    if not is_auth_enabled():
+        return None
+    return session.get("user_id")
 
 
 def is_csrf_enabled() -> bool:
@@ -83,7 +139,9 @@ def is_csrf_enabled() -> bool:
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if is_auth_enabled() and not session.get("authenticated"):
+        if is_auth_enabled() and not session.get("user_id"):
+            if request.path.startswith("/api/"):
+                return jsonify({"status": "error", "message": "Authentication required"}), 401
             return redirect(url_for("dashboard.login", next=request.path))
         return f(*args, **kwargs)
     return decorated_function
@@ -91,11 +149,18 @@ def login_required(f):
 
 @dashboard_bp.context_processor
 def inject_globals():
+    user_id = get_current_user_id()
+    if is_auth_enabled() and user_id is None:
+        recent = []  # logged out: never leak other users' scans in the sidebar
+    else:
+        recent = get_all_sessions(user_id)[:5]
+    authed = bool(session.get("user_id")) or not is_auth_enabled()
     return dict(
-        recent_sessions=get_all_sessions()[:5],
+        recent_sessions=recent,
         csrf_token=get_or_create_csrf_token,
         auth_enabled=is_auth_enabled(),
-        is_authenticated=bool(session.get("authenticated")),
+        is_authenticated=authed,
+        current_username=session.get("username"),
         app_version=APP_VERSION,
     )
 
@@ -114,34 +179,67 @@ def validate_csrf():
 
 @dashboard_bp.route("/login", methods=["GET", "POST"])
 def login():
-    if session.get("authenticated"):
+    if session.get("user_id"):
         return redirect(url_for("dashboard.index"))
     error = None
     next_url = request.args.get("next") or request.form.get("next") or url_for("dashboard.index")
+    if not next_url.startswith("/"):
+        next_url = url_for("dashboard.index")
     if request.method == "POST":
         username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        admin_user = current_app.config.get("DASHBOARD_ADMIN_USER", DASHBOARD_ADMIN_USER)
-        admin_pass = current_app.config.get("DASHBOARD_ADMIN_PASSWORD", DASHBOARD_ADMIN_PASSWORD)
-        if username == admin_user and password == admin_pass:
-            session["authenticated"] = True
-            session["user"] = username
+        password = request.form.get("password", "")
+        user = get_user_by_username(username) if username else None
+        if user and check_password_hash(user.password_hash, password):
+            session["user_id"] = user.id
+            session["username"] = user.username
             return redirect(next_url)
         error = "Invalid username or password"
     return render_template("login.html", error=error, next_url=next_url)
 
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+
+
+@dashboard_bp.route("/signup", methods=["GET", "POST"])
+def signup():
+    if not is_auth_enabled():
+        return redirect(url_for("dashboard.index"))
+    if session.get("user_id"):
+        return redirect(url_for("dashboard.index"))
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+        if not USERNAME_RE.match(username):
+            error = "Username must be 3-32 characters: letters, numbers, dot, dash, underscore."
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters."
+        elif password != confirm:
+            error = "Passwords do not match."
+        elif get_user_by_username(username):
+            error = "That username is already taken."
+        else:
+            user = create_user(username, generate_password_hash(password))
+            session["user_id"] = user.id
+            session["username"] = user.username
+            logger.info(f"New dashboard user signed up: {username}")
+            return redirect(url_for("dashboard.index"))
+    return render_template("signup.html", error=error)
+
+
 @dashboard_bp.route("/logout")
 def logout():
-    session.pop("authenticated", None)
-    session.pop("user", None)
+    session.pop("user_id", None)
+    session.pop("username", None)
+    session.pop("authenticated", None)  # legacy key, harmless
     return redirect(url_for("dashboard.index"))
 
 
 @dashboard_bp.route("/")
 @login_required
 def index():
-    recent_sessions = get_all_sessions()[:5]
+    recent_sessions = get_all_sessions(get_current_user_id())[:5]
     return render_template("index.html", recent_sessions=recent_sessions)
 
 
@@ -157,7 +255,7 @@ def start_scan():
         return f"Invalid target URL: {normalized_or_reason}", 400
 
     # Scans run in the background; the results page polls until completion.
-    session_id = _launch_background_scan(normalized_or_reason)
+    session_id = _launch_background_scan(normalized_or_reason, user_id=get_current_user_id())
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 @dashboard_bp.route("/results/<int:session_id>")
@@ -165,9 +263,18 @@ def start_scan():
 def results(session_id):
     db = SessionLocal()
     try:
-        session_data = db.query(ScanSession).options(joinedload(ScanSession.endpoints), joinedload(ScanSession.findings)).filter(ScanSession.id == session_id).first()
+        user_id = get_current_user_id()
+        query = db.query(ScanSession).options(joinedload(ScanSession.endpoints), joinedload(ScanSession.findings)).filter(ScanSession.id == session_id)
+        if user_id is not None:
+            query = query.filter(ScanSession.user_id == user_id)
+        session_data = query.first()
         if not session_data:
             return "Session not found", 404
+
+        # If the worker died (restart/crash), the row would sit at "running"
+        # forever and the progress banner would poll forever -- reap it.
+        if reap_stale_scan(db, session_data):
+            db.commit()
 
         findings = get_session_findings(session_id)
         
@@ -186,7 +293,8 @@ def results(session_id):
             session_data=session_data,
             findings=findings,
             severity_counts=severity_counts,
-            attack_counts=attack_counts
+            attack_counts=attack_counts,
+            progress_eta=format_scan_eta(session_data),
         )
     finally:
         db.close()
@@ -194,13 +302,16 @@ def results(session_id):
 @dashboard_bp.route("/history")
 @login_required
 def history():
-    sessions = get_all_sessions()
+    sessions = get_all_sessions(get_current_user_id())
     return render_template("history.html", sessions=sessions)
 
 @dashboard_bp.route("/finding/<int:finding_id>")
 @login_required
 def finding_detail(finding_id):
     finding = get_finding_by_id(finding_id)
+    user_id = get_current_user_id()
+    if finding and user_id is not None and finding.session and finding.session.user_id != user_id:
+        finding = None
     if finding:
         current_app.logger.info(
             "Finding %s scores: risk_score=%r, ml_score=%r, lstm_score=%r, autoencoder_score=%r",
@@ -218,7 +329,11 @@ def export_report(session_id):
     fmt = request.args.get("format", "pdf").lower()
     db = SessionLocal()
     try:
-        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+        user_id = get_current_user_id()
+        query = db.query(ScanSession).filter(ScanSession.id == session_id)
+        if user_id is not None:
+            query = query.filter(ScanSession.user_id == user_id)
+        session_obj = query.first()
         if not session_obj:
             return "Session not found", 404
         
@@ -283,6 +398,8 @@ def export_report(session_id):
 @dashboard_bp.route("/delete_scan/<int:session_id>", methods=["POST"])
 @login_required
 def delete_scan(session_id):
+    if not get_session_for_user(session_id, get_current_user_id()):
+        return "Session not found", 404
     delete_session(session_id)
     return redirect(url_for("dashboard.history"))
 
@@ -291,8 +408,9 @@ def delete_scan(session_id):
 # ---------------------------------------------------------
 
 @dashboard_bp.route("/api/sessions", methods=["GET"])
+@login_required
 def api_list_sessions():
-    sessions = get_all_sessions()
+    sessions = get_all_sessions(get_current_user_id())
     sessions_data = []
     for s in sessions:
         sessions_data.append({
@@ -309,12 +427,21 @@ def api_list_sessions():
 
 
 @dashboard_bp.route("/api/sessions/<int:session_id>", methods=["GET"])
+@login_required
 def api_get_session(session_id):
     db = SessionLocal()
     try:
-        session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
+        user_id = get_current_user_id()
+        query = db.query(ScanSession).filter(ScanSession.id == session_id)
+        if user_id is not None:
+            query = query.filter(ScanSession.user_id == user_id)
+        session_obj = query.first()
         if not session_obj:
             return jsonify({"status": "error", "message": "Session not found"}), 404
+
+        # Reap scans whose worker died, so API pollers see a terminal state.
+        if reap_stale_scan(db, session_obj):
+            db.commit()
 
         findings = get_session_findings(session_id)
         findings_data = []
@@ -349,7 +476,11 @@ def api_get_session(session_id):
                 "overall_risk_score": session_obj.overall_risk_score,
                 "overall_severity": session_obj.overall_severity,
                 "total_endpoints_found": session_obj.total_endpoints_found,
-                "total_vulnerabilities_found": session_obj.total_vulnerabilities_found
+                "total_vulnerabilities_found": session_obj.total_vulnerabilities_found,
+                "progress_done": int(session_obj.progress_done or 0),
+                "progress_total": int(session_obj.progress_total or 0),
+                "progress_stage": session_obj.progress_stage or "",
+                "progress_eta": format_scan_eta(session_obj)
             },
             "endpoints": endpoints_data,
             "findings": findings_data
@@ -359,7 +490,10 @@ def api_get_session(session_id):
 
 
 @dashboard_bp.route("/api/sessions/<int:session_id>", methods=["DELETE"])
+@login_required
 def api_delete_session(session_id):
+    if not get_session_for_user(session_id, get_current_user_id()):
+        return jsonify({"status": "error", "message": "Session not found"}), 404
     success = delete_session(session_id)
     if success:
         return jsonify({"status": "success", "message": f"Session {session_id} deleted"}), 200
@@ -367,6 +501,7 @@ def api_delete_session(session_id):
 
 
 @dashboard_bp.route("/api/scan", methods=["POST"])
+@login_required
 def api_trigger_scan():
     req_json = request.get_json(silent=True) or {}
     target_url = req_json.get("target_url") or request.form.get("target_url")
@@ -379,7 +514,7 @@ def api_trigger_scan():
 
     # Run in the background: return 202 immediately so long scans never hit
     # HTTP timeouts. Poll GET /api/sessions/<id> (scan_status) for completion.
-    session_id = _launch_background_scan(normalized_or_reason)
+    session_id = _launch_background_scan(normalized_or_reason, user_id=get_current_user_id())
     return jsonify({
         "status": "accepted",
         "message": "Scan started in background; poll the session until scan_status is complete.",

@@ -17,7 +17,7 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session
+from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress
 from database.models import ScanSession, Endpoint, Finding, Report
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
@@ -85,6 +85,16 @@ def _is_csrf_candidate(ep_info: Dict[str, Any]) -> bool:
     return "csrf" in path and form_method in {"GET", "POST", "PUT", "PATCH", "DELETE"} and has_form_fields and not (ep_info.get("csrf_token_fields") or [])
 
 
+# Query/form parameter names that conventionally carry a redirect target. The
+# open-redirect probe is selected when an endpoint exposes one of these, so
+# endpoints like /go?url= are tested instead of only path-keyword matches.
+_OPEN_REDIRECT_PARAMS = {
+    "url", "redirect", "redirect_url", "redirecturl", "redir", "rurl",
+    "next", "return", "return_url", "returnurl", "dest", "destination",
+    "target", "continue", "forward", "goto",
+}
+
+
 def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str, Any]]):
     """Select a bounded, non-destructive probe set for an endpoint/module."""
     path = urlsplit(ep_info.get("url", "")).path.lower()
@@ -109,7 +119,7 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
     elif "xss_s" in path:
         # Do not create persistent stored-XSS content on a shared public lab.
         selected = []
-    elif "open_redirect" in path or "redirect" in path or "redirect" in query_fields:
+    elif "open_redirect" in path or "redirect" in path or "redirect" in query_fields or query_fields & _OPEN_REDIRECT_PARAMS:
         selected = [by_type["Open_Redirect"]]
     elif "/register" in path:
         selected = [by_type.get("Mass_Assignment", by_type["Baseline_Inspection"])]
@@ -298,6 +308,13 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             db.close()
     else:
         session_obj = save_scan_session(target_url=target_url, total_endpoints=len(discovered_endpoints))
+    # Progress baseline for the live "time left" banner (reset even on reuse).
+    update_scan_progress(
+        session_obj.id,
+        done=0,
+        total=len(discovered_endpoints),
+        stage="Discovering endpoints" if not discovered_endpoints else "Testing endpoints",
+    )
     vulnerability_count = 0
     total_scores = []
 
@@ -482,7 +499,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             baseline_telemetry = {
                 "status_code": baseline_req.get("status_code", 200),
                 "response_size": baseline_req.get("response_size", 0),
-                "response_time": baseline_req.get("response_time", 0.0)
+                "response_time": baseline_req.get("response_time", 0.0),
+                # The signature layer diffs response bodies against this; without
+                # it every non-empty response looked "100% different" and produced
+                # bogus differential-response findings on clean endpoints.
+                "response_body": baseline_req.get("response_body", ""),
             }
 
             baseline_is_frontend_shell = _is_frontend_shell_response(
@@ -637,6 +658,12 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                         response_time=req_data.get("response_time", 0.0)
                     )
 
+            # Bump the live progress counter so the results page can show
+            # "endpoint X of Y — about Z left".
+            update_scan_progress(session_obj.id, done=idx)
+
+        # Final risk roll-up ------------------------------------------------
+        update_scan_progress(session_obj.id, stage="Finalizing results")
         overall_score = round(max(total_scores), 2) if total_scores else 0.0
         overall_severity = RiskScorer.classify_severity(overall_score)
         # Session-level calibration: with zero confirmed vulnerabilities the
