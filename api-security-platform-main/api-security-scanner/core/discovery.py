@@ -141,8 +141,8 @@ class EndpointDiscovery:
         logger.info(f"Starting endpoint discovery on target: {self.base_url}")
         print(f"\n[+] Starting Endpoint Discovery for: {self.base_url}")
 
-        self._discover_openapi_specs()
         self._emit_progress()
+        self._discover_openapi_specs()
         self._crawl_page(self.base_url, depth=0)
         self._probe_common_paths()
 
@@ -326,7 +326,7 @@ class EndpointDiscovery:
 
     def _probe_common_paths(self) -> None:
         with build_client(httpx.Client, **client_kwargs(self.timeout)) as client:
-            for relative_path in self.COMMON_API_PATHS:
+            for idx, relative_path in enumerate(self.COMMON_API_PATHS):
                 target_url = f"{self.base_url}{relative_path}"
                 if target_url not in self.visited_urls:
                     try:
@@ -340,6 +340,8 @@ class EndpointDiscovery:
                                 self.discovered_endpoints.append({"url": target_url, "method": "POST"})
                     except httpx.RequestError:
                         continue
+                if idx % 10 == 0:
+                    self._emit_progress()
 
 
 if __name__ == "__main__":
