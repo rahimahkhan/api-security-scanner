@@ -158,6 +158,33 @@ def _safe_extract_auth_token(login_response: Dict[str, Any]) -> str:
     return ""
 
 
+def _identity_api_verified(probe_response: Dict[str, Any]) -> bool:
+    """Return True only if a /users/v1/register probe behaved like a working identity API.
+
+    Discovery wordlist-guesses /users/v1/* paths, and soft-404 sites answer 200
+    to every URL -- so a "discovered" path alone does not prove a real identity
+    API exists. Requiring a 2xx JSON response from one real registration attempt
+    keeps the BOLA gate honest on arbitrary targets while still arming on real
+    VAmPI-style deployments.
+    """
+    try:
+        resp = probe_response or {}
+        status = resp.get("status_code")
+        if not isinstance(status, int) or not 200 <= status < 300:
+            return False
+        headers = {str(k).lower(): v for k, v in (resp.get("response_headers") or {}).items()}
+        if "json" in str(headers.get("content-type", "")).lower():
+            return True
+        body = resp.get("response_body") or ""
+        try:
+            parsed = json.loads(body) if isinstance(body, str) else body
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return False
+        return isinstance(parsed, dict)
+    except Exception:
+        return False
+
+
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
     r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
@@ -277,6 +304,29 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
     try:
         # --- Identity/BOLA proof probes (VAmPI-style /users/v1/* only) ---
         if vampi_identity_found:
+            # The /users/v1/* paths may come from discovery's own wordlist
+            # guesses: soft-404 sites answer 200 to everything, which would
+            # wrongly arm the gate. Verify with one real registration attempt
+            # using a dedicated gatecheck identity -- only a 2xx JSON response
+            # proves a working identity API worth probing.
+            _gatecheck_resp = request_engine.send_request(
+                "POST",
+                target_url.rstrip("/") + "/users/v1/register",
+                json_payload={
+                    "username": "gatecheck_qa",
+                    "password": "GateCheckPass123!",
+                    "email": "gatecheck_qa@test.local",
+                },
+                custom_headers={"Content-Type": "application/json"},
+            )
+            vampi_identity_found = _identity_api_verified(_gatecheck_resp)
+            if not vampi_identity_found:
+                logger.info(
+                    "Skipping VAmPI identity/BOLA probes: /users/v1/register did not behave like a working identity API (status=%s)",
+                    (_gatecheck_resp or {}).get("status_code"),
+                )
+
+        if vampi_identity_found:
             # --- BOLA setup: create two real, distinct identities to test cross-object access ---
             attacker_creds = {"username": "attacker_qa", "password": "AttackerPass123!", "email": "attacker_qa@test.local"}
             victim_creds = {"username": "victim_qa", "password": "VictimPass123!", "email": "victim_qa@test.local"}
@@ -375,14 +425,17 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 custom_headers={"Content-Type": "application/json"}
             )
             attacker_token = _safe_extract_auth_token(attacker_login)
-            run_direct_probe(
-                "BOLA_IDOR",
-                "PUT",
-                f"/users/v1/{victim_creds['username']}/password",
-                {"Authorization": f"Bearer {attacker_token}", "Content-Type": "application/json"},
-                {"password": "hijacked_by_attacker_qa"},
-                "cross_identity_probe"
-            )
+            if attacker_token:
+                run_direct_probe(
+                    "BOLA_IDOR",
+                    "PUT",
+                    f"/users/v1/{victim_creds['username']}/password",
+                    {"Authorization": f"Bearer {attacker_token}", "Content-Type": "application/json"},
+                    {"password": "hijacked_by_attacker_qa"},
+                    "cross_identity_probe"
+                )
+            else:
+                logger.info("Skipping BOLA_IDOR probe: attacker login yielded no auth token")
 
             mass_login = request_engine.send_request(
                 "POST",
@@ -391,14 +444,17 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 custom_headers={"Content-Type": "application/json"}
             )
             mass_assign_token = _safe_extract_auth_token(mass_login)
-            run_direct_probe(
-                "Mass_Assignment",
-                "DELETE",
-                f"/users/v1/{canary_creds['username']}",
-                {"Authorization": f"Bearer {mass_assign_token}"},
-                None,
-                "mass_assignment_probe"
-            )
+            if mass_assign_token:
+                run_direct_probe(
+                    "Mass_Assignment",
+                    "DELETE",
+                    f"/users/v1/{canary_creds['username']}",
+                    {"Authorization": f"Bearer {mass_assign_token}"},
+                    None,
+                    "mass_assignment_probe"
+                )
+            else:
+                logger.info("Skipping Mass_Assignment probe: login yielded no auth token")
 
         active_test_queue = [
             {"type": "GraphQL_Introspection", "payload": "{ __schema { queryType { fields { name } } } }", "method": "POST", "json_payload": {"query": "{ __schema { queryType { fields { name } } } }",}, "headers": {"Content-Type": "application/json"}},
