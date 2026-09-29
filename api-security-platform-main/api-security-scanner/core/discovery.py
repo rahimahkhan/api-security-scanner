@@ -75,7 +75,8 @@ class EndpointDiscovery:
         "/api/v1/register"
     ]
 
-    def __init__(self, base_url: str, timeout: float = 10.0, max_depth: int = 3):
+    def __init__(self, base_url: str, timeout: float = 10.0, max_depth: int = 3,
+                 progress_callback=None):
         parsed_input = urlparse(base_url)
         normalized_input_path = parsed_input.path
         if normalized_input_path.endswith("/."):
@@ -89,6 +90,18 @@ class EndpointDiscovery:
         self.max_depth = max_depth
         self.visited_urls: Set[str] = set()
         self.discovered_endpoints: List[Dict[str, str]] = []
+        # Optional hook called as progress_callback(pages_crawled, endpoints_found)
+        # so long crawls can report live progress (e.g. the dashboard ETA banner).
+        self.progress_callback = progress_callback
+
+    def _emit_progress(self) -> None:
+        """Report crawl progress; never let a callback bug break discovery."""
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(len(self.visited_urls), len(self.discovered_endpoints))
+        except Exception as exc:
+            logger.debug(f"Discovery progress callback failed: {exc}")
 
     @staticmethod
     def query_fields(url: str) -> List[str]:
@@ -129,6 +142,7 @@ class EndpointDiscovery:
         print(f"\n[+] Starting Endpoint Discovery for: {self.base_url}")
 
         self._discover_openapi_specs()
+        self._emit_progress()
         self._crawl_page(self.base_url, depth=0)
         self._probe_common_paths()
 
@@ -307,6 +321,8 @@ class EndpointDiscovery:
             logger.warning(f"Request error while crawling {current_url}: {exc}")
         except Exception as exc:
             logger.error(f"Unexpected error crawling {current_url}: {exc}")
+        finally:
+            self._emit_progress()
 
     def _probe_common_paths(self) -> None:
         with build_client(httpx.Client, **client_kwargs(self.timeout)) as client:

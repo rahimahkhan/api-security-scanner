@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import os
+import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any
@@ -234,6 +235,34 @@ def validate_target_url(target_url: Any) -> "tuple[bool, str]":
     return True, candidate
 
 
+def _make_discovery_progress_callback(session_id, min_interval: float = 3.0):
+    """Build the discovery progress hook for run_pipeline.
+
+    Returns a callback suitable for EndpointDiscovery's progress_callback that
+    records crawl progress on the scan session so the results page can show
+    live "Discovering pages: N crawled…" progress. DB writes are throttled to
+    one per min_interval seconds. When session_id is None (CLI runs, where no
+    session exists yet during discovery) the callback is a no-op.
+    """
+    last_emit = [0.0]
+
+    def _callback(pages_crawled: int, endpoints_found: int) -> None:
+        if session_id is None:
+            return
+        now = time.monotonic()
+        if now - last_emit[0] < min_interval:
+            return
+        last_emit[0] = now
+        update_scan_progress(
+            session_id,
+            done=pages_crawled,
+            total=0,
+            stage=f"Discovering pages ({endpoints_found} endpoints found)",
+        )
+
+    return _callback
+
+
 def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None):
     """Run the full scan pipeline.
 
@@ -256,7 +285,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
     # 1. Endpoint Discovery
     logger.info("Initializing Endpoint Discovery...")
-    discoverer = EndpointDiscovery(base_url=target_url, timeout=SCAN_TIMEOUT)
+    discoverer = EndpointDiscovery(
+        base_url=target_url,
+        timeout=SCAN_TIMEOUT,
+        progress_callback=_make_discovery_progress_callback(session_id),
+    )
     discovered_endpoints = discoverer.discover()
 
     if os.getenv("READ_ONLY_SAFE", "0").lower() in {"1", "true", "yes", "on"}:

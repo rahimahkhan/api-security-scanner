@@ -29,6 +29,8 @@
             if (s.progress_eta) { label += " \u2014 " + s.progress_eta; }
             if (text) { text.textContent = label; }
             if (fill) { fill.style.width = pct + "%"; fill.classList.add("determinate"); }
+        } else if (done > 0) {
+            text.textContent = (s.progress_stage || "Discovering pages") + ": " + done + " pages crawled so far\u2026";
         } else if (text) {
             text.textContent = (s.progress_stage || "Starting scan") + "\u2026";
         }
