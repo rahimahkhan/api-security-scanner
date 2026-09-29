@@ -26,7 +26,7 @@ MAX_ENDPOINTS = int(os.getenv("MAX_ENDPOINTS", 20))
 SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", 30))
 
 # Flask & Dashboard Settings
-FLASK_PORT = int(os.getenv("FLASK_PORT", 5000))
+FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5000)))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "False") == "True"
 SECRET_KEY = os.getenv("SECRET_KEY", "default-secure-key")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
