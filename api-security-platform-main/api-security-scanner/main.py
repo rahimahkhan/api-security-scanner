@@ -139,6 +139,23 @@ def _resolve_test_method(ep_info: Dict[str, Any], test_item: Dict[str, Any], def
     return test_item.get("method", default_method).upper()
 
 
+def _safe_extract_auth_token(login_response: Dict[str, Any]) -> str:
+    """Extract auth_token from a login probe response without ever raising.
+
+    A failed/unreachable/non-JSON login probe must degrade to an empty token,
+    not kill the whole scan (previously json.loads("") raised JSONDecodeError
+    and the pipeline returned None -> HTTP 500 on /api/scan).
+    """
+    try:
+        body = (login_response or {}).get("response_body") or "{}"
+        data = json.loads(body)
+        if isinstance(data, dict):
+            return str(data.get("auth_token", "") or "")
+    except (json.JSONDecodeError, TypeError, ValueError, AttributeError) as exc:
+        logger.warning("Could not extract auth token from login probe: %s", exc)
+    return ""
+
+
 def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False):
     print("\n" + "="*65)
     print("      API SECURITY & ANOMALY DETECTION PLATFORM")
@@ -280,7 +297,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             json_payload={"username": attacker_creds["username"], "password": attacker_creds["password"]},
             custom_headers={"Content-Type": "application/json"}
         )
-        attacker_token = json.loads(attacker_login.get("response_body", "{}")).get("auth_token", "")
+        attacker_token = _safe_extract_auth_token(attacker_login)
         run_direct_probe(
             "BOLA_IDOR",
             "PUT",
@@ -296,7 +313,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             json_payload={"username": mass_assign_creds["username"], "password": mass_assign_creds["password"]},
             custom_headers={"Content-Type": "application/json"}
         )
-        mass_assign_token = json.loads(mass_login.get("response_body", "{}")).get("auth_token", "")
+        mass_assign_token = _safe_extract_auth_token(mass_login)
         run_direct_probe(
             "Mass_Assignment",
             "DELETE",
