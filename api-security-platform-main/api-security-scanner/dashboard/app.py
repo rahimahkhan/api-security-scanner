@@ -1,6 +1,7 @@
 import os
 import sys
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,6 +24,10 @@ def create_app():
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     app.jinja_env.cache = {}
+
+    # Trust Render's (or any) reverse proxy for scheme/host so url_for and
+    # request.url_root produce correct https URLs (matters for OAuth callbacks).
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
     # Initialize Database Tables
     init_db()

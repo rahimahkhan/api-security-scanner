@@ -39,6 +39,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'database.db'}"
 DASHBOARD_AUTH_ENABLED = os.getenv("DASHBOARD_AUTH_ENABLED", "True") == "True"
 CSRF_ENABLED = os.getenv("CSRF_ENABLED", "True") == "True"
 
+# Google OAuth ("Sign in with Google"). Create an OAuth client in the Google
+# Cloud Console and set these two env vars; the authorized redirect URI is
+# https://<your-domain>/auth/google/callback. When unset, the Google button
+# is hidden and password login/signup keeps working.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+
 
 def _detect_app_version() -> str:
     """Short version/commit string shown in the dashboard footer.

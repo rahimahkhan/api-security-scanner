@@ -104,10 +104,10 @@ def test_login_wrong_password(authed_app):
     assert _signup(client, name).status_code == 302
     try:
         client.get("/logout")
-        r = client.post("/login", data={"username": name, "password": "wrongpass1"})
-        assert r.status_code == 200 and b"Invalid username or password" in r.data
+        r = client.post("/login", data={"identifier": name, "password": "wrongpass1"})
+        assert r.status_code == 200 and b"Invalid username/email or password" in r.data
         # correct password works
-        r = client.post("/login", data={"username": name, "password": "password123"})
+        r = client.post("/login", data={"identifier": name, "password": "password123"})
         assert r.status_code == 302
     finally:
         _cleanup_user(get_user_by_username(name))

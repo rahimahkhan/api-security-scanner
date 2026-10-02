@@ -5,8 +5,11 @@ import secrets
 import threading
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import Optional
+from urllib.parse import urlencode
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
+import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -15,6 +18,8 @@ from config.settings import (
     DASHBOARD_AUTH_ENABLED,
     CSRF_ENABLED,
     APP_VERSION,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
 )
 from sqlalchemy.orm import joinedload
 from database.db import (
@@ -22,7 +27,8 @@ from database.db import (
     fail_scan_session, touch_scan_session, format_scan_eta,
     get_all_sessions, get_session_for_user, get_session_findings,
     get_finding_by_id, delete_session, SessionLocal,
-    create_user, get_user_by_username,
+    create_user, get_user_by_username, get_user_by_email,
+    get_user_by_google_id, link_google_account,
 )
 from database.models import ScanSession, Finding, Endpoint
 from core.discovery import EndpointDiscovery
@@ -186,18 +192,26 @@ def login():
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.index")
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
+        identifier = request.form.get("identifier", "").strip()
         password = request.form.get("password", "")
-        user = get_user_by_username(username) if username else None
+        user = None
+        if identifier:
+            # Accept either a username or an email address.
+            if "@" in identifier:
+                user = get_user_by_email(identifier)
+            if user is None:
+                user = get_user_by_username(identifier)
         if user and check_password_hash(user.password_hash, password):
             session["user_id"] = user.id
             session["username"] = user.username
             return redirect(next_url)
-        error = "Invalid username or password"
-    return render_template("login.html", error=error, next_url=next_url)
+        error = "Invalid username/email or password"
+    return render_template("login.html", error=error, next_url=next_url,
+                           google_oauth_enabled=google_oauth_enabled())
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 @dashboard_bp.route("/signup", methods=["GET", "POST"])
@@ -209,10 +223,15 @@ def signup():
     error = None
     if request.method == "POST":
         username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
         if not USERNAME_RE.match(username):
             error = "Username must be 3-32 characters: letters, numbers, dot, dash, underscore."
+        elif email and not EMAIL_RE.match(email):
+            error = "That doesn't look like a valid email address."
+        elif email and get_user_by_email(email):
+            error = "An account with that email already exists — try logging in."
         elif len(password) < 8:
             error = "Password must be at least 8 characters."
         elif password != confirm:
@@ -220,18 +239,146 @@ def signup():
         elif get_user_by_username(username):
             error = "That username is already taken."
         else:
-            user = create_user(username, generate_password_hash(password))
+            user = create_user(username, generate_password_hash(password),
+                               email=email or None)
             session["user_id"] = user.id
             session["username"] = user.username
             logger.info(f"New dashboard user signed up: {username}")
             return redirect(url_for("dashboard.index"))
-    return render_template("signup.html", error=error)
+    return render_template("signup.html", error=error,
+                           google_oauth_enabled=google_oauth_enabled())
+
+
+# ---------------------------------------------------------------------------
+# Sign in with Google (OAuth 2.0)
+# ---------------------------------------------------------------------------
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+def google_oauth_enabled() -> bool:
+    """True once GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET env vars are set."""
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+
+
+def _google_redirect_uri() -> str:
+    """Absolute OAuth callback URL. An explicit GOOGLE_REDIRECT_URI env var
+    wins; otherwise it is derived from the current request (ProxyFix keeps
+    the https scheme correct behind Render's proxy)."""
+    explicit = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+    if explicit:
+        return explicit
+    return request.url_root.rstrip("/") + url_for("dashboard.google_callback")
+
+
+def _suggest_username(email: str, name: Optional[str] = None) -> str:
+    """Unique, valid username derived from a Google profile."""
+    base = re.sub(r"[^A-Za-z0-9_.-]", "", (name or email.split("@")[0]).replace(" ", "."))[:20]
+    if len(base) < 3:
+        base = (base + "user")[:20]
+    candidate = base
+    i = 0
+    while get_user_by_username(candidate):
+        i += 1
+        candidate = f"{base}{i}"[:32]
+    return candidate
+
+
+@dashboard_bp.route("/auth/google")
+def google_login():
+    if not is_auth_enabled():
+        return redirect(url_for("dashboard.index"))
+    if session.get("user_id"):
+        return redirect(url_for("dashboard.index"))
+    if not google_oauth_enabled():
+        return redirect(url_for("dashboard.login"))
+    state = secrets.token_urlsafe(32)
+    session["google_oauth_state"] = state
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    return redirect(GOOGLE_AUTH_URL + "?" + urlencode(params))
+
+
+@dashboard_bp.route("/auth/google/callback")
+def google_callback():
+    if not google_oauth_enabled():
+        return redirect(url_for("dashboard.login"))
+    error = None
+    try:
+        if request.args.get("error"):
+            raise ValueError("Google sign-in was cancelled.")
+        code = request.args.get("code", "")
+        state = request.args.get("state", "")
+        expected_state = session.pop("google_oauth_state", None)
+        if not code or not state or not expected_state or not secrets.compare_digest(state, expected_state):
+            raise ValueError("Invalid OAuth state — please try again.")
+        token_resp = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri": _google_redirect_uri(),
+                "grant_type": "authorization_code",
+            },
+            timeout=20,
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json().get("access_token", "")
+        if not access_token:
+            raise ValueError("Google did not return an access token.")
+        info_resp = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        info_resp.raise_for_status()
+        profile = info_resp.json()
+        google_id = str(profile.get("sub", ""))
+        email = (profile.get("email") or "").strip()
+        if not google_id or not email:
+            raise ValueError("Google did not return a usable profile.")
+        if not profile.get("email_verified", True):
+            raise ValueError("That Google account's email is not verified.")
+
+        user = get_user_by_google_id(google_id)
+        if user is None and email:
+            # Link to an existing password account with the same email so one
+            # person keeps a single account and a single scan history.
+            existing = get_user_by_email(email)
+            if existing:
+                user = link_google_account(existing.id, google_id,
+                                           name=profile.get("name"),
+                                           avatar_url=profile.get("picture"))
+        if user is None:
+            username = _suggest_username(email, profile.get("name"))
+            # Random, unusable password: this account signs in via Google.
+            user = create_user(username, generate_password_hash(secrets.token_hex(32)),
+                               email=email, google_id=google_id,
+                               name=profile.get("name"), avatar_url=profile.get("picture"))
+            logger.info(f"New dashboard user via Google: {username} ({email})")
+        session["user_id"] = user.id
+        session["username"] = user.username
+        return redirect(url_for("dashboard.index"))
+    except Exception as exc:  # never leak OAuth internals to the page
+        logger.warning(f"Google OAuth failed: {exc}")
+        error = str(exc) if isinstance(exc, ValueError) else "Google sign-in failed — please try again."
+    return render_template("login.html", error=error, next_url=url_for("dashboard.index"),
+                           google_oauth_enabled=True)
 
 
 @dashboard_bp.route("/logout")
 def logout():
     session.pop("user_id", None)
     session.pop("username", None)
+    session.pop("google_oauth_state", None)
     session.pop("authenticated", None)  # legacy key, harmless
     return redirect(url_for("dashboard.index"))
 

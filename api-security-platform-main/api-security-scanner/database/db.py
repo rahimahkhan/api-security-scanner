@@ -67,6 +67,26 @@ def init_db():
                 conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_stage VARCHAR(80) DEFAULT ''"))
                 conn.commit()
                 logger.info("Migrated scan_sessions table: added progress tracking columns.")
+            # Email + Google OAuth columns for dashboard accounts.
+            result = conn.execute(text("PRAGMA table_info(users)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns:
+                if "email" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN email VARCHAR(255)"))
+                    conn.commit()
+                    logger.info("Migrated users table: added email column.")
+                if "google_id" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN google_id VARCHAR(255)"))
+                    conn.commit()
+                    logger.info("Migrated users table: added google_id column.")
+                if "name" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN name VARCHAR(120)"))
+                    conn.commit()
+                    logger.info("Migrated users table: added name column.")
+                if "avatar_url" not in columns:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url VARCHAR(500)"))
+                    conn.commit()
+                    logger.info("Migrated users table: added avatar_url column.")
         except Exception as exc:
             logger.warning(f"Database migration check: {exc}")
     logger.info("Database tables initialized successfully.")
@@ -171,10 +191,13 @@ def format_scan_eta(scan) -> str:
         return ""
 
 
-def create_user(username: str, password_hash: str) -> User:
+def create_user(username: str, password_hash: str, email: Optional[str] = None,
+                google_id: Optional[str] = None, name: Optional[str] = None,
+                avatar_url: Optional[str] = None) -> User:
     db = SessionLocal()
     try:
-        user = User(username=username, password_hash=password_hash)
+        user = User(username=username, password_hash=password_hash, email=email,
+                    google_id=google_id, name=name, avatar_url=avatar_url)
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -191,6 +214,51 @@ def get_user_by_username(username: str) -> Optional[User]:
         user = db.query(User).filter(User.username == username).first()
         if user:
             db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def get_user_by_email(email: str) -> Optional[User]:
+    """Case-insensitive email lookup (emails are matched ignoring case)."""
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(func.lower(User.email) == email.strip().lower()).first()
+        if user:
+            db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def get_user_by_google_id(google_id: str) -> Optional[User]:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.google_id == google_id).first()
+        if user:
+            db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def link_google_account(user_id: int, google_id: str, name: Optional[str] = None,
+                        avatar_url: Optional[str] = None) -> Optional[User]:
+    """Attach a Google identity to an existing account (password login keeps working)."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return None
+        user.google_id = google_id
+        if name and not user.name:
+            user.name = name
+        if avatar_url:
+            user.avatar_url = avatar_url
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
         return user
     finally:
         db.close()

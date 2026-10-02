@@ -133,7 +133,8 @@ def test_dashboard_auth_workflow():
     app.config["TESTING"] = True
     app.config["DASHBOARD_AUTH_ENABLED"] = True
     client = app.test_client()
-    username = "authwf_user"
+    import uuid as _uuid
+    username = f"authwf_user_{_uuid.uuid4().hex[:8]}"
 
     # Unauthenticated access redirects to /login
     res = client.get("/")
@@ -154,12 +155,12 @@ def test_dashboard_auth_workflow():
     assert res_after.status_code == 302
 
     # Login with wrong credentials fails
-    res_bad_login = client.post("/login", data={"username": username, "password": "wrong"})
+    res_bad_login = client.post("/login", data={"identifier": username, "password": "wrong"})
     assert res_bad_login.status_code == 200
-    assert b"Invalid username or password" in res_bad_login.data
+    assert b"Invalid username/email or password" in res_bad_login.data
 
     # Login with correct credentials succeeds
-    res_login = client.post("/login", data={"username": username, "password": "pass_test_123"})
+    res_login = client.post("/login", data={"identifier": username, "password": "pass_test_123"})
     assert res_login.status_code == 302
     assert client.get("/").status_code == 200
 
