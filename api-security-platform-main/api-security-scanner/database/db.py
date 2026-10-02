@@ -67,6 +67,14 @@ def init_db():
                 conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_stage VARCHAR(80) DEFAULT ''"))
                 conn.commit()
                 logger.info("Migrated scan_sessions table: added progress tracking columns.")
+            # Watchdog timestamp: last real progress (see ScanSession.progress_updated_at).
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "progress_updated_at" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN progress_updated_at DATETIME"))
+                conn.execute(text("UPDATE scan_sessions SET progress_updated_at = updated_at WHERE progress_updated_at IS NULL"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added progress_updated_at column.")
             # Email + Google OAuth columns for dashboard accounts.
             result = conn.execute(text("PRAGMA table_info(users)"))
             columns = [row[1] for row in result.fetchall()]
@@ -146,7 +154,9 @@ def update_scan_progress(session_id: int, done: int = None, total: int = None,
                          stage: str = None) -> None:
     """Record scan progress for the live 'time left' banner. Only the
     arguments that are not None are updated, so the worker can bump just
-    the counter per endpoint without rewriting the rest."""
+    the counter per endpoint without rewriting the rest. Also refreshes
+    progress_updated_at, which the stale-progress watchdog uses to detect
+    a stuck worker (unlike updated_at, the heartbeat can't advance this)."""
     db = SessionLocal()
     try:
         session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
@@ -159,6 +169,7 @@ def update_scan_progress(session_id: int, done: int = None, total: int = None,
         if stage is not None:
             session_obj.progress_stage = str(stage)[:80]
         session_obj.updated_at = datetime.utcnow()
+        session_obj.progress_updated_at = datetime.utcnow()
         db.commit()
     finally:
         db.close()

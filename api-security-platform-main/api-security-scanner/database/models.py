@@ -29,6 +29,12 @@ class ScanSession(Base):
     progress_done = Column(Integer, default=0)
     progress_total = Column(Integer, default=0)
     progress_stage = Column(String(80), default="")
+    # Last time real progress was recorded (any update_scan_progress call).
+    # Unlike updated_at (the worker heartbeat, which only proves the process
+    # is alive), a stale progress_updated_at on a "running" scan means the
+    # worker is stuck and the scan is reaped as failed instead of hanging
+    # on "Scan in progress..." forever.
+    progress_updated_at = Column(DateTime, nullable=True)
 
     endpoints = relationship("Endpoint", back_populates="session", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="session", cascade="all, delete-orphan")

@@ -47,6 +47,12 @@ dashboard_bp = Blueprint("dashboard", __name__)
 # reaped as failed so the UI stops polling it forever.
 STALE_SCAN_AFTER_SECONDS = 600
 HEARTBEAT_INTERVAL_SECONDS = 60
+# A "running" scan that made no progress for longer than this is considered
+# stuck (the worker is alive — heartbeat is fresh — but wedged on one step)
+# and is reaped as failed so the UI shows "Scan failed" instead of
+# "Scan in progress..." forever. Must comfortably exceed the worst legitimate
+# single-endpoint time (bounded by ENDPOINT_DISPATCH_TIMEOUT in main.py).
+PROGRESS_STALL_AFTER_SECONDS = int(os.getenv("PROGRESS_STALL_AFTER_SECONDS", "900"))
 
 
 def _scan_worker(target_url: str, session_id: int) -> None:
@@ -110,6 +116,20 @@ def reap_stale_scan(db_session, session_obj) -> bool:
             f">{STALE_SCAN_AFTER_SECONDS}s; marked failed."
         )
         return True
+    # Progress watchdog: the worker is alive (heartbeat fresh) but hasn't
+    # recorded any progress for a long time — it's wedged. Fail honestly
+    # instead of showing "Scan in progress..." forever.
+    progress_ts = getattr(session_obj, "progress_updated_at", None)
+    if progress_ts is not None:
+        if datetime.utcnow() - progress_ts > timedelta(seconds=PROGRESS_STALL_AFTER_SECONDS):
+            session_obj.status = "failed"
+            session_obj.scan_end_time = datetime.utcnow()
+            logger.warning(
+                f"Reaped stuck scan {session_obj.id}: no progress for "
+                f">{PROGRESS_STALL_AFTER_SECONDS}s (last: done={session_obj.progress_done}/"
+                f"{session_obj.progress_total} stage={session_obj.progress_stage!r}); marked failed."
+            )
+            return True
     return False
 
 

@@ -5,7 +5,7 @@ import sys
 import os
 import time
 import urllib.parse
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait
 from typing import List, Dict, Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +24,38 @@ from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
 
 ACTIVE_CONCURRENCY = max(1, int(os.getenv("ACTIVE_CONCURRENCY", "4")))
+# Total budget for one endpoint's concurrent probe batch. A single probe can
+# hang past the per-request timeout (e.g. DNS stalls aren't covered by it);
+# without this cap one wedged probe stalls the whole scan forever.
+ENDPOINT_DISPATCH_TIMEOUT = max(60, int(os.getenv("ENDPOINT_DISPATCH_TIMEOUT", "300")))
+
+
+def _dispatch_bounded(dispatch, prepared_requests, max_workers, timeout):
+    """Run prepared probe requests concurrently, but never wait longer than
+    `timeout` seconds for the batch: probes still hanging after the budget
+    are dropped so one wedged request can't stall the whole scan. Returns
+    results in the original prepared order. Exceptions raised by finished
+    probes propagate, matching the old executor.map behaviour."""
+    executor = ThreadPoolExecutor(max_workers=max(1, max_workers))
+    try:
+        future_to_index = {executor.submit(dispatch, item): i for i, item in enumerate(prepared_requests)}
+        done, not_done = _futures_wait(future_to_index.keys(), timeout=timeout)
+        if not_done:
+            logger.warning(
+                "Probe dispatch budget exceeded: %d/%d probes still hanging after %ds; "
+                "continuing with the %d that finished",
+                len(not_done), len(prepared_requests), timeout, len(done),
+            )
+            for fut in not_done:
+                fut.cancel()
+        ordered = sorted(
+            ((future_to_index[fut], fut) for fut in done),
+            key=lambda pair: pair[0],
+        )
+        return [fut.result() for _, fut in ordered]
+    finally:
+        # Don't block on hung probes: release the pool and move on.
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _is_frontend_shell_response(url: str, response_headers: Dict[str, Any], response_body: str, payload: str = "") -> bool:
@@ -602,8 +634,14 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
             # Requests are bounded and concurrent, but all detection and SQLite writes
             # remain sequential below so proof evaluation and persistence are deterministic.
-            with ThreadPoolExecutor(max_workers=min(ACTIVE_CONCURRENCY, max(1, len(prepared_requests)))) as executor:
-                dispatched_requests = list(executor.map(dispatch, prepared_requests))
+            # The dispatch budget caps the whole batch: one hung probe is dropped
+            # instead of wedging the scan on this endpoint forever.
+            dispatched_requests = _dispatch_bounded(
+                dispatch,
+                prepared_requests,
+                max_workers=min(ACTIVE_CONCURRENCY, max(1, len(prepared_requests))),
+                timeout=ENDPOINT_DISPATCH_TIMEOUT,
+            )
 
             for test_item, test_url, test_method, payload_str, req_data in dispatched_requests:
                 current_size = req_data.get("response_size", 0)
