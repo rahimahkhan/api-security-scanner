@@ -298,10 +298,15 @@ def set_user_password(user_id: int, password_hash: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Password-reset OTP tokens
+# Password-reset link tokens
 # ---------------------------------------------------------------------------
 
-def create_password_reset_token(user_id: int, otp_hash: str,
+def _hash_reset_token(token: str) -> str:
+    import hashlib
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_password_reset_token(user_id: int, token_hash: str,
                                 expires_at) -> "PasswordResetToken":
     from database.models import PasswordResetToken
     db = SessionLocal()
@@ -311,7 +316,7 @@ def create_password_reset_token(user_id: int, otp_hash: str,
             PasswordResetToken.user_id == user_id,
             PasswordResetToken.used == False,  # noqa: E712
         ).update({"used": True})
-        token = PasswordResetToken(user_id=user_id, otp_hash=otp_hash,
+        token = PasswordResetToken(user_id=user_id, token_hash=token_hash,
                                    expires_at=expires_at)
         db.add(token)
         db.commit()
@@ -322,34 +327,20 @@ def create_password_reset_token(user_id: int, otp_hash: str,
         db.close()
 
 
-def get_latest_valid_reset_token(user_id: int) -> Optional["PasswordResetToken"]:
-    """Newest unused, unexpired token for the user (None if there isn't one)."""
+def get_valid_reset_token(token_hash: str) -> Optional["PasswordResetToken"]:
+    """Token matching this hash, if unused and unexpired (None otherwise)."""
     from datetime import datetime
     from database.models import PasswordResetToken
     db = SessionLocal()
     try:
         token = (db.query(PasswordResetToken)
-                 .filter(PasswordResetToken.user_id == user_id,
+                 .filter(PasswordResetToken.token_hash == token_hash,
                          PasswordResetToken.used == False,  # noqa: E712
                          PasswordResetToken.expires_at > datetime.utcnow())
-                 .order_by(PasswordResetToken.created_at.desc())
                  .first())
         if token:
             db.expunge(token)
         return token
-    finally:
-        db.close()
-
-
-def increment_reset_attempts(token_id: int) -> None:
-    from database.models import PasswordResetToken
-    db = SessionLocal()
-    try:
-        token = db.query(PasswordResetToken).filter(
-            PasswordResetToken.id == token_id).first()
-        if token:
-            token.attempts = (token.attempts or 0) + 1
-            db.commit()
     finally:
         db.close()
 

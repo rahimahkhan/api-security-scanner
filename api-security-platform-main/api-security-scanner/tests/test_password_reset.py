@@ -1,4 +1,4 @@
-"""Tests for the password policy, email allow-list, and forgot-password OTP flow."""
+"""Tests for the password policy, email allow-list, and forgot-password link flow."""
 import re
 from datetime import datetime, timedelta
 from unittest.mock import patch
@@ -10,8 +10,8 @@ from dashboard.app import create_app
 from dashboard.auth_validators import password_strength_error, validate_signup_email
 from database.db import (
     create_user, get_user_by_username, get_user_by_email, set_user_password,
-    create_password_reset_token, get_latest_valid_reset_token,
-    increment_reset_attempts, mark_reset_token_used,
+    create_password_reset_token, get_valid_reset_token,
+    mark_reset_token_used, _hash_reset_token,
 )
 
 
@@ -125,10 +125,10 @@ def test_signup_accepts_good_email(authed_app):
         _cleanup_user(get_user_by_username(name))
 
 
-# --- forgot-password OTP flow -------------------------------------------------
+# --- forgot-password link flow ------------------------------------------------
 
 def _make_user_with_email():
-    name = _unique("otpuser")
+    name = _unique("linkuser")
     email = f"{name}@gmail.com"
     user = create_user(name, generate_password_hash(STRONG), email=email)
     return user, email, name
@@ -141,9 +141,15 @@ def _csrf(client, path):
     return m.group(1)
 
 
+def _token_from_url(url):
+    m = re.search(r"[?&]token=([^&]+)", url)
+    assert m, f"no token in reset url: {url}"
+    return m.group(1)
+
+
 def test_forgot_password_unknown_email_says_nothing(authed_app):
     client = authed_app.test_client()
-    with patch("dashboard.routes.send_otp_email") as send:
+    with patch("dashboard.routes.send_reset_link_email") as send:
         r = client.post("/forgot-password", data={
             "csrf_token": _csrf(client, "/forgot-password"),
             "email": "nobody-here-xyz@gmail.com",
@@ -154,24 +160,27 @@ def test_forgot_password_unknown_email_says_nothing(authed_app):
         send.assert_not_called()
 
 
-def test_forgot_password_sends_otp_to_known_email(authed_app):
+def test_forgot_password_sends_link_to_known_email(authed_app):
     user, email, name = _make_user_with_email()
     client = authed_app.test_client()
     try:
         with patch("dashboard.routes.is_email_configured", return_value=True), \
-             patch("dashboard.routes.send_otp_email",
+             patch("dashboard.routes.send_reset_link_email",
                    return_value=(True, "sent")) as send:
             r = client.post("/forgot-password", data={
                 "csrf_token": _csrf(client, "/forgot-password"),
                 "email": email,
             })
             assert r.status_code == 200 and b"If an account exists" in r.data
+            assert b"reset link" in r.data
             send.assert_called_once()
-            to_addr, otp = send.call_args[0]
-            assert to_addr == email and re.fullmatch(r"\d{6}", otp)
-            token = get_latest_valid_reset_token(user.id)
-            assert token is not None
-            assert check_password_hash(token.otp_hash, otp)  # hash, not plaintext
+            to_addr, reset_url = send.call_args[0]
+            assert to_addr == email
+            assert "/reset-password?token=" in reset_url
+            token = _token_from_url(reset_url)
+            assert len(token) >= 32  # unguessable, not a short code
+            stored = get_valid_reset_token(_hash_reset_token(token))
+            assert stored is not None and stored.user_id == user.id
     finally:
         _cleanup_user(user)
 
@@ -187,83 +196,102 @@ def test_forgot_password_without_smtp_config(authed_app, monkeypatch):
             "email": email,
         })
         assert r.status_code == 200 and b"set up on this server" in r.data
-        assert get_latest_valid_reset_token(user.id) is None
+        assert get_valid_reset_token(_hash_reset_token("anything")) is None
     finally:
         _cleanup_user(user)
 
 
-def _request_otp(client, email):
-    """Drive the forgot-password form with a mocked mailer; return the OTP."""
+def _request_link(client, email):
+    """Drive the forgot-password form with a mocked mailer; return the token."""
     with patch("dashboard.routes.is_email_configured", return_value=True), \
-         patch("dashboard.routes.send_otp_email",
+         patch("dashboard.routes.send_reset_link_email",
                return_value=(True, "sent")) as send:
         client.post("/forgot-password", data={
             "csrf_token": _csrf(client, "/forgot-password"),
             "email": email,
         })
-        return send.call_args[0][1]
+        return _token_from_url(send.call_args[0][1])
 
 
-def _reset(client, email, otp, password=STRONG):
+def _reset_via_link(client, token, password=STRONG):
+    r = client.get(f"/reset-password?token={token}")
+    assert r.status_code == 200
     return client.post("/reset-password", data={
-        "csrf_token": _csrf(client, "/reset-password"),
-        "email": email, "otp": otp,
+        "csrf_token": _csrf(client, f"/reset-password?token={token}"),
+        "token": token,
         "password": password, "confirm_password": password,
     })
 
 
-def test_reset_password_happy_path(authed_app):
+def test_reset_link_happy_path(authed_app):
     user, email, name = _make_user_with_email()
     client = authed_app.test_client()
     try:
-        otp = _request_otp(client, email)
-        r = _reset(client, email, otp, password="NewPass456@")
+        token = _request_link(client, email)
+        # the emailed link opens the reset form directly (no email/code typing)
+        r = client.get(f"/reset-password?token={token}")
+        assert r.status_code == 200 and b"Choose a new password" in r.data
+        r = client.post("/reset-password", data={
+            "csrf_token": _csrf(client, f"/reset-password?token={token}"),
+            "token": token,
+            "password": "NewPass456@", "confirm_password": "NewPass456@",
+        })
         assert r.status_code == 200 and b"has been changed" in r.data
-        # new password works, old one doesn't
+        # new password works
         client.get("/logout")
         r = client.post("/login", data={"identifier": name, "password": "NewPass456@"})
         assert r.status_code == 302
-        # OTP is single-use
+        # link is single-use
         client.get("/logout")
-        r = _reset(client, email, otp, password="Another1@x")
+        r = client.get(f"/reset-password?token={token}")
         assert r.status_code == 200 and b"invalid or has expired" in r.data
     finally:
         _cleanup_user(user)
 
 
-def test_reset_password_wrong_otp_and_lockout(authed_app):
-    user, email, name = _make_user_with_email()
+def test_reset_link_invalid_token(authed_app):
     client = authed_app.test_client()
-    try:
-        _request_otp(client, email)
-        for _ in range(5):
-            r = _reset(client, email, "000000")
-            assert r.status_code == 200 and b"incorrect" in r.data
-        # 6th attempt: locked
-        r = _reset(client, email, "000000")
-        assert r.status_code == 200 and b"locked" in r.data
-        assert get_latest_valid_reset_token(user.id) is None
-    finally:
-        _cleanup_user(user)
+    r = client.get("/reset-password?token=does-not-exist")
+    assert r.status_code == 200 and b"invalid or has expired" in r.data
+    r = client.get("/reset-password")  # no token at all
+    assert r.status_code == 200 and b"invalid or has expired" in r.data
 
 
-def test_reset_password_expired_otp(authed_app):
+def test_reset_link_expired(authed_app):
     user, email, name = _make_user_with_email()
     try:
         create_password_reset_token(
-            user.id, generate_password_hash("123456"),
+            user.id, _hash_reset_token("expired-token-xyz"),
             datetime.utcnow() - timedelta(minutes=1))
-        assert get_latest_valid_reset_token(user.id) is None
+        r = authed_app.test_client().get("/reset-password?token=expired-token-xyz")
+        assert r.status_code == 200 and b"invalid or has expired" in r.data
     finally:
         _cleanup_user(user)
 
 
-def test_reset_password_rejects_weak_new_password(authed_app):
+def test_reset_link_second_request_invalidates_first(authed_app):
     user, email, name = _make_user_with_email()
     client = authed_app.test_client()
     try:
-        otp = _request_otp(client, email)
-        r = _reset(client, email, otp, password="weakpass1")
+        first = _request_link(client, email)
+        second = _request_link(client, email)
+        assert first != second
+        assert get_valid_reset_token(_hash_reset_token(first)) is None
+        assert get_valid_reset_token(_hash_reset_token(second)) is not None
+    finally:
+        _cleanup_user(user)
+
+
+def test_reset_link_rejects_weak_new_password(authed_app):
+    user, email, name = _make_user_with_email()
+    client = authed_app.test_client()
+    try:
+        token = _request_link(client, email)
+        r = client.post("/reset-password", data={
+            "csrf_token": _csrf(client, f"/reset-password?token={token}"),
+            "token": token,
+            "password": "weakpass1", "confirm_password": "weakpass1",
+        })
         assert r.status_code == 200 and b"capital letter" in r.data
         # old password still works
         client.get("/logout")
@@ -273,10 +301,19 @@ def test_reset_password_rejects_weak_new_password(authed_app):
         _cleanup_user(user)
 
 
-def test_reset_password_unknown_email_no_leak(authed_app):
+def test_reset_link_password_mismatch(authed_app):
+    user, email, name = _make_user_with_email()
     client = authed_app.test_client()
-    r = _reset(client, "ghost-xyz@gmail.com", "123456")
-    assert r.status_code == 200 and b"invalid or has expired" in r.data
+    try:
+        token = _request_link(client, email)
+        r = client.post("/reset-password", data={
+            "csrf_token": _csrf(client, f"/reset-password?token={token}"),
+            "token": token,
+            "password": "NewPass456@", "confirm_password": "Different1@",
+        })
+        assert r.status_code == 200 and b"do not match" in r.data
+    finally:
+        _cleanup_user(user)
 
 
 def test_set_user_password_db_helper(authed_app):
@@ -289,16 +326,14 @@ def test_set_user_password_db_helper(authed_app):
         _cleanup_user(user)
 
 
-def test_increment_and_mark_token_helpers(authed_app):
+def test_mark_token_used_helper(authed_app):
     user, _, _ = _make_user_with_email()
     try:
         token = create_password_reset_token(
-            user.id, generate_password_hash("123456"),
-            datetime.utcnow() + timedelta(minutes=15))
-        increment_reset_attempts(token.id)
-        got = get_latest_valid_reset_token(user.id)
-        assert got.attempts == 1
+            user.id, _hash_reset_token("helper-token"),
+            datetime.utcnow() + timedelta(minutes=60))
+        assert get_valid_reset_token(_hash_reset_token("helper-token")) is not None
         mark_reset_token_used(token.id)
-        assert get_latest_valid_reset_token(user.id) is None
+        assert get_valid_reset_token(_hash_reset_token("helper-token")) is None
     finally:
         _cleanup_user(user)

@@ -1,4 +1,4 @@
-"""Outgoing email for the dashboard (password-reset OTP codes).
+"""Outgoing email for the dashboard (password-reset links).
 
 Uses plain SMTP from environment variables so it works on any host with
 zero new dependencies. The standard setup is a Gmail App Password:
@@ -24,8 +24,8 @@ def is_email_configured() -> bool:
     return bool(os.environ.get("SMTP_USERNAME") and os.environ.get("SMTP_PASSWORD"))
 
 
-def send_otp_email(to_email: str, otp: str) -> Tuple[bool, str]:
-    """Send a password-reset OTP. Returns (ok, reason)."""
+def send_reset_link_email(to_email: str, reset_url: str) -> Tuple[bool, str]:
+    """Send a password-reset link. Returns (ok, reason)."""
     if not is_email_configured():
         return False, "email_not_configured"
     host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
@@ -35,14 +35,15 @@ def send_otp_email(to_email: str, otp: str) -> Tuple[bool, str]:
     from_addr = os.environ.get("SMTP_FROM", username)
 
     body = (
-        "Your Xploiter password-reset code is:\n\n"
-        f"    {otp}\n\n"
-        "Enter it on the reset page within 15 minutes. "
+        "You asked to reset your Xploiter password.\n\n"
+        "Click the link below to choose a new password "
+        "(it expires in 60 minutes and works only once):\n\n"
+        f"    {reset_url}\n\n"
         "If you didn't ask for this, just ignore this email — "
         "your password stays unchanged."
     )
     msg = MIMEText(body)
-    msg["Subject"] = "Xploiter password-reset code"
+    msg["Subject"] = "Xploiter password-reset link"
     msg["From"] = from_addr
     msg["To"] = to_email
     try:
@@ -50,8 +51,8 @@ def send_otp_email(to_email: str, otp: str) -> Tuple[bool, str]:
             smtp.starttls()
             smtp.login(username, password)
             smtp.sendmail(from_addr, [to_email], msg.as_string())
-        logger.info(f"Password-reset OTP sent to {to_email}")
+        logger.info(f"Password-reset link sent to {to_email}")
         return True, "sent"
     except Exception as e:  # network/auth failure — report, don't crash
-        logger.warning(f"Failed to send password-reset OTP to {to_email}: {e}")
+        logger.warning(f"Failed to send password-reset link to {to_email}: {e}")
         return False, "send_failed"

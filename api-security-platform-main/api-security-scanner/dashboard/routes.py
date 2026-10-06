@@ -29,12 +29,12 @@ from database.db import (
     get_finding_by_id, delete_session, SessionLocal,
     create_user, get_user_by_username, get_user_by_email,
     get_user_by_google_id, link_google_account, set_user_password,
-    create_password_reset_token, get_latest_valid_reset_token,
-    increment_reset_attempts, mark_reset_token_used,
+    create_password_reset_token, get_valid_reset_token,
+    mark_reset_token_used, _hash_reset_token,
 )
 from database.models import ScanSession, Finding, Endpoint
 from dashboard.auth_validators import password_strength_error, validate_signup_email
-from dashboard.emailer import is_email_configured, send_otp_email
+from dashboard.emailer import is_email_configured, send_reset_link_email
 from core.discovery import EndpointDiscovery
 from core.request_engine import RequestEngine
 from core.response_parser import ResponseParser
@@ -273,14 +273,13 @@ def signup():
 
 
 # ---------------------------------------------------------------------------
-# Forgot password (email OTP)
+# Forgot password (reset link by email)
 # ---------------------------------------------------------------------------
-RESET_OTP_TTL_MINUTES = 15
-RESET_OTP_MAX_ATTEMPTS = 5
+RESET_LINK_TTL_MINUTES = 60
 
 
-def _generate_otp() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
+def _generate_reset_token() -> str:
+    return secrets.token_urlsafe(32)
 
 
 @dashboard_bp.route("/forgot-password", methods=["GET", "POST"])
@@ -294,7 +293,7 @@ def forgot_password():
         # Always respond the same way so the page never reveals which
         # email addresses have accounts.
         message = ("If an account exists for that email, we've sent it a "
-                   "6-digit code. The code expires in 15 minutes.")
+                   "password-reset link. The link expires in 60 minutes.")
         user = get_user_by_email(email) if email else None
         if user and user.email:
             if not is_email_configured():
@@ -302,16 +301,18 @@ def forgot_password():
                 error = ("Password reset by email isn't set up on this server "
                          "yet — the administrator needs to configure email sending.")
             else:
-                otp = _generate_otp()
+                token = _generate_reset_token()
                 create_password_reset_token(
-                    user.id, generate_password_hash(otp),
-                    datetime.utcnow() + timedelta(minutes=RESET_OTP_TTL_MINUTES))
-                ok, reason = send_otp_email(user.email, otp)
+                    user.id, _hash_reset_token(token),
+                    datetime.utcnow() + timedelta(minutes=RESET_LINK_TTL_MINUTES))
+                reset_url = url_for("dashboard.reset_password", token=token,
+                                    _external=True)
+                ok, reason = send_reset_link_email(user.email, reset_url)
                 if not ok:
                     message = None
                     error = ("We couldn't send the email right now — "
                              "please try again in a few minutes.")
-                    logger.warning(f"OTP email failed for {user.email}: {reason}")
+                    logger.warning(f"Reset-link email failed for {user.email}: {reason}")
     return render_template("forgot_password.html", message=message, error=error,
                            email_configured=is_email_configured())
 
@@ -322,33 +323,30 @@ def reset_password():
         return redirect(url_for("dashboard.index"))
     error = None
     success = False
+    raw_token = (request.args.get("token", "") if request.method == "GET"
+                 else request.form.get("token", "")).strip()
+    token = get_valid_reset_token(_hash_reset_token(raw_token)) if raw_token else None
+    if not token:
+        # Invalid, expired, or already-used link — same message either way.
+        error = "That reset link is invalid or has expired. Request a new one."
+        return render_template("reset_password.html", error=error,
+                               success=success, token_valid=False,
+                               raw_token="")
     if request.method == "POST":
-        email = request.form.get("email", "").strip()
-        otp = request.form.get("otp", "").strip()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
-        user = get_user_by_email(email) if email else None
-        token = get_latest_valid_reset_token(user.id) if user else None
         pw_error = password_strength_error(password)
-        if not user or not token:
-            # Same message either way: never reveal which emails have accounts.
-            error = "That code is invalid or has expired. Request a new one."
-        elif (token.attempts or 0) >= RESET_OTP_MAX_ATTEMPTS:
-            mark_reset_token_used(token.id)
-            error = "Too many wrong attempts — that code is locked. Request a new one."
-        elif not check_password_hash(token.otp_hash, otp):
-            increment_reset_attempts(token.id)
-            error = "That code is incorrect. Check the email and try again."
-        elif pw_error:
+        if pw_error:
             error = pw_error
         elif password != confirm:
             error = "Passwords do not match."
         else:
-            set_user_password(user.id, generate_password_hash(password))
+            set_user_password(token.user_id, generate_password_hash(password))
             mark_reset_token_used(token.id)
-            logger.info(f"Password reset via OTP for user {user.username}")
+            logger.info(f"Password reset via email link for user_id {token.user_id}")
             success = True
-    return render_template("reset_password.html", error=error, success=success)
+    return render_template("reset_password.html", error=error, success=success,
+                           token_valid=True, raw_token=raw_token)
 
 
 # ---------------------------------------------------------------------------

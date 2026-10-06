@@ -61,15 +61,14 @@ class User(Base):
 
 
 class PasswordResetToken(Base):
-    """One-time password-reset code (OTP). Only the hash is stored."""
+    """One-time password-reset link token. Only the hash is stored."""
     __tablename__ = "password_reset_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
                      nullable=False, index=True)
-    otp_hash = Column(String(255), nullable=False)
+    token_hash = Column(String(255), nullable=False, unique=True, index=True)
     expires_at = Column(DateTime, nullable=False)
-    attempts = Column(Integer, default=0, nullable=False)
     used = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
