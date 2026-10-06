@@ -278,3 +278,102 @@ def test_otp_reset_rejects_wrong_code_despite_verified(authed_app, otp_email):
             "new_password": "NewPass123!", "confirm_password": "NewPass123!"})
     assert r.status_code == 401
     updater.assert_not_called()
+
+
+# --- emailer: SendGrid HTTPS path ------------------------------------------
+
+def test_sendgrid_used_when_api_key_set(monkeypatch):
+    from dashboard import emailer
+
+    monkeypatch.setenv("SENDGRID_API_KEY", "SG.fake-key")
+    monkeypatch.setenv("SENDGRID_FROM_EMAIL", "sender@gmail.com")
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    assert emailer.is_email_configured()
+
+    sent = {}
+
+    class FakeResp:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=30):
+        sent["url"] = req.full_url
+        sent["auth"] = req.get_header("Authorization")
+        body = __import__("json").loads(req.data.decode())
+        sent["to"] = body["personalizations"][0]["to"][0]["email"]
+        sent["from"] = body["from"]["email"]
+        return FakeResp()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    ok, reason = emailer.send_otp_email("user@gmail.com", "123456")
+    assert ok and reason == "sent"
+    assert sent["url"] == "https://api.sendgrid.com/v3/mail/send"
+    assert sent["auth"] == "Bearer SG.fake-key"
+    assert sent["to"] == "user@gmail.com"
+    assert sent["from"] == "sender@gmail.com"
+
+
+def test_sendgrid_http_error(monkeypatch):
+    import urllib.error
+    from dashboard import emailer
+
+    monkeypatch.setenv("SENDGRID_API_KEY", "SG.fake-key")
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized",
+                                     {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    ok, reason = emailer.send_otp_email("user@gmail.com", "123456")
+    assert not ok and reason == "sendgrid_401"
+
+
+def test_smtp_fallback_without_sendgrid_key(monkeypatch):
+    from dashboard import emailer
+
+    monkeypatch.delenv("SENDGRID_API_KEY", raising=False)
+    monkeypatch.setenv("SMTP_USERNAME", "u@gmail.com")
+    monkeypatch.setenv("SMTP_PASSWORD", "pw")
+    assert emailer.is_email_configured()
+
+    class FakeSMTP:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def starttls(self):
+            pass
+
+        def login(self, u, p):
+            pass
+
+        def sendmail(self, *a):
+            pass
+
+    monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
+    ok, reason = emailer.send_otp_email("user@gmail.com", "123456")
+    assert ok and reason == "sent"
+
+
+def test_email_not_configured_without_any_key(monkeypatch):
+    from dashboard import emailer
+
+    monkeypatch.delenv("SENDGRID_API_KEY", raising=False)
+    monkeypatch.delenv("SMTP_USERNAME", raising=False)
+    monkeypatch.delenv("SMTP_PASSWORD", raising=False)
+    assert not emailer.is_email_configured()
+    ok, reason = emailer.send_otp_email("user@gmail.com", "123456")
+    assert not ok and reason == "email_not_configured"
