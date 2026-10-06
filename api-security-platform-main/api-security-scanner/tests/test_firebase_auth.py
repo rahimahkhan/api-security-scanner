@@ -308,3 +308,64 @@ def test_get_or_create_firebase_user_helper(authed_app):
         assert get_user_by_firebase_uid(uid).username == u1.username
     finally:
         _cleanup_user(get_user_by_firebase_uid(uid))
+
+
+def test_admin_sdk_really_initializes(monkeypatch):
+    """Regression test: _admin_app() must actually call initialize_app().
+
+    A name-shadowing bug once made the cache variable share the function's
+    name (``_admin_app``), so the function returned itself immediately and the
+    Admin SDK was never initialized — live, every login failed with
+    "The default Firebase app does not exist". All route tests mock
+    verify_firebase_token, so only this test exercises the real init path.
+    """
+    import json
+
+    import firebase_admin
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from dashboard import firebase_auth
+
+    # Throwaway RSA key: only needs to parse, never used against Google.
+    key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption()).decode()
+    fake_sa = {
+        "type": "service_account",
+        "project_id": "test-project",
+        "private_key_id": "key1",
+        "private_key": pem,
+        "client_email": "test@test-project.iam.gserviceaccount.com",
+        "client_id": "1",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    monkeypatch.setenv("FIREBASE_SERVICE_ACCOUNT_JSON", json.dumps(fake_sa))
+    firebase_auth.reset_admin_app_cache()
+    app = None
+    try:
+        app = firebase_auth._admin_app()
+        assert firebase_admin.get_app() is app  # SDK really initialized
+        assert firebase_auth._admin_app() is app  # singleton cached
+    finally:
+        firebase_auth.reset_admin_app_cache()
+        if app is not None:
+            try:
+                firebase_admin.delete_app(app)
+            except Exception:
+                pass
+
+
+def test_admin_sdk_missing_key_raises(monkeypatch):
+    """Without the service-account env var, init must fail loudly."""
+    from dashboard import firebase_auth
+
+    monkeypatch.delenv("FIREBASE_SERVICE_ACCOUNT_JSON", raising=False)
+    firebase_auth.reset_admin_app_cache()
+    try:
+        with pytest.raises(RuntimeError, match="not set"):
+            firebase_auth._admin_app()
+    finally:
+        firebase_auth.reset_admin_app_cache()

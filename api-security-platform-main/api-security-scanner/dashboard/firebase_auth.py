@@ -13,7 +13,11 @@ Configuration (all from environment, never committed):
 import json
 import os
 
-_admin_app = None
+# NOTE: the cache variable MUST NOT be named `_admin_app` — that name belongs
+# to the `_admin_app()` function below, and a shared name silently shadows the
+# cache so the SDK is never initialized (every login then fails with
+# "The default Firebase app does not exist").
+_admin_app_instance = None
 
 
 def firebase_web_config() -> dict:
@@ -33,9 +37,9 @@ def firebase_configured() -> bool:
 
 def _admin_app():
     """Lazily initialise the Firebase Admin SDK (singleton)."""
-    global _admin_app
-    if _admin_app is not None:
-        return _admin_app
+    global _admin_app_instance
+    if _admin_app_instance is not None:
+        return _admin_app_instance
     key_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "").strip()
     if not key_json:
         raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON is not set")
@@ -45,9 +49,9 @@ def _admin_app():
         service_account = json.loads(key_json)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}")
-    _admin_app = firebase_admin.initialize_app(
+    _admin_app_instance = firebase_admin.initialize_app(
         credentials.Certificate(service_account))
-    return _admin_app
+    return _admin_app_instance
 
 
 def verify_firebase_token(id_token: str) -> dict:
@@ -62,5 +66,5 @@ def verify_firebase_token(id_token: str) -> dict:
 
 def reset_admin_app_cache() -> None:
     """Test helper: drop the cached Admin app so each test re-initialises."""
-    global _admin_app
-    _admin_app = None
+    global _admin_app_instance
+    _admin_app_instance = None
