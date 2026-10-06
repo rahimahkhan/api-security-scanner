@@ -202,13 +202,31 @@ def format_scan_eta(scan) -> str:
         return ""
 
 
-def create_user(username: str, password_hash: str, email: Optional[str] = None,
-                google_id: Optional[str] = None, name: Optional[str] = None,
-                avatar_url: Optional[str] = None) -> User:
+def get_user_by_firebase_uid(firebase_uid: str) -> Optional[User]:
     db = SessionLocal()
     try:
-        user = User(username=username, password_hash=password_hash, email=email,
-                    google_id=google_id, name=name, avatar_url=avatar_url)
+        user = db.query(User).filter(User.firebase_uid == firebase_uid).first()
+        if user:
+            db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+def get_or_create_firebase_user(firebase_uid: str, email: Optional[str],
+                                username: str, name: Optional[str] = None,
+                                avatar_url: Optional[str] = None) -> User:
+    """Find the local user for a Firebase UID, creating it on first sign-in.
+
+    The caller must have verified the ID token and validated the username.
+    """
+    existing = get_user_by_firebase_uid(firebase_uid)
+    if existing:
+        return existing
+    db = SessionLocal()
+    try:
+        user = User(firebase_uid=firebase_uid, username=username,
+                    email=email, name=name, avatar_url=avatar_url)
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -243,38 +261,6 @@ def get_user_by_email(email: str) -> Optional[User]:
         db.close()
 
 
-def get_user_by_google_id(google_id: str) -> Optional[User]:
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.google_id == google_id).first()
-        if user:
-            db.expunge(user)
-        return user
-    finally:
-        db.close()
-
-
-def link_google_account(user_id: int, google_id: str, name: Optional[str] = None,
-                        avatar_url: Optional[str] = None) -> Optional[User]:
-    """Attach a Google identity to an existing account (password login keeps working)."""
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            return None
-        user.google_id = google_id
-        if name and not user.name:
-            user.name = name
-        if avatar_url:
-            user.avatar_url = avatar_url
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-        return user
-    finally:
-        db.close()
-
-
 def get_user_by_id(user_id: int) -> Optional[User]:
     db = SessionLocal()
     try:
@@ -285,77 +271,6 @@ def get_user_by_id(user_id: int) -> Optional[User]:
     finally:
         db.close()
 
-
-def set_user_password(user_id: int, password_hash: str) -> None:
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            user.password_hash = password_hash
-            db.commit()
-    finally:
-        db.close()
-
-
-# ---------------------------------------------------------------------------
-# Password-reset link tokens
-# ---------------------------------------------------------------------------
-
-def _hash_reset_token(token: str) -> str:
-    import hashlib
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def create_password_reset_token(user_id: int, token_hash: str,
-                                expires_at) -> "PasswordResetToken":
-    from database.models import PasswordResetToken
-    db = SessionLocal()
-    try:
-        # Invalidate any older unused tokens for this user first.
-        db.query(PasswordResetToken).filter(
-            PasswordResetToken.user_id == user_id,
-            PasswordResetToken.used == False,  # noqa: E712
-        ).update({"used": True})
-        token = PasswordResetToken(user_id=user_id, token_hash=token_hash,
-                                   expires_at=expires_at)
-        db.add(token)
-        db.commit()
-        db.refresh(token)
-        db.expunge(token)
-        return token
-    finally:
-        db.close()
-
-
-def get_valid_reset_token(token_hash: str) -> Optional["PasswordResetToken"]:
-    """Token matching this hash, if unused and unexpired (None otherwise)."""
-    from datetime import datetime
-    from database.models import PasswordResetToken
-    db = SessionLocal()
-    try:
-        token = (db.query(PasswordResetToken)
-                 .filter(PasswordResetToken.token_hash == token_hash,
-                         PasswordResetToken.used == False,  # noqa: E712
-                         PasswordResetToken.expires_at > datetime.utcnow())
-                 .first())
-        if token:
-            db.expunge(token)
-        return token
-    finally:
-        db.close()
-
-
-def mark_reset_token_used(token_id: int) -> None:
-    from database.models import PasswordResetToken
-    db = SessionLocal()
-    try:
-        token = db.query(PasswordResetToken).filter(
-            PasswordResetToken.id == token_id).first()
-        if token:
-            token.used = True
-            db.commit()
-    finally:
-        db.close()
 
 def save_endpoint(session_id: int, url: str, method: str = "GET") -> Endpoint:
     db = SessionLocal()

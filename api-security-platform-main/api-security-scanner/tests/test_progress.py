@@ -24,19 +24,21 @@ def authed_app():
     yield app
 
 
-def _signup(client, username, password="TestPass123!"):
-    return client.post("/signup", data={
-        "username": username,
-        "password": password,
-        "confirm_password": password,
-    }, follow_redirects=False)
+def _signup(client, username):
+    """Create a Firebase-backed user via the session endpoint (mocked token)."""
+    from unittest.mock import patch
+    uid = f"fb-{uuid.uuid4().hex[:8]}"
+    claims = {"uid": uid, "email": f"{username}@gmail.com", "name": username}
+    with patch("dashboard.routes.verify_firebase_token", return_value=claims):
+        return client.post("/api/auth/session", json={
+            "idToken": "fake-id-token", "username": username})
 
 
 @pytest.fixture()
 def user_client(authed_app):
     client = authed_app.test_client()
     username = _unique("prog")
-    assert _signup(client, username).status_code == 302
+    assert _signup(client, username).status_code == 200
     from database.db import get_user_by_username
     from database.models import User
     user = get_user_by_username(username)

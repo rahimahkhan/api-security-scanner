@@ -43,36 +43,20 @@ class ScanSession(Base):
 
 
 class User(Base):
-    """Dashboard account. Each user only ever sees their own scan sessions."""
+    """Dashboard account. Identity lives in Firebase Auth; each Firebase user
+    gets one local row (keyed by firebase_uid) so scan sessions stay
+    per-user isolated."""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    firebase_uid = Column(String(128), unique=True, nullable=True, index=True)
     username = Column(String(80), unique=True, nullable=False, index=True)
-    password_hash = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=True, index=True)
-    google_id = Column(String(255), unique=True, nullable=True, index=True)
     name = Column(String(120), nullable=True)
     avatar_url = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sessions = relationship("ScanSession", back_populates="user", cascade="all, delete-orphan")
-    reset_tokens = relationship("PasswordResetToken", back_populates="user",
-                                cascade="all, delete-orphan")
-
-
-class PasswordResetToken(Base):
-    """One-time password-reset link token. Only the hash is stored."""
-    __tablename__ = "password_reset_tokens"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
-                     nullable=False, index=True)
-    token_hash = Column(String(255), nullable=False, unique=True, index=True)
-    expires_at = Column(DateTime, nullable=False)
-    used = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="reset_tokens")
 
 
 class Endpoint(Base):

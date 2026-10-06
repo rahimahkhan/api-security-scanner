@@ -126,8 +126,9 @@ def test_dashboard_csrf_enforcement():
 
 
 def test_dashboard_auth_workflow():
-    """Signup -> login -> logout round-trip with auth explicitly enabled."""
-    from database.db import get_user_by_username, SessionLocal
+    """Firebase session exchange -> protected pages -> logout round-trip."""
+    from unittest.mock import patch
+    from database.db import get_user_by_firebase_uid, SessionLocal
     from database.models import User
     app = create_app()
     app.config["TESTING"] = True
@@ -135,16 +136,20 @@ def test_dashboard_auth_workflow():
     client = app.test_client()
     import uuid as _uuid
     username = f"authwf_user_{_uuid.uuid4().hex[:8]}"
+    uid = f"fb-{_uuid.uuid4().hex[:8]}"
+    claims = {"uid": uid, "email": f"{username}@gmail.com", "name": "Auth Wf"}
 
     # Unauthenticated access redirects to /login
     res = client.get("/")
     assert res.status_code == 302
     assert "/login" in res.headers["Location"]
 
-    # Signup creates the account and logs in
-    res_signup = client.post("/signup", data={
-        "username": username, "password": "Pass_test_123!", "confirm_password": "Pass_test_123!"})
-    assert res_signup.status_code == 302
+    # Session exchange (mocked Firebase token) logs the user in
+    with patch("dashboard.routes.verify_firebase_token", return_value=claims):
+        res_session = client.post("/api/auth/session", json={
+            "idToken": "fake", "username": username})
+    assert res_session.status_code == 200
+    assert res_session.get_json()["status"] == "ok"
     res_auth = client.get("/")
     assert res_auth.status_code == 200
 
@@ -153,21 +158,12 @@ def test_dashboard_auth_workflow():
     assert res_logout.status_code == 302
     res_after = client.get("/")
     assert res_after.status_code == 302
-
-    # Login with wrong credentials fails
-    res_bad_login = client.post("/login", data={"identifier": username, "password": "wrong"})
-    assert res_bad_login.status_code == 200
-    assert b"Invalid username/email or password" in res_bad_login.data
-
-    # Login with correct credentials succeeds
-    res_login = client.post("/login", data={"identifier": username, "password": "Pass_test_123!"})
-    assert res_login.status_code == 302
-    assert client.get("/").status_code == 200
+    assert "/login" in res_after.headers["Location"]
 
     # cleanup
     db = SessionLocal()
     try:
-        u = db.query(User).filter(User.username == username).first()
+        u = db.query(User).filter(User.firebase_uid == uid).first()
         if u:
             for s in list(u.sessions):
                 db.delete(s)
@@ -175,5 +171,5 @@ def test_dashboard_auth_workflow():
             db.commit()
     finally:
         db.close()
-    assert "/login" in res_after.headers["Location"]
+    assert get_user_by_firebase_uid(uid) is None
 
