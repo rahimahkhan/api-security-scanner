@@ -51,22 +51,22 @@ def _cleanup_user(user):
 def test_signup_with_email_then_login_with_email(authed_app):
     client = authed_app.test_client()
     name = _unique("emailuser")
-    email = f"{name}@example.com"
+    email = f"{name}@gmail.com"
     try:
         r = client.post("/signup", data={
             "username": name, "email": email,
-            "password": "password123", "confirm_password": "password123",
+            "password": "TestPass123!", "confirm_password": "TestPass123!",
         })
         assert r.status_code == 302
         assert get_user_by_email(email).username == name
         client.get("/logout")
         # login via email address
-        r = client.post("/login", data={"identifier": email, "password": "password123"})
+        r = client.post("/login", data={"identifier": email, "password": "TestPass123!"})
         assert r.status_code == 302
         assert client.get("/").status_code == 200
         # email matching is case-insensitive
         client.get("/logout")
-        r = client.post("/login", data={"identifier": email.upper(), "password": "password123"})
+        r = client.post("/login", data={"identifier": email.upper(), "password": "TestPass123!"})
         assert r.status_code == 302
     finally:
         _cleanup_user(get_user_by_username(name))
@@ -78,19 +78,19 @@ def test_signup_rejects_bad_and_duplicate_email(authed_app):
     try:
         r = client.post("/signup", data={
             "username": name, "email": "not-an-email",
-            "password": "password123", "confirm_password": "password123",
+            "password": "TestPass123!", "confirm_password": "TestPass123!",
         })
         assert r.status_code == 200 and b"valid email" in r.data
         # a good signup, then a second user reusing the email
-        email = f"{name}@example.com"
+        email = f"{name}@gmail.com"
         assert client.post("/signup", data={
             "username": name, "email": email,
-            "password": "password123", "confirm_password": "password123",
+            "password": "TestPass123!", "confirm_password": "TestPass123!",
         }).status_code == 302
         client.get("/logout")
         r = client.post("/signup", data={
             "username": _unique("other"), "email": email,
-            "password": "password123", "confirm_password": "password123",
+            "password": "TestPass123!", "confirm_password": "TestPass123!",
         })
         assert r.status_code == 200 and b"already exists" in r.data
     finally:
@@ -139,25 +139,25 @@ def _begin_oauth(client):
 def test_google_callback_creates_and_logs_in(authed_app, oauth_on, monkeypatch):
     client = authed_app.test_client()
     _mock_google(monkeypatch, {
-        "sub": "google-sub-1", "email": "guser1@example.com",
+        "sub": "google-sub-1", "email": "guser1@gmail.com",
         "email_verified": True, "name": "G User", "picture": "http://x/pic.png",
     })
     _begin_oauth(client)
     try:
         r = client.get("/auth/google/callback?code=authcode&state=test-state-123")
         assert r.status_code == 302 and r.headers["Location"].endswith("/")
-        user = get_user_by_email("guser1@example.com")
+        user = get_user_by_email("guser1@gmail.com")
         assert user is not None and user.google_id == "google-sub-1"
         assert client.get("/").status_code == 200
     finally:
-        _cleanup_user(get_user_by_email("guser1@example.com"))
+        _cleanup_user(get_user_by_email("guser1@gmail.com"))
 
 
 def test_google_callback_links_existing_email_account(authed_app, oauth_on, monkeypatch):
     client = authed_app.test_client()
     name = _unique("linkme")
-    email = f"{name}@example.com"
-    user = create_user(name, generate_password_hash("password123"), email=email)
+    email = f"{name}@gmail.com"
+    user = create_user(name, generate_password_hash("TestPass123!"), email=email)
     try:
         _mock_google(monkeypatch, {
             "sub": "google-sub-2", "email": email,
@@ -170,7 +170,7 @@ def test_google_callback_links_existing_email_account(authed_app, oauth_on, monk
         assert linked.google_id == "google-sub-2"
         # password login still works after linking
         client.get("/logout")
-        r = client.post("/login", data={"identifier": name, "password": "password123"})
+        r = client.post("/login", data={"identifier": name, "password": "TestPass123!"})
         assert r.status_code == 302
     finally:
         _cleanup_user(get_user_by_username(name))
@@ -178,31 +178,31 @@ def test_google_callback_links_existing_email_account(authed_app, oauth_on, monk
 
 def test_google_callback_rejects_bad_state(authed_app, oauth_on, monkeypatch):
     client = authed_app.test_client()
-    _mock_google(monkeypatch, {"sub": "x", "email": "x@example.com", "email_verified": True})
+    _mock_google(monkeypatch, {"sub": "x", "email": "x@gmail.com", "email_verified": True})
     with client.session_transaction() as sess:
         sess["google_oauth_state"] = "real-state"
     r = client.get("/auth/google/callback?code=authcode&state=wrong-state")
     assert r.status_code == 200 and b"Invalid OAuth state" in r.data
-    assert get_user_by_email("x@example.com") is None
+    assert get_user_by_email("x@gmail.com") is None
 
 
 def test_google_callback_rejects_unverified_email(authed_app, oauth_on, monkeypatch):
     client = authed_app.test_client()
     _mock_google(monkeypatch, {
-        "sub": "google-sub-3", "email": "unverified@example.com", "email_verified": False,
+        "sub": "google-sub-3", "email": "unverified@gmail.com", "email_verified": False,
     })
     _begin_oauth(client)
     r = client.get("/auth/google/callback?code=authcode&state=test-state-123")
     assert r.status_code == 200 and b"not verified" in r.data
-    assert get_user_by_email("unverified@example.com") is None
+    assert get_user_by_email("unverified@gmail.com") is None
 
 
 def test_username_suggestion_is_unique_and_valid(authed_app):
     name = _unique("taken")
-    user = create_user(name, generate_password_hash("password123"))
+    user = create_user(name, generate_password_hash("TestPass123!"))
     try:
         # same base name -> suffixed; weird chars stripped; short names padded
-        assert routes._suggest_username(f"{name}@example.com", name) != name
+        assert routes._suggest_username(f"{name}@gmail.com", name) != name
         assert routes.USERNAME_RE.match(routes._suggest_username("a@b.co", "a b"))
         assert routes.USERNAME_RE.match(routes._suggest_username("x@y.zz", "***"))
     finally:

@@ -24,7 +24,7 @@ def authed_app():
     yield app
 
 
-def _signup(client, username, password="password123"):
+def _signup(client, username, password="TestPass123!"):
     return client.post("/signup", data={
         "username": username,
         "password": password,
@@ -85,7 +85,7 @@ def test_signup_validation(authed_app):
     r = _signup(client, _unique("u"), password="short")
     assert r.status_code == 200 and b"at least 8 characters" in r.data
     # mismatched confirmation
-    r = client.post("/signup", data={"username": _unique("u"), "password": "password123",
+    r = client.post("/signup", data={"username": _unique("u"), "password": "TestPass123!",
                                      "confirm_password": "different"})
     assert r.status_code == 200 and b"do not match" in r.data
     # duplicate username (fresh client, not logged in)
@@ -107,7 +107,7 @@ def test_login_wrong_password(authed_app):
         r = client.post("/login", data={"identifier": name, "password": "wrongpass1"})
         assert r.status_code == 200 and b"Invalid username/email or password" in r.data
         # correct password works
-        r = client.post("/login", data={"identifier": name, "password": "password123"})
+        r = client.post("/login", data={"identifier": name, "password": "TestPass123!"})
         assert r.status_code == 302
     finally:
         _cleanup_user(get_user_by_username(name))

@@ -24,7 +24,7 @@ def authed_app():
     yield app
 
 
-def _signup(client, username, password="password123"):
+def _signup(client, username, password="TestPass123!"):
     return client.post("/signup", data={
         "username": username,
         "password": password,

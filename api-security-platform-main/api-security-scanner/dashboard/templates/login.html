@@ -124,6 +124,7 @@
                     <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
                     <button type="button" class="pw-toggle" onclick="togglePw('password', this)">Show</button>
                 </div>
+                <div class="hint" style="text-align: right;"><a href="{{ url_for('dashboard.forgot_password') }}" style="color: var(--blue); font-weight: 600; text-decoration: none;">Forgot password?</a></div>
             </div>
 
             <button type="submit" class="btn-primary">Log in</button>

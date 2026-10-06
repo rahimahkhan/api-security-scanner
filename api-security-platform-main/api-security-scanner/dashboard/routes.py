@@ -28,9 +28,13 @@ from database.db import (
     get_all_sessions, get_session_for_user, get_session_findings,
     get_finding_by_id, delete_session, SessionLocal,
     create_user, get_user_by_username, get_user_by_email,
-    get_user_by_google_id, link_google_account,
+    get_user_by_google_id, link_google_account, set_user_password,
+    create_password_reset_token, get_latest_valid_reset_token,
+    increment_reset_attempts, mark_reset_token_used,
 )
 from database.models import ScanSession, Finding, Endpoint
+from dashboard.auth_validators import password_strength_error, validate_signup_email
+from dashboard.emailer import is_email_configured, send_otp_email
 from core.discovery import EndpointDiscovery
 from core.request_engine import RequestEngine
 from core.response_parser import ResponseParser
@@ -231,9 +235,6 @@ def login():
 
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
 @dashboard_bp.route("/signup", methods=["GET", "POST"])
 def signup():
     if not is_auth_enabled():
@@ -246,14 +247,16 @@ def signup():
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         confirm = request.form.get("confirm_password", "")
+        email_error = validate_signup_email(email)
+        pw_error = password_strength_error(password)
         if not USERNAME_RE.match(username):
             error = "Username must be 3-32 characters: letters, numbers, dot, dash, underscore."
-        elif email and not EMAIL_RE.match(email):
-            error = "That doesn't look like a valid email address."
+        elif email_error:
+            error = email_error
         elif email and get_user_by_email(email):
             error = "An account with that email already exists — try logging in."
-        elif len(password) < 8:
-            error = "Password must be at least 8 characters."
+        elif pw_error:
+            error = pw_error
         elif password != confirm:
             error = "Passwords do not match."
         elif get_user_by_username(username):
@@ -267,6 +270,85 @@ def signup():
             return redirect(url_for("dashboard.index"))
     return render_template("signup.html", error=error,
                            google_oauth_enabled=google_oauth_enabled())
+
+
+# ---------------------------------------------------------------------------
+# Forgot password (email OTP)
+# ---------------------------------------------------------------------------
+RESET_OTP_TTL_MINUTES = 15
+RESET_OTP_MAX_ATTEMPTS = 5
+
+
+def _generate_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+@dashboard_bp.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    if session.get("user_id"):
+        return redirect(url_for("dashboard.index"))
+    message = None
+    error = None
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        # Always respond the same way so the page never reveals which
+        # email addresses have accounts.
+        message = ("If an account exists for that email, we've sent it a "
+                   "6-digit code. The code expires in 15 minutes.")
+        user = get_user_by_email(email) if email else None
+        if user and user.email:
+            if not is_email_configured():
+                message = None
+                error = ("Password reset by email isn't set up on this server "
+                         "yet — the administrator needs to configure email sending.")
+            else:
+                otp = _generate_otp()
+                create_password_reset_token(
+                    user.id, generate_password_hash(otp),
+                    datetime.utcnow() + timedelta(minutes=RESET_OTP_TTL_MINUTES))
+                ok, reason = send_otp_email(user.email, otp)
+                if not ok:
+                    message = None
+                    error = ("We couldn't send the email right now — "
+                             "please try again in a few minutes.")
+                    logger.warning(f"OTP email failed for {user.email}: {reason}")
+    return render_template("forgot_password.html", message=message, error=error,
+                           email_configured=is_email_configured())
+
+
+@dashboard_bp.route("/reset-password", methods=["GET", "POST"])
+def reset_password():
+    if session.get("user_id"):
+        return redirect(url_for("dashboard.index"))
+    error = None
+    success = False
+    if request.method == "POST":
+        email = request.form.get("email", "").strip()
+        otp = request.form.get("otp", "").strip()
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm_password", "")
+        user = get_user_by_email(email) if email else None
+        token = get_latest_valid_reset_token(user.id) if user else None
+        pw_error = password_strength_error(password)
+        if not user or not token:
+            # Same message either way: never reveal which emails have accounts.
+            error = "That code is invalid or has expired. Request a new one."
+        elif (token.attempts or 0) >= RESET_OTP_MAX_ATTEMPTS:
+            mark_reset_token_used(token.id)
+            error = "Too many wrong attempts — that code is locked. Request a new one."
+        elif not check_password_hash(token.otp_hash, otp):
+            increment_reset_attempts(token.id)
+            error = "That code is incorrect. Check the email and try again."
+        elif pw_error:
+            error = pw_error
+        elif password != confirm:
+            error = "Passwords do not match."
+        else:
+            set_user_password(user.id, generate_password_hash(password))
+            mark_reset_token_used(token.id)
+            logger.info(f"Password reset via OTP for user {user.username}")
+            success = True
+    return render_template("reset_password.html", error=error, success=success)
 
 
 # ---------------------------------------------------------------------------

@@ -285,6 +285,87 @@ def get_user_by_id(user_id: int) -> Optional[User]:
     finally:
         db.close()
 
+
+def set_user_password(user_id: int, password_hash: str) -> None:
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.password_hash = password_hash
+            db.commit()
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Password-reset OTP tokens
+# ---------------------------------------------------------------------------
+
+def create_password_reset_token(user_id: int, otp_hash: str,
+                                expires_at) -> "PasswordResetToken":
+    from database.models import PasswordResetToken
+    db = SessionLocal()
+    try:
+        # Invalidate any older unused tokens for this user first.
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user_id,
+            PasswordResetToken.used == False,  # noqa: E712
+        ).update({"used": True})
+        token = PasswordResetToken(user_id=user_id, otp_hash=otp_hash,
+                                   expires_at=expires_at)
+        db.add(token)
+        db.commit()
+        db.refresh(token)
+        db.expunge(token)
+        return token
+    finally:
+        db.close()
+
+
+def get_latest_valid_reset_token(user_id: int) -> Optional["PasswordResetToken"]:
+    """Newest unused, unexpired token for the user (None if there isn't one)."""
+    from datetime import datetime
+    from database.models import PasswordResetToken
+    db = SessionLocal()
+    try:
+        token = (db.query(PasswordResetToken)
+                 .filter(PasswordResetToken.user_id == user_id,
+                         PasswordResetToken.used == False,  # noqa: E712
+                         PasswordResetToken.expires_at > datetime.utcnow())
+                 .order_by(PasswordResetToken.created_at.desc())
+                 .first())
+        if token:
+            db.expunge(token)
+        return token
+    finally:
+        db.close()
+
+
+def increment_reset_attempts(token_id: int) -> None:
+    from database.models import PasswordResetToken
+    db = SessionLocal()
+    try:
+        token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.id == token_id).first()
+        if token:
+            token.attempts = (token.attempts or 0) + 1
+            db.commit()
+    finally:
+        db.close()
+
+
+def mark_reset_token_used(token_id: int) -> None:
+    from database.models import PasswordResetToken
+    db = SessionLocal()
+    try:
+        token = db.query(PasswordResetToken).filter(
+            PasswordResetToken.id == token_id).first()
+        if token:
+            token.used = True
+            db.commit()
+    finally:
+        db.close()
+
 def save_endpoint(session_id: int, url: str, method: str = "GET") -> Endpoint:
     db = SessionLocal()
     try:

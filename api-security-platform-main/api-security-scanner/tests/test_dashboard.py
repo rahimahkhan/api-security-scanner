@@ -143,7 +143,7 @@ def test_dashboard_auth_workflow():
 
     # Signup creates the account and logs in
     res_signup = client.post("/signup", data={
-        "username": username, "password": "pass_test_123", "confirm_password": "pass_test_123"})
+        "username": username, "password": "Pass_test_123!", "confirm_password": "Pass_test_123!"})
     assert res_signup.status_code == 302
     res_auth = client.get("/")
     assert res_auth.status_code == 200
@@ -160,7 +160,7 @@ def test_dashboard_auth_workflow():
     assert b"Invalid username/email or password" in res_bad_login.data
 
     # Login with correct credentials succeeds
-    res_login = client.post("/login", data={"identifier": username, "password": "pass_test_123"})
+    res_login = client.post("/login", data={"identifier": username, "password": "Pass_test_123!"})
     assert res_login.status_code == 302
     assert client.get("/").status_code == 200
 
