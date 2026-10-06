@@ -369,3 +369,41 @@ def test_admin_sdk_missing_key_raises(monkeypatch):
             firebase_auth._admin_app()
     finally:
         firebase_auth.reset_admin_app_cache()
+
+
+# --- email-or-username login identifier resolution ---------------------------
+
+def test_resolve_email_passthrough(authed_app):
+    client = authed_app.test_client()
+    r = client.post("/api/auth/resolve",
+                    json={"identifier": "Someone@Gmail.com"})
+    assert r.status_code == 200
+    assert r.get_json()["email"] == "someone@gmail.com"
+
+
+def test_resolve_username_to_email(authed_app):
+    client = authed_app.test_client()
+    username, uid = _unique("carol"), f"fb-{uuid.uuid4().hex[:8]}"
+    email = f"{username}@gmail.com"
+    try:
+        get_or_create_firebase_user(uid, email, username)
+        r = client.post("/api/auth/resolve", json={"identifier": username})
+        assert r.status_code == 200
+        assert r.get_json()["email"] == email
+    finally:
+        _cleanup_user(get_user_by_firebase_uid(uid))
+
+
+def test_resolve_unknown_username_404(authed_app):
+    client = authed_app.test_client()
+    r = client.post("/api/auth/resolve",
+                    json={"identifier": "no_such_user_xyz"})
+    assert r.status_code == 404
+
+
+def test_resolve_bad_input(authed_app):
+    client = authed_app.test_client()
+    r = client.post("/api/auth/resolve", json={"identifier": ""})
+    assert r.status_code == 400
+    r = client.post("/api/auth/resolve", json={"identifier": "bad@x"})
+    assert r.status_code == 400

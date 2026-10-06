@@ -30,7 +30,8 @@ from database.db import (
     mark_otp_verified, mark_otp_used, count_recent_otps,
 )
 from database.models import ScanSession, Finding, Endpoint
-from dashboard.auth_validators import validate_signup_email, password_strength_error
+from dashboard.auth_validators import (
+    validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.emailer import is_email_configured, send_otp_email
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
@@ -488,6 +489,31 @@ def otp_reset():
     logger.info(f"Password reset via OTP for {email}")
     return jsonify({"status": "ok", "message":
                     "Password updated. You can log in with your new password now."})
+
+
+@dashboard_bp.route("/api/auth/resolve", methods=["POST"])
+def resolve_login_identifier():
+    """Resolve an email-or-username login identifier to the account email.
+
+    Firebase signs in with email+password, so a typed username has to be
+    mapped to its email first. Returns {"email": ...} or an error.
+    """
+    if not is_auth_enabled():
+        return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
+    data = request.get_json(silent=True) or {}
+    identifier = (data.get("identifier") or "").strip()
+    if not identifier:
+        return jsonify({"status": "error", "message": "Enter your email or username."}), 400
+    if "@" in identifier:
+        email = identifier.lower()
+        if not EMAIL_RE.match(email):
+            return jsonify({"status": "error", "message": "That doesn't look like an email address."}), 400
+        return jsonify({"status": "ok", "email": email})
+    user = get_user_by_username(identifier)
+    if user is None or not user.email:
+        return jsonify({"status": "error", "message":
+                        "No account found for that email or username."}), 404
+    return jsonify({"status": "ok", "email": user.email})
 
 
 @dashboard_bp.route("/logout")
