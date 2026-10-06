@@ -454,3 +454,97 @@ if __name__ == "__main__":
     # Cleanup test session
     delete_session(sess.id)
     print(f"[+] Test session #{sess.id} cleaned up.")
+
+
+# ---------------------------------------------------------------------------
+# Password-reset OTP codes (emailed 6-digit codes, Firebase-era flow)
+# ---------------------------------------------------------------------------
+
+def create_reset_otp(email: str, otp_hash: str, expires_at) -> "PasswordResetOTP":
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        # Invalidate any older unused codes for this email first.
+        db.query(PasswordResetOTP).filter(
+            PasswordResetOTP.email == email,
+            PasswordResetOTP.used == False,  # noqa: E712
+        ).update({"used": True})
+        otp = PasswordResetOTP(email=email, otp_hash=otp_hash,
+                               expires_at=expires_at)
+        db.add(otp)
+        db.commit()
+        db.refresh(otp)
+        db.expunge(otp)
+        return otp
+    finally:
+        db.close()
+
+
+def get_latest_valid_reset_otp(email: str) -> Optional["PasswordResetOTP"]:
+    """Newest unused, unexpired OTP for the email (None if there isn't one)."""
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        otp = (db.query(PasswordResetOTP)
+                 .filter(PasswordResetOTP.email == email,
+                         PasswordResetOTP.used == False,  # noqa: E712
+                         PasswordResetOTP.expires_at > datetime.utcnow())
+                 .order_by(PasswordResetOTP.created_at.desc())
+                 .first())
+        if otp:
+            db.expunge(otp)
+        return otp
+    finally:
+        db.close()
+
+
+def increment_otp_attempts(otp_id: int) -> None:
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        otp = db.query(PasswordResetOTP).filter(
+            PasswordResetOTP.id == otp_id).first()
+        if otp:
+            otp.attempts = (otp.attempts or 0) + 1
+            db.commit()
+    finally:
+        db.close()
+
+
+def mark_otp_verified(otp_id: int) -> None:
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        otp = db.query(PasswordResetOTP).filter(
+            PasswordResetOTP.id == otp_id).first()
+        if otp:
+            otp.verified = True
+            db.commit()
+    finally:
+        db.close()
+
+
+def mark_otp_used(otp_id: int) -> None:
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        otp = db.query(PasswordResetOTP).filter(
+            PasswordResetOTP.id == otp_id).first()
+        if otp:
+            otp.used = True
+            db.commit()
+    finally:
+        db.close()
+
+
+def count_recent_otps(email: str, since) -> int:
+    """How many OTPs were created for this email since the given time."""
+    from database.models import PasswordResetOTP
+    db = SessionLocal()
+    try:
+        return (db.query(PasswordResetOTP)
+                  .filter(PasswordResetOTP.email == email,
+                          PasswordResetOTP.created_at >= since)
+                  .count())
+    finally:
+        db.close()

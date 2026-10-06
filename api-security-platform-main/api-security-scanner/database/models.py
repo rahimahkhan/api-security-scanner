@@ -59,6 +59,25 @@ class User(Base):
     sessions = relationship("ScanSession", back_populates="user", cascade="all, delete-orphan")
 
 
+class PasswordResetOTP(Base):
+    """One-time password-reset code sent by email. Only the hash is stored.
+
+    Flow: request -> (emailed 6-digit code) -> verify -> set new password
+    via the Firebase Admin SDK. Single-use, 15-minute expiry, 5-attempt
+    lockout. Keyed by email because identity lives in Firebase.
+    """
+    __tablename__ = "password_reset_otps"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    otp_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    verified = Column(Boolean, default=False, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Endpoint(Base):
     __tablename__ = "endpoints"
 

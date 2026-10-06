@@ -1,6 +1,8 @@
 import os
 import re
 import sys
+import hashlib
+import hmac
 import secrets
 import threading
 from datetime import datetime, timedelta
@@ -24,9 +26,12 @@ from database.db import (
     get_finding_by_id, delete_session, SessionLocal,
     get_user_by_username, get_user_by_firebase_uid,
     get_or_create_firebase_user,
+    create_reset_otp, get_latest_valid_reset_otp, increment_otp_attempts,
+    mark_otp_verified, mark_otp_used, count_recent_otps,
 )
 from database.models import ScanSession, Finding, Endpoint
-from dashboard.auth_validators import validate_signup_email
+from dashboard.auth_validators import validate_signup_email, password_strength_error
+from dashboard.emailer import is_email_configured, send_otp_email
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
 )
@@ -312,6 +317,177 @@ def firebase_session():
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.index")
     return jsonify({"status": "ok", "redirect": next_url})
+
+
+# ---------------------------------------------------------------------------
+# Forgot password via emailed OTP (alternative to the Firebase reset link).
+# The OTP only proves ownership of the email address; the new password is
+# set through the Firebase Admin SDK. Codes are 6 digits, hashed at rest,
+# 15-minute expiry, 5-attempt lockout, single-use.
+# ---------------------------------------------------------------------------
+OTP_EXPIRY_MINUTES = 15
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN_SECONDS = 60
+OTP_MAX_PER_HOUR = 5
+
+# Generic reply used everywhere in this flow so the responses never reveal
+# whether an email address has an account.
+_OTP_GENERIC_REPLY = ("If an account exists for that email, we've sent it a "
+                      "one-time code. Check your inbox (and spam folder).")
+
+
+def _hash_otp(otp: str) -> str:
+    return hashlib.sha256(otp.encode("utf-8")).hexdigest()
+
+
+def _normalize_otp_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _get_firebase_user_by_email(email: str):
+    """Firebase user record for the email, or None when there isn't one."""
+    from firebase_admin import auth as fb_auth
+    from dashboard.firebase_auth import _admin_app
+    _admin_app()  # raises RuntimeError when the service account isn't set
+    try:
+        return fb_auth.get_user_by_email(email)
+    except fb_auth.UserNotFoundError:
+        return None
+
+
+@dashboard_bp.route("/api/auth/otp/request", methods=["POST"])
+def otp_request():
+    """Email a 6-digit reset code. Body: {"email": "..."}."""
+    if not is_auth_enabled():
+        return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
+    data = request.get_json(silent=True) or {}
+    email = _normalize_otp_email(data.get("email"))
+    email_error = validate_signup_email(email)
+    if email_error:
+        return jsonify({"status": "error", "message": email_error}), 400
+    if not is_email_configured():
+        return jsonify({"status": "error", "message":
+                        "Email sending isn't set up on this server yet."}), 503
+
+    now = datetime.utcnow()
+    if count_recent_otps(email, now - timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS)) > 0:
+        return jsonify({"status": "error", "message":
+                        "A code was just sent — please wait a minute before asking again."}), 429
+    if count_recent_otps(email, now - timedelta(hours=1)) >= OTP_MAX_PER_HOUR:
+        return jsonify({"status": "error", "message":
+                        "Too many codes requested. Please try again later."}), 429
+
+    try:
+        fb_user = _get_firebase_user_by_email(email)
+    except RuntimeError:
+        logger.warning("OTP request failed: Firebase Admin SDK not configured")
+        return jsonify({"status": "error", "message":
+                        "Password reset isn't available right now. Please try again later."}), 503
+    except Exception as exc:
+        logger.warning(f"OTP request Firebase lookup failed: {exc}")
+        return jsonify({"status": "error", "message":
+                        "Password reset isn't available right now. Please try again later."}), 503
+
+    if fb_user is None:
+        # No account — reply generically, send nothing (anti-enumeration).
+        return jsonify({"status": "ok", "message": _OTP_GENERIC_REPLY})
+
+    otp = f"{secrets.randbelow(1000000):06d}"
+    create_reset_otp(email, _hash_otp(otp),
+                     now + timedelta(minutes=OTP_EXPIRY_MINUTES))
+    ok, reason = send_otp_email(email, otp)
+    if not ok:
+        latest = get_latest_valid_reset_otp(email)
+        if latest:
+            mark_otp_used(latest.id)
+        logger.warning(f"OTP email to {email} failed: {reason}")
+        return jsonify({"status": "error", "message":
+                        "We couldn't send the email right now. Please try again in a bit."}), 502
+    return jsonify({"status": "ok", "message": _OTP_GENERIC_REPLY})
+
+
+@dashboard_bp.route("/api/auth/otp/verify", methods=["POST"])
+def otp_verify():
+    """Check a 6-digit code. Body: {"email": "...", "otp": "123456"}."""
+    if not is_auth_enabled():
+        return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
+    data = request.get_json(silent=True) or {}
+    email = _normalize_otp_email(data.get("email"))
+    otp = (data.get("otp") or "").strip()
+    if not email or not otp:
+        return jsonify({"status": "error", "message": "Enter the code we emailed you."}), 400
+
+    token = get_latest_valid_reset_otp(email)
+    if token is None:
+        return jsonify({"status": "error", "message":
+                        "That code has expired. Request a new one."}), 400
+    if (token.attempts or 0) >= OTP_MAX_ATTEMPTS:
+        mark_otp_used(token.id)
+        return jsonify({"status": "error", "message":
+                        "Too many wrong attempts. Request a new code."}), 429
+    if not hmac.compare_digest(token.otp_hash, _hash_otp(otp)):
+        increment_otp_attempts(token.id)
+        remaining = OTP_MAX_ATTEMPTS - (token.attempts or 0) - 1
+        return jsonify({"status": "error", "message":
+                        f"That code isn't right. {max(remaining, 0)} attempts left."}), 401
+    mark_otp_verified(token.id)
+    return jsonify({"status": "ok", "message": "Code verified. Choose a new password."})
+
+
+@dashboard_bp.route("/api/auth/otp/reset", methods=["POST"])
+def otp_reset():
+    """Set the new password after OTP verification.
+
+    Body: {"email": "...", "otp": "123456", "new_password": "...",
+           "confirm_password": "..."}. The password is set via Firebase.
+    """
+    if not is_auth_enabled():
+        return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
+    data = request.get_json(silent=True) or {}
+    email = _normalize_otp_email(data.get("email"))
+    otp = (data.get("otp") or "").strip()
+    new_password = data.get("new_password") or ""
+    confirm_password = data.get("confirm_password") or ""
+
+    pw_error = password_strength_error(new_password)
+    if pw_error:
+        return jsonify({"status": "error", "message": pw_error}), 400
+    if new_password != confirm_password:
+        return jsonify({"status": "error", "message": "The passwords don't match."}), 400
+    if not email or not otp:
+        return jsonify({"status": "error", "message": "Enter the code we emailed you."}), 400
+
+    token = get_latest_valid_reset_otp(email)
+    if token is None:
+        return jsonify({"status": "error", "message":
+                        "That code has expired. Request a new one."}), 400
+    if not token.verified:
+        return jsonify({"status": "error", "message":
+                        "Please verify the code first."}), 400
+    if not hmac.compare_digest(token.otp_hash, _hash_otp(otp)):
+        increment_otp_attempts(token.id)
+        return jsonify({"status": "error", "message": "That code isn't right."}), 401
+
+    try:
+        fb_user = _get_firebase_user_by_email(email)
+        if fb_user is None:
+            return jsonify({"status": "error", "message":
+                            "That account no longer exists."}), 400
+        from firebase_admin import auth as fb_auth
+        fb_auth.update_user(fb_user.uid, password=new_password)
+    except RuntimeError:
+        logger.warning("OTP reset failed: Firebase Admin SDK not configured")
+        return jsonify({"status": "error", "message":
+                        "Password reset isn't available right now. Please try again later."}), 503
+    except Exception as exc:
+        logger.warning(f"OTP reset Firebase update failed for {email}: {exc}")
+        return jsonify({"status": "error", "message":
+                        "We couldn't update the password. Please try again."}), 502
+
+    mark_otp_used(token.id)
+    logger.info(f"Password reset via OTP for {email}")
+    return jsonify({"status": "ok", "message":
+                    "Password updated. You can log in with your new password now."})
 
 
 @dashboard_bp.route("/logout")
