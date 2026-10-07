@@ -22,6 +22,10 @@ from typing import Optional
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
 GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "").strip()  # Gemini free tier
+# Floating alias on purpose: Google retires pinned versions (gemini-2.0-flash
+# died 2026-06-01 and silently broke this). Env override for pinning if wanted.
+GOOGLE_AI_MODEL = os.getenv("GOOGLE_AI_MODEL", "gemini-flash-latest").strip() or "gemini-flash-latest"
+_GEMINI_FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest"]
 
 SYSTEM_PROMPT = """You are the Xploiter AI Assistant. Xploiter is an API security scanner.
 
@@ -227,11 +231,17 @@ def knowledge_answer(question: str, language: str = "auto"):
     return _render_markdown(safe), topic.get("actions", [])
 
 
-def _gemini_answer(question: str, language: str, scan_context: Optional[str]):
-    """Ask Google's Gemini API (free tier). Raises on any failure."""
-    lang_name = {"en": "English", "ur": "Urdu", "ar": "Arabic", "es": "Spanish"}.get(language, "the user's language")
-    if language == "auto":
-        lang_name = "the user's language (auto-detect from their question)"
+def _gemini_models():
+    """Primary model first, then fallbacks, deduped."""
+    seen = []
+    for m in [GOOGLE_AI_MODEL] + _GEMINI_FALLBACK_MODELS:
+        if m and m not in seen:
+            seen.append(m)
+    return seen
+
+
+def _gemini_once(model, question, lang_name, scan_context):
+    """One generateContent call. Raises HTTPError/OSError on failure."""
     payload = json.dumps({
         "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
         "contents": [{"parts": [{"text": (
@@ -241,17 +251,48 @@ def _gemini_answer(question: str, language: str, scan_context: Optional[str]):
         )}]}],
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600},
     }).encode("utf-8")
+    # Key in the header, not the URL query string (query strings get logged).
     req = urllib.request.Request(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        "?key=" + GOOGLE_AI_API_KEY,
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": GOOGLE_AI_API_KEY},
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.load(resp)
     content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    safe = html.escape(content)
-    return _render_markdown(safe)
+    return _render_markdown(html.escape(content))
+
+
+def _gemini_answer(question: str, language: str, scan_context: Optional[str]):
+    """Ask Google's Gemini API (free tier). Tries each model in turn.
+
+    Retired model names (404) move to the next model immediately; transient
+    5xx/timeouts are retried a few times; quota/auth errors fail fast with a
+    clear message. Raises the last error if every model fails.
+    """
+    import time
+    import urllib.error
+    lang_name = {"en": "English", "ur": "Urdu", "ar": "Arabic", "es": "Spanish"}.get(language, "the user's language")
+    if language == "auto":
+        lang_name = "the user's language (auto-detect from their question)"
+    last_exc = None
+    for model in _gemini_models():
+        for attempt in range(3):
+            try:
+                return _gemini_once(model, question, lang_name, scan_context)
+            except urllib.error.HTTPError as exc:
+                last_exc = exc
+                if exc.code == 429:
+                    raise RuntimeError(f"Gemini quota exceeded for model {model} (429). Try again tomorrow or use a paid key.")
+                if exc.code in (404, 400):
+                    break  # retired/unknown model or bad request: try next model
+                if exc.code in (401, 403):
+                    raise RuntimeError(f"Gemini rejected the API key ({exc.code}). Check the key in Google AI Studio.")
+                # other 5xx: transient, retry below
+            except (OSError, TimeoutError) as exc:
+                last_exc = exc  # network/timeout: transient, retry below
+            time.sleep(1.5 * (attempt + 1))
+    raise last_exc if last_exc else RuntimeError("Gemini: all models failed")
 
 
 def engine_mode() -> str:
