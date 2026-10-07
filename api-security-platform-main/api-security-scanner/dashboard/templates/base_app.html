@@ -33,22 +33,28 @@
         </div>
         <div class="topbar-right">
             {% block topbar_extra %}{% endblock %}
-            <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle dark / light theme">Theme:<span class="theme-long"> Dark / Light</span></button>
-            <a class="alerts-link" href="{{ url_for('dashboard.alerts') }}">Alerts<span class="alert-badge" id="alert-badge" {% if not alert_count %}hidden{% endif %}>{{ alert_count or 0 }}</span></a>
-            {% if is_authenticated %}
-            <div class="user-menu">
-                <button class="user-menu-btn" id="user-menu-btn" type="button" aria-haspopup="true">{{ current_username or 'user' }} &#9662;</button>
-                <div class="user-dropdown" id="user-dropdown">
-                    <a href="{{ url_for('dashboard.settings') }}#account">My Account</a>
-                    <a href="{{ url_for('dashboard.settings') }}#privacy">Privacy</a>
+            <div class="icon-menu">
+                <button class="icon-btn" id="theme-btn" type="button" title="Theme" aria-haspopup="true"><span id="theme-icon">&#127769;</span></button>
+                <div class="icon-dropdown" id="theme-dropdown" role="menu" aria-label="Theme">
+                    <button type="button" data-theme-choice="light"><span>&#9728;&#65039;</span> Light</button>
+                    <button type="button" data-theme-choice="dark"><span>&#127769;</span> Dark</button>
+                </div>
+            </div>
+            <a class="icon-btn" href="{{ url_for('dashboard.alerts') }}" title="Notifications">&#128276;<span class="alert-badge" id="alert-badge" {% if not alert_count %}hidden{% endif %}>{{ alert_count or 0 }}</span></a>
+            <div class="icon-menu">
+                <button class="icon-btn" id="account-btn" type="button" title="Account" aria-haspopup="true">&#128100;</button>
+                <div class="icon-dropdown" id="account-dropdown" role="menu" aria-label="Account">
+                    {% if is_authenticated %}
+                    <a href="{{ url_for('dashboard.my_account') }}">My Account</a>
                     <a href="{{ url_for('dashboard.settings') }}">Settings</a>
                     <hr>
                     <a href="{{ url_for('dashboard.logout') }}">Logout</a>
+                    {% else %}
+                    <a href="{{ url_for('dashboard.login') }}">Log in</a>
+                    <a href="{{ url_for('dashboard.signup') }}">Sign up</a>
+                    {% endif %}
                 </div>
             </div>
-            {% else %}
-            <a class="login-link" href="{{ url_for('dashboard.login') }}">Log in</a>
-            {% endif %}
         </div>
     </header>
 

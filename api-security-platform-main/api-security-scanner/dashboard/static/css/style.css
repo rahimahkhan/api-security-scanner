@@ -743,3 +743,48 @@ pre.evidence { background: var(--navy); color: #dbe4f5; border-radius: 10px; pad
     font-size: 0.92rem; color: var(--text-2);
 }
 .notice-bar a { font-weight: 600; }
+
+/* ---------- Icon buttons + dropdowns (topbar) ---------- */
+.icon-menu { position: relative; }
+.icon-btn {
+    background: none; border: none; cursor: pointer;
+    color: #dbe4f5; font-size: 1.15rem; line-height: 1;
+    padding: 0.45rem 0.55rem; border-radius: 8px;
+    display: inline-flex; align-items: center; justify-content: center;
+    position: relative; text-decoration: none;
+}
+a.icon-btn:hover, .icon-btn:hover { color: #fff; background: rgba(255,255,255,0.08); text-decoration: none; }
+.icon-btn .alert-badge {
+    position: absolute; top: 2px; right: 2px;
+    background: #ef4444; color: #fff; font-size: 0.62rem; font-weight: 700;
+    min-width: 1rem; height: 1rem; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 0.2rem;
+}
+.icon-btn .alert-badge[hidden] { display: none; }
+.icon-dropdown {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); min-width: 170px; padding: 0.35rem;
+    display: none; z-index: 300;
+}
+.icon-dropdown.open { display: block; }
+.icon-dropdown a, .icon-dropdown button {
+    display: flex; align-items: center; gap: 0.55rem; width: 100%;
+    padding: 0.55rem 0.7rem; border-radius: 7px; border: none;
+    background: none; color: var(--text); font-size: 0.9rem; font-family: inherit;
+    cursor: pointer; text-align: left; text-decoration: none;
+}
+.icon-dropdown a:hover, .icon-dropdown button:hover { background: var(--bg-soft); text-decoration: none; }
+.icon-dropdown button[aria-checked="true"] { font-weight: 700; color: var(--blue); }
+.icon-dropdown hr { border: none; border-top: 1px solid var(--border); margin: 0.3rem 0; }
+
+/* ---------- Account page ---------- */
+.profile-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.avatar { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; }
+.avatar-fallback {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--blue); color: #fff; font-size: 1.5rem; font-weight: 700;
+}
+.profile-username { font-size: 1.15rem; font-weight: 700; }
+.profile-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }

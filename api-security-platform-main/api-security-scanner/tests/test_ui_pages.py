@@ -87,7 +87,7 @@ def test_public_pages_need_no_login():
 # Login is optional: visitors can browse every page without an account.
 # Only personal/destructive areas still require login.
 PUBLIC_PAGES = ["/dashboard", "/new-scan", "/history", "/targets",
-                "/reports", "/alerts", "/vuln-guide", "/ai-assistant", "/"]
+                "/reports", "/notifications", "/vuln-guide", "/ai-assistant", "/"]
 LOGIN_REQUIRED_PAGES = ["/settings"]
 
 
@@ -131,7 +131,7 @@ def test_app_pages_render_for_users():
         "/history": b"Scan history",
         "/targets": b"Every API you have scanned",
         "/reports": b"Download the report for any finished scan",
-        "/alerts": b"Mark all as read",
+        "/notifications": b"Mark all as read",
         "/settings": b"Notifications",
         "/vuln-guide": b"Vulnerability guide",
         "/ai-assistant": b"AI Assistant",
@@ -350,9 +350,16 @@ def test_settings_account_name_update():
     user = _make_user()
     try:
         _login(client, user)
-        res = client.post("/settings", data={"form": "account", "name": "New Name"})
+        res = client.post("/account", data={"form": "account", "name": "New Name"})
         assert res.status_code == 200
         assert b"Account name saved" in res.data
+        # My Account page shows the user details.
+        res = client.get("/account")
+        assert res.status_code == 200
+        assert bytes(user.username, "utf-8") in res.data
+        assert b"New Name" in res.data
+        # Logged-out visitors are sent to login for the account page.
+        assert app.test_client().get("/account").status_code == 302
     finally:
         _cleanup_user(user)
 
@@ -361,7 +368,7 @@ def test_alerts_page_lists_session_alerts():
     client = _app().test_client()
     s = save_scan_session(target_url="http://alerts.test", status="failed")
     try:
-        res = client.get("/alerts")
+        res = client.get("/notifications")
         assert res.status_code == 200
         assert b"could not reach the target" in res.data
         assert b"Try again" in res.data

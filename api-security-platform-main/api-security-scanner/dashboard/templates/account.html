@@ -1,0 +1,60 @@
+{% extends "base_app.html" %}
+
+{% block title %}My Account — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>My Account</h1>
+</div>
+
+{% if notice %}
+<div class="note-banner">{{ notice }}</div>
+{% endif %}
+
+<div class="settings-grid">
+    <div class="card" id="profile">
+        <h3>Profile</h3>
+        <div class="profile-row">
+            {% if user.avatar_url %}
+            <img class="avatar" src="{{ user.avatar_url }}" alt="Profile picture">
+            {% else %}
+            <div class="avatar avatar-fallback">{{ (user.username or 'U')[0]|upper }}</div>
+            {% endif %}
+            <div>
+                <div class="profile-username">{{ user.username }}</div>
+                <div class="profile-meta">Member since {{ user.created_at.strftime('%B %Y') if user.created_at else '—' }} · {{ scan_count }} scan{{ 's' if scan_count != 1 else '' }}</div>
+            </div>
+        </div>
+        <form method="POST" action="{{ url_for('dashboard.my_account') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="form" value="account">
+            <div class="form-group">
+                <label for="set-name">Name</label>
+                <input type="text" id="set-name" name="name" value="{{ user.name or '' }}" placeholder="Your name">
+            </div>
+            <div class="form-group">
+                <label for="set-email">Email</label>
+                <input type="email" id="set-email" value="{{ user.email or '' }}" disabled>
+                <p class="form-help">Email is managed by your sign-in provider and can't be changed here.</p>
+            </div>
+            <button type="submit" class="btn btn-outline">Save name</button>
+            <a class="btn btn-outline" href="{{ url_for('dashboard.forgot_password') }}" style="margin-left:0.5rem">Change password</a>
+        </form>
+    </div>
+
+    <div class="card" id="data">
+        <h3>My data</h3>
+        <div class="stack">
+            <a class="btn btn-outline" href="{{ url_for('dashboard.export_my_data') }}">Export my data</a>
+            <form method="POST" action="{{ url_for('dashboard.delete_my_scans') }}" onsubmit="return confirm('Delete ALL of your scan sessions? This cannot be undone.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline">Delete my scans</button>
+            </form>
+            <form method="POST" action="{{ url_for('dashboard.delete_my_account') }}" onsubmit="return confirm('Delete your account and all its data? This cannot be undone.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger-outline">Delete my account</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

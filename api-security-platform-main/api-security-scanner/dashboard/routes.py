@@ -841,22 +841,32 @@ def reports():
                            q=request.args.get("q") or "", date=date)
 
 
-@dashboard_bp.route("/alerts")
+@dashboard_bp.route("/notifications")
 def alerts():
     return render_template("alerts.html", alerts=_build_alerts(get_current_user_id()))
 
 
-@dashboard_bp.route("/settings", methods=["GET", "POST"])
+@dashboard_bp.route("/account", methods=["GET", "POST"])
 @login_required
-def settings():
+def my_account():
+    """My Account: user details, editable name, and data actions."""
     notice = None
     if request.method == "POST" and request.form.get("form") == "account":
         name = (request.form.get("name") or "").strip()
         if update_user_name(get_current_user_id(), name):
             notice = "Account name saved."
         else:
-            notice = "Could not save — please try again."
-    return render_template("settings.html", user=_current_user(), notice=notice,
+            notice = "Could not save \u2014 please try again."
+    user = _current_user()
+    scan_count = len(get_all_sessions(user.id)) if user else 0
+    return render_template("account.html", user=user, notice=notice,
+                           scan_count=scan_count)
+
+
+@dashboard_bp.route("/settings")
+@login_required
+def settings():
+    return render_template("settings.html", notice=None,
                            ai_live=(assistant_engine.engine_mode() == "live"),
                            ai_error=assistant_engine.last_llm_error())
 

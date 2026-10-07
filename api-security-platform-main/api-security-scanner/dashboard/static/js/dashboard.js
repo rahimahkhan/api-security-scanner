@@ -39,6 +39,15 @@
             r.checked = (r.value === choice);
         });
     }
+    function syncThemeIcon() {
+        var icon = document.getElementById("theme-icon");
+        if (icon) icon.innerHTML = document.documentElement.getAttribute("data-theme") === "dark" ? "&#127769;" : "&#9728;&#65039;";
+        document.querySelectorAll('[data-theme-choice]').forEach(function (b) {
+            b.setAttribute("aria-checked", b.getAttribute("data-theme-choice") === currentChoice() ? "true" : "false");
+        });
+    }
+    var _applyThemeChoice = applyThemeChoice;
+    applyThemeChoice = function (choice) { _applyThemeChoice(choice); syncThemeIcon(); };
 
     /* ---------- Alerts badge (localStorage read-state) ---------- */
     var READ_KEY = "xploiter-alerts-read";
@@ -69,32 +78,47 @@
     }
 
     onReady(function () {
-        /* Theme toggle (top bar) */
-        var toggle = document.getElementById("theme-toggle");
-        if (toggle) {
-            toggle.addEventListener("click", function () {
-                var now = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-                applyThemeChoice(now);
+        /* Theme dropdown (top bar): explicit Light / Dark choice */
+        var themeBtn = document.getElementById("theme-btn");
+        var themeDropdown = document.getElementById("theme-dropdown");
+        /* Account dropdown (top bar) */
+        var accountBtn = document.getElementById("account-btn");
+        var accountDropdown = document.getElementById("account-dropdown");
+        function closeIconDropdowns(except) {
+            [themeDropdown, accountDropdown].forEach(function (dd) {
+                if (dd && dd !== except) dd.classList.remove("open");
             });
         }
+        if (themeBtn && themeDropdown) {
+            themeBtn.addEventListener("click", function (e) {
+                e.stopPropagation();
+                var willOpen = !themeDropdown.classList.contains("open");
+                closeIconDropdowns();
+                if (willOpen) themeDropdown.classList.add("open");
+            });
+            themeDropdown.querySelectorAll("[data-theme-choice]").forEach(function (b) {
+                b.addEventListener("click", function () {
+                    applyThemeChoice(b.getAttribute("data-theme-choice"));
+                    themeDropdown.classList.remove("open");
+                });
+            });
+        }
+        if (accountBtn && accountDropdown) {
+            accountBtn.addEventListener("click", function (e) {
+                e.stopPropagation();
+                var willOpen = !accountDropdown.classList.contains("open");
+                closeIconDropdowns();
+                if (willOpen) accountDropdown.classList.add("open");
+            });
+        }
+        document.addEventListener("click", function () { closeIconDropdowns(); });
+        syncThemeIcon();
         /* Appearance radios (settings) */
         document.querySelectorAll('input[name="appearance"]').forEach(function (r) {
             r.addEventListener("change", function () { applyThemeChoice(r.value); });
         });
         syncAppearanceRadios(currentChoice());
 
-        /* User dropdown */
-        var menuBtn = document.getElementById("user-menu-btn");
-        var dropdown = document.getElementById("user-dropdown");
-        if (menuBtn && dropdown) {
-            menuBtn.addEventListener("click", function (e) {
-                e.stopPropagation();
-                dropdown.classList.toggle("open");
-            });
-            document.addEventListener("click", function (e) {
-                if (!dropdown.contains(e.target)) dropdown.classList.remove("open");
-            });
-        }
 
         /* Mobile nav drawer */
         var hamburger = document.getElementById("nav-hamburger");
