@@ -166,7 +166,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-si
 .sidebar a.active { background: var(--sidebar-active); color: var(--blue); font-weight: 600; }
 .nav-scrim { display: none; }
 
-.main-content { flex: 1; min-width: 0; padding: 1.75rem 2rem 3rem; max-width: 1180px; width: 100%; margin: 0 auto; }
+.main-content { flex: 1; min-width: 0; padding: 1.75rem 2rem 6rem; max-width: 1180px; width: 100%; margin: 0 auto; }
 .app-footer { text-align: center; color: var(--muted); font-size: 0.75rem; padding: 1.25rem; }
 .app-footer .ver { font-family: ui-monospace, monospace; }
 

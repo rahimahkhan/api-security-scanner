@@ -27,6 +27,9 @@
     If you do not understand a screen, a result, or a term, type your question and it will guide you.
     Ask in any language.
 </div>
+{% if ai_mode != "live" %}
+<div class="note-banner" style="margin-bottom:1rem;">Offline mode: answers come from the built-in guide, not a live AI. Connect an AI key (Settings → AI) for full AI answers.</div>
+{% endif %}
 
 <div class="card">
     <div class="chat-box" id="chat-box"></div>
@@ -120,7 +123,7 @@
         chip.addEventListener("click", function () { send(chip.textContent); });
     });
 
-    if (prefill) { send(prefill); }
+    if (prefill) { input.value = prefill; input.focus(); }
     else {
         addMsg("Hello! Ask me how to run a scan, what a finding means, or what to fix first — in your own language.", "bot");
     }

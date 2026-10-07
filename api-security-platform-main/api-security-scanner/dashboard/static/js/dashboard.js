@@ -147,10 +147,16 @@
                     tab.classList.add("active");
                     var f = tab.getAttribute("data-filter");
                     var scope = tabs.getAttribute("data-scope") || document;
-                    (typeof scope === "string" ? document : scope)
-                        .querySelectorAll("[data-status]").forEach(function (el) {
-                            el.style.display = (f === "all" || el.getAttribute("data-status") === f) ? "" : "none";
-                        });
+                    var scopeEl = (typeof scope === "string" ? document : scope);
+                    var visible = 0;
+                    scopeEl.querySelectorAll("[data-status]").forEach(function (el) {
+                        var show = (f === "all" || el.getAttribute("data-status") === f);
+                        el.style.display = show ? "" : "none";
+                        if (show && el.classList.contains("risk-card")) visible++;
+                    });
+                    // Keep the "N SHOWN" header honest on the top-risks section.
+                    var header = tabs.parentElement.querySelector(".top-risks-count");
+                    if (header) header.textContent = visible + " SHOWN";
                 });
             });
         });

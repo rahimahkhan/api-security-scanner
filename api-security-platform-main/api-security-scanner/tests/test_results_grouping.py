@@ -93,3 +93,43 @@ def test_summary_counts():
 
 def test_top_risks_slice_is_six():
     assert TOP_RISKS_COUNT == 6
+
+
+# ------------------------------------------------- summarize_findings ---
+from dashboard.results_grouping import summarize_findings
+
+
+def test_summarize_counts_only_confirmed_and_suspected():
+    findings = [_f(1, status="Confirmed", risk=80.0),
+                _f(2, attack="XSS", status="Suspected", risk=30.0),
+                _f(3, url="https://api.example.com/health", attack="Info",
+                    severity="Low", status="Informational", risk=5.0)]
+    s = summarize_findings(findings)
+    assert s["vulnerabilities"] == 2
+    assert s["vulnerable_endpoints"] == 1  # /health is notes-only
+    assert s["confirmed"] == 1 and s["suspected"] == 1 and s["informational"] == 1
+    assert s["risk_score"] == 80.0
+
+
+def test_summarize_dedupes_like_the_results_page():
+    findings = [_f(1, risk=40.0), _f(2, risk=45.0), _f(3, risk=42.0)]
+    s = summarize_findings(findings)
+    assert s["vulnerabilities"] == 1
+    assert s["vulnerable_endpoints"] == 1
+
+
+def test_summarize_proof_cap_no_confirmed_no_critical():
+    findings = [_f(1, status="Suspected", severity="High", risk=75.0)]
+    s = summarize_findings(findings)
+    assert s["severity"] == "HIGH"  # capped, never CRITICAL without proof
+    findings = [_f(1, status="Confirmed", severity="Critical", risk=95.0)]
+    s = summarize_findings(findings)
+    assert s["severity"] == "CRITICAL"
+
+
+def test_summarize_empty_scan():
+    s = summarize_findings([])
+    assert s["vulnerabilities"] == 0
+    assert s["vulnerable_endpoints"] == 0
+    assert s["risk_score"] == 0.0
+    assert s["severity"] == "NONE"

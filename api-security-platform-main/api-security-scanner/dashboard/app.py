@@ -36,4 +36,12 @@ def create_app():
     from dashboard.routes import dashboard_bp
     app.register_blueprint(dashboard_bp)
 
+    # Styled error pages (JSON for /api/*, app design for browsers).
+    @app.errorhandler(404)
+    def not_found(error):
+        from flask import request, jsonify, render_template
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "error", "message": "Not found"}), 404
+        return render_template("404.html"), 404
+
     return app

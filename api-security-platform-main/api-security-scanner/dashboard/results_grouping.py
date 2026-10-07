@@ -19,6 +19,79 @@ STATUS_ORDER = {"Confirmed": 0, "Suspected": 1, "Informational": 2}
 
 TOP_RISKS_COUNT = 6
 
+# The ONE scoring rule for the whole app. Results page, history, dashboard,
+# compare and exports all derive their numbers from this function, so the
+# counts can never disagree again.
+#
+# Rule:
+# - A finding counts as a vulnerability when its finding_status is Confirmed
+#   or Suspected. Informational findings are notes, not vulnerabilities.
+# - "vulnerabilities" dedupes by (method, path, attack_type), the same key
+#   the results page groups by.
+# - "risk_score" is the highest risk_score across all findings (unchanged).
+# - Severity follows the detector thresholds, with the standing proof cap:
+#   CRITICAL requires at least one Confirmed finding.
+VULN_STATUSES = frozenset({"Confirmed", "Suspected"})
+
+
+def _classify_score(score: float) -> str:
+    if score >= 70.0:
+        return "CRITICAL"
+    if score >= 40.0:
+        return "HIGH"
+    if score >= 15.0:
+        return "MEDIUM"
+    if score > 0.0:
+        return "LOW"
+    return "NONE"
+
+
+def summarize_findings(finding_dicts):
+    """Canonical session numbers from a list of finding dicts.
+
+    Each dict may carry: url, method, attack_type, severity, finding_status,
+    risk_score. Returns {"vulnerabilities", "vulnerable_endpoints",
+    "critical_endpoints", "confirmed", "suspected", "informational",
+    "risk_score", "severity"}.
+    """
+    vulns = {}          # (method, path, attack_type) -> True
+    vuln_endpoints = set()
+    critical_endpoints = set()
+    confirmed = suspected = informational = 0
+    top_score = 0.0
+    for f in finding_dicts or []:
+        status = f.get("finding_status") or "Informational"
+        if status == "Confirmed":
+            confirmed += 1
+        elif status == "Suspected":
+            suspected += 1
+        else:
+            informational += 1
+        score = float(f.get("risk_score") or 0.0)
+        if score > top_score:
+            top_score = score
+        if status in VULN_STATUSES:
+            method = (f.get("method") or "GET").upper()
+            path = _split_path(f.get("url") or "")
+            vulns[(method, path, f.get("attack_type") or "None")] = True
+            vuln_endpoints.add((method, path))
+            if (f.get("severity") or "").lower() == "critical":
+                critical_endpoints.add((method, path))
+    severity = _classify_score(top_score)
+    if confirmed == 0 and severity == "CRITICAL":
+        severity = "HIGH"
+    return {
+        "vulnerabilities": len(vulns),
+        "vulnerable_endpoints": len(vuln_endpoints),
+        "critical_endpoints": len(critical_endpoints),
+        "confirmed": confirmed,
+        "suspected": suspected,
+        "informational": informational,
+        "risk_score": round(top_score, 2),
+        "severity": severity,
+    }
+
+
 
 def _split_path(url):
     """Path without query string / fragment — the grouping key for endpoints."""

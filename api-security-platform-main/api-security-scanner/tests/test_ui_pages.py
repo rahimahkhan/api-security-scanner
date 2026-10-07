@@ -436,3 +436,75 @@ def test_alert_badge_shows_count_with_notifications():
     finally:
         delete_session(s.id)
         _cleanup_user(user)
+
+
+# ------------------------------------------- unified scoring / bug fixes ---
+def test_history_and_results_agree_on_counts():
+    """The single scoring rule: history shows the same numbers as results."""
+    from database.db import save_endpoint, save_finding
+    app = _app(auth=True)
+    client = app.test_client()
+    user = _make_user()
+    s = save_scan_session(target_url="http://agree.test", status="complete",
+                          user_id=user.id)
+    ep = save_endpoint(session_id=s.id, url="http://agree.test/users", method="GET")
+    save_finding(session_id=s.id, endpoint_id=ep.id, attack_type="SQLi",
+                 severity="High", finding_status="Confirmed", risk_score=80.0)
+    save_finding(session_id=s.id, endpoint_id=ep.id, attack_type="XSS",
+                 severity="Medium", finding_status="Suspected", risk_score=30.0)
+    ep2 = save_endpoint(session_id=s.id, url="http://agree.test/health", method="GET")
+    save_finding(session_id=s.id, endpoint_id=ep2.id, attack_type="Info",
+                 severity="Low", finding_status="Informational", risk_score=5.0)
+    try:
+        _login(client, user)
+        res = client.get("/history")
+        assert res.status_code == 200
+        # 2 vulnerabilities (confirmed + suspected), not 3: notes don't count.
+        assert b">2</td>" in res.data
+        res = client.get(f"/results/{s.id}")
+        assert res.status_code == 200
+        # 1 vulnerable endpoint: /health is notes-only.
+        assert b'<div class="v">1</div>' in res.data
+    finally:
+        delete_session(s.id)
+        _cleanup_user(user)
+
+
+def test_compare_button_needs_two_scans():
+    client = _app().test_client()
+    res = client.get("/history")
+    assert res.status_code == 200
+    assert b'type="button"' in res.data
+    assert b'id="compare-btn"' in res.data
+    assert b"Select at least two scans to compare." in res.data
+
+
+def test_404_page_is_styled():
+    client = _app().test_client()
+    res = client.get("/no-such-page-xyz")
+    assert res.status_code == 404
+    assert b"Page not found" in res.data
+    assert b"Go to Dashboard" in res.data
+    # API 404s stay JSON
+    res = client.get("/api/nope")
+    assert res.status_code == 404
+    assert res.get_json()["status"] == "error"
+
+
+def test_ai_assistant_labels_offline_mode():
+    import dashboard.assistant as engine
+    assert engine.engine_mode() == "offline"  # no key in test env
+    client = _app().test_client()
+    res = client.get("/ai-assistant")
+    assert res.status_code == 200
+    assert b"Offline mode" in res.data
+
+
+def test_forgot_password_has_firebase_sdk():
+    # The page's inline script calls firebase.initializeApp, so the SDK
+    # script tags must be present (their absence silently broke the form).
+    import pathlib
+    tpl = pathlib.Path(__file__).parent.parent / "dashboard" / "templates" / "forgot_password.html"
+    html = tpl.read_text()
+    assert "firebase-app-compat.js" in html
+    assert "firebase-auth-compat.js" in html

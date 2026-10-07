@@ -37,7 +37,9 @@ from dashboard.emailer import is_email_configured, send_otp_email
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
 )
-from dashboard.results_grouping import group_findings, TOP_RISKS_COUNT
+from dashboard.results_grouping import (
+    group_findings, summarize_findings, VULN_STATUSES, TOP_RISKS_COUNT
+)
 from dashboard.vuln_guide_content import GUIDE_CHECKS, get_check
 from dashboard import assistant as assistant_engine
 from core.discovery import EndpointDiscovery
@@ -713,6 +715,8 @@ def results(session_id):
         } for f in findings]
         grouped = group_findings(finding_dicts)
         endpoint_groups = grouped["groups"]
+        # The single scoring rule: header numbers always match history/dashboard.
+        scan_summary = summarize_findings(finding_dicts)
         total_endpoints = len(session_data.endpoints or [])
         passed_count = max(0, total_endpoints - len(endpoint_groups))
 
@@ -736,6 +740,7 @@ def results(session_id):
             endpoint_groups=endpoint_groups,
             top_risks=endpoint_groups[:TOP_RISKS_COUNT],
             group_summary=grouped["summary"],
+            scan_summary=scan_summary,
             total_endpoints=total_endpoints,
             passed_count=passed_count,
         )
@@ -760,7 +765,19 @@ def history():
         cutoff = datetime.utcnow() - timedelta(days=days)
         sessions = [s for s in sessions
                     if s.scan_start_time and s.scan_start_time >= cutoff]
-    return render_template("history.html", sessions=sessions,
+    db = SessionLocal()
+    try:
+        rows = []
+        for s in sessions:
+            findings = db.query(Finding).options(joinedload(Finding.endpoint)).filter(
+                Finding.session_id == s.id, Finding.risk_score > 0).all()
+            rows.append({
+                "session": s,
+                "summary": summarize_findings(_finding_dicts(findings, s.target_url)),
+            })
+    finally:
+        db.close()
+    return render_template("history.html", rows=rows,
                            q=request.args.get("q") or "",
                            severity=severity, date=date)
 
@@ -924,7 +941,9 @@ def dashboard():
         recent_ids = [s.id for s in sessions[:10]]
         recent_findings = (q.filter(Finding.session_id.in_(recent_ids)).all()
                            if recent_ids else [])
-        critical_findings = sum(1 for f in recent_findings if f.severity == "Critical")
+        critical_findings = sum(
+            1 for f in recent_findings
+            if f.severity == "Critical" and (f.finding_status or "Informational") in VULN_STATUSES)
         severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
         for f in recent_findings:
             severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
@@ -972,10 +991,12 @@ def compare():
         if not s:
             continue
         findings = get_session_findings(sid)
+        fd = _finding_dicts(findings, s.target_url)
         compared.append({
             "session": s,
-            "critical": sum(1 for f in findings if f.severity == "Critical"),
-            "high": sum(1 for f in findings if f.severity == "High"),
+            "summary": summarize_findings(fd),
+            "critical": sum(1 for f in fd if f["severity"] == "Critical" and f["finding_status"] in VULN_STATUSES),
+            "high": sum(1 for f in fd if f["severity"] == "High" and f["finding_status"] in VULN_STATUSES),
         })
     return render_template("compare.html", compared=compared)
 
@@ -1040,7 +1061,8 @@ def settings():
             notice = "Account name saved."
         else:
             notice = "Could not save — please try again."
-    return render_template("settings.html", user=_current_user(), notice=notice)
+    return render_template("settings.html", user=_current_user(), notice=notice,
+                           ai_live=(assistant_engine.engine_mode() == "live"))
 
 
 @dashboard_bp.route("/settings/export")
@@ -1112,6 +1134,7 @@ def vuln_guide():
 def ai_assistant():
     return render_template("ai_assistant.html",
                            prefill=(request.args.get("q") or "").strip() or None,
+                           ai_mode=assistant_engine.engine_mode(),
                            show_ai_fab=False)
 
 

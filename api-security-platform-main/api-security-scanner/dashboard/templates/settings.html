@@ -59,6 +59,14 @@
     </div>
 
     <div class="card">
+        <h3>AI Assistant</h3>
+        <p class="form-help" style="margin-bottom:0.7rem">
+            Status: <strong>{{ "Live AI connected" if ai_live else "Offline mode (built-in guide)" }}</strong>.
+            {% if not ai_live %}For full AI answers, add a <code>GOOGLE_AI_API_KEY</code> (free at aistudio.google.com) or <code>OPENAI_API_KEY</code> environment variable on Render and redeploy.{% endif %}
+        </p>
+    </div>
+
+    <div class="card">
         <h3>Notifications</h3>
         <label class="checkbox-row"><input type="checkbox" id="notif-done" checked> <span>Email when a scan finishes</span></label>
         <label class="checkbox-row"><input type="checkbox" id="notif-critical"> <span>Alert on new critical findings</span></label>
@@ -98,6 +106,25 @@
         lsSet("xploiter-endpoint-budget", budget.value);
         saveBtn.textContent = "Saved ✓";
         setTimeout(function () { saveBtn.textContent = "Save"; }, 1500);
+    });
+
+    // Appearance radios: reflect the actual active theme, not a default.
+    function currentThemeChoice() {
+        try { return localStorage.getItem("xploiter-theme") || "light"; } catch (e) { return "light"; }
+    }
+    function applyThemeChoice(choice) {
+        var theme = choice;
+        if (choice === "system") {
+            theme = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", theme || "light");
+        try { localStorage.setItem("xploiter-theme", choice); } catch (e) {}
+    }
+    var radios = document.querySelectorAll('input[name="appearance"]');
+    var current = currentThemeChoice();
+    radios.forEach(function (r) {
+        r.checked = (r.value === current);
+        r.addEventListener("change", function () { if (r.checked) applyThemeChoice(r.value); });
     });
 
     // Notification checkboxes (device-local)

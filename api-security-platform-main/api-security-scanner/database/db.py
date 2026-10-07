@@ -7,13 +7,14 @@ from sqlalchemy.orm import sessionmaker, joinedload
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, IS_POSTGRES
 from config.logging_config import logger
 from database.models import Base, ScanSession, Endpoint, Finding, Report, User
 
-db_path = DATABASE_URL.replace("sqlite:///", "")
-if os.path.dirname(db_path):
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+if not IS_POSTGRES:
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if os.path.dirname(db_path):
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
 engine = create_engine(
     DATABASE_URL,
@@ -25,6 +26,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """Creates all database tables on initial startup and applies migrations."""
     Base.metadata.create_all(bind=engine)
+    if IS_POSTGRES:
+        # Fresh Postgres gets the full schema from create_all; the PRAGMA-based
+        # migrations below are SQLite-only.
+        logger.info("Database tables initialized successfully (Postgres).")
+        return
     # Ensure finding_status column exists for existing SQLite database
     with engine.connect() as conn:
         try:

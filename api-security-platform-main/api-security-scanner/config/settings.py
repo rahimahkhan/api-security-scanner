@@ -31,6 +31,10 @@ FLASK_DEBUG = os.getenv("FLASK_DEBUG", "False") == "True"
 SECRET_KEY = os.getenv("SECRET_KEY", "default-secure-key")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'database.db'}")
+# Render's Postgres URLs start with postgres:// - SQLAlchemy needs postgresql://.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+IS_POSTGRES = DATABASE_URL.startswith("postgresql://")
 
 # Dashboard Auth & Security
 # Auth is ON by default: every dashboard page/API needs a user account, and

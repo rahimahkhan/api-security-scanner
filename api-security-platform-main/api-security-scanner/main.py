@@ -18,8 +18,9 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress
+from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session_findings
 from database.models import ScanSession, Endpoint, Finding, Report
+from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
 
@@ -395,8 +396,6 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
         total=len(discovered_endpoints),
         stage="Discovering endpoints" if not discovered_endpoints else "Testing endpoints",
     )
-    vulnerability_count = 0
-    total_scores = []
 
     try:
         # --- Identity/BOLA proof probes (VAmPI-style /users/v1/* only) ---
@@ -460,8 +459,6 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 custom_headers={"Content-Type": "application/json"}
             )
             def run_direct_probe(test_type, method, path_suffix, headers, json_payload, marker_key):
-                nonlocal vulnerability_count
-
                 url = target_url.rstrip("/") + path_suffix
                 req_data = request_engine.send_request(
                     method,
@@ -487,10 +484,6 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     telemetry_data=req_data
                 )
                 score = risk_summary["total_score"]
-                total_scores.append(score)
-                confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
-                if confirmed:
-                    vulnerability_count += 1
 
                 ep_obj = save_endpoint(session_id=session_obj.id, url=url, method=method)
                 if score > 0 or sig_res.get("matched"):
@@ -710,7 +703,6 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
                 score = risk_summary["total_score"]
                 severity = risk_summary["severity"]
-                total_scores.append(score)
 
                 # Print Console Breakdown
                 print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")
@@ -720,8 +712,6 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
                 confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
                 attack_name = sig_res.get("attack_type", "None") if (confirmed or sig_res.get("matched") or sig_res.get("finding_status") == "Informational") else "None"
-                if confirmed:
-                    vulnerability_count += 1
 
                 # Persist non-zero triage signals for auditability, but only
                 # confirmed proof contributes to the vulnerability total.
@@ -749,18 +739,25 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             update_scan_progress(session_obj.id, done=idx)
 
         # Final risk roll-up ------------------------------------------------
+        # The single scoring rule (dashboard/results_grouping.py): the stored
+        # session numbers are computed from the saved findings exactly like
+        # the results page, history and dashboard compute them at render time.
         update_scan_progress(session_obj.id, stage="Finalizing results")
-        overall_score = round(max(total_scores), 2) if total_scores else 0.0
-        overall_severity = RiskScorer.classify_severity(overall_score)
-        # Session-level calibration: with zero confirmed vulnerabilities the
-        # session is never CRITICAL, mirroring the per-finding proof cap.
-        if vulnerability_count == 0 and overall_severity == "CRITICAL":
-            overall_severity = "HIGH"
+        _saved = get_session_findings(session_obj.id)
+        _dicts = [{
+            "url": f.endpoint.url if f.endpoint else target_url,
+            "method": f.endpoint.method if f.endpoint else "GET",
+            "attack_type": f.attack_type,
+            "severity": f.severity,
+            "finding_status": f.finding_status,
+            "risk_score": f.risk_score,
+        } for f in _saved]
+        summary = summarize_findings(_dicts)
         complete_scan_session(
             session_id=session_obj.id,
-            overall_risk_score=overall_score,
-            overall_severity=overall_severity,
-            total_vulnerabilities=vulnerability_count
+            overall_risk_score=summary["risk_score"],
+            overall_severity=summary["severity"],
+            total_vulnerabilities=summary["vulnerabilities"]
         )
 
         if sarif_output:
@@ -803,7 +800,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
         print(" All inspection records persisted to database.")
         print(" Launch web dashboard via `python main.py --dashboard` to view reports.")
         print("="*65 + "\n")
-        return session_obj.id if return_session_id else vulnerability_count
+        return session_obj.id if return_session_id else summary["vulnerabilities"]
 
     except Exception as exc:
         logger.error(f"Error during scan pipeline execution: {exc}")

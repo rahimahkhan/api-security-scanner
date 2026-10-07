@@ -115,11 +115,11 @@
     </div>
     <div class="summary-card hide-phone">
         <div class="k">Vulnerable</div>
-        <div class="v">{{ group_summary.vulnerable_endpoints }}</div>
+        <div class="v">{{ scan_summary.vulnerable_endpoints }}</div>
     </div>
     <div class="summary-card hide-phone">
         <div class="k">Critical</div>
-        <div class="v">{{ group_summary.critical_endpoints }}</div>
+        <div class="v">{{ scan_summary.critical_endpoints }}</div>
     </div>
     <div class="summary-card">
         <div class="k"><span class="label-full">Overall score</span><span class="label-short">Score</span></div>
@@ -135,7 +135,7 @@
 </div>
 
 {% if top_risks %}
-<p class="text-muted mb-1" style="font-size:0.82rem; letter-spacing:0.04em; font-weight:700;">TOP RISKS ({{ top_risks|length }} SHOWN, ONE CARD PER ENDPOINT)</p>
+<p class="text-muted mb-1" style="font-size:0.82rem; letter-spacing:0.04em; font-weight:700;">TOP RISKS (<span class="top-risks-count">{{ top_risks|length }} SHOWN</span>, ONE CARD PER ENDPOINT)</p>
 <div class="top-risks-grid">
     {% for g in top_risks %}
     <div class="card risk-card" data-status="{{ g.finding_status }}">

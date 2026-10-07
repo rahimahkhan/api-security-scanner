@@ -11,8 +11,8 @@
     <input type="text" name="q" placeholder="Search by target or session ID" value="{{ q or '' }}">
     <select name="severity">
         <option value="">All severities</option>
-        {% for sev in ["Critical", "High", "Medium", "Low", "Informational"] %}
-        <option value="{{ sev }}" {% if severity == sev %}selected{% endif %}>{{ sev }}</option>
+        {% for sev in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"] %}
+        <option value="{{ sev }}" {% if severity == sev %}selected{% endif %}>{{ sev.title() }}</option>
         {% endfor %}
     </select>
     <select name="date">
@@ -23,10 +23,10 @@
     </select>
     <button type="submit" class="btn btn-outline">Filter</button>
     <span class="spacer"></span>
-    <button type="submit" class="btn btn-outline" formaction="{{ url_for('dashboard.compare') }}" formmethod="GET" id="compare-btn">Compare selected</button>
+    <button type="button" class="btn btn-outline" id="compare-btn">Compare selected</button>
 </form>
 
-{% if sessions %}
+{% if rows %}
 <div class="card table-card">
     <table class="data responsive-cards">
         <thead>
@@ -42,15 +42,17 @@
             </tr>
         </thead>
         <tbody>
-            {% for sess in sessions %}
+            {% for row in rows %}
+            {% set sess = row.session %}
+            {% set sm = row.summary %}
             <tr>
                 <td class="no-label"><input type="checkbox" class="scan-checkbox" name="ids" value="{{ sess.id }}" form="compare-form"></td>
                 <td data-label="Session">#{{ sess.id }}</td>
                 <td data-label="Target"><code>{{ sess.target_url }}</code></td>
                 <td data-label="Date">{% if sess.scan_start_time %}<span class="local-dt" data-utc="{{ sess.scan_start_time.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') }} UTC</span>{% else %}N/A{% endif %}</td>
-                <td data-label="Score"><strong>{{ sess.overall_risk_score }}</strong></td>
-                <td data-label="Severity"><span class="badge {{ sess.overall_severity|lower }}">{{ sess.overall_severity }}</span></td>
-                <td data-label="Findings">{{ sess.total_vulnerabilities_found }}</td>
+                <td data-label="Score"><strong>{{ sm.risk_score }}</strong></td>
+                <td data-label="Severity"><span class="badge {{ sm.severity|lower }}">{{ sm.severity }}</span></td>
+                <td data-label="Vulnerabilities">{{ sm.vulnerabilities }}</td>
                 <td class="no-label">
                     <a href="{{ url_for('dashboard.results', session_id=sess.id) }}" class="btn-sm">View report</a>
                     <form action="{{ url_for('dashboard.delete_scan', session_id=sess.id) }}" method="POST" style="display:inline;">

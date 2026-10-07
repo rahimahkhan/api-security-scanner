@@ -2,14 +2,15 @@
 
 Answers questions about the platform and the user's own scan results.
 Two engines:
-  1. OpenAI chat API when OPENAI_API_KEY is set (with a strict system
-     prompt: only Xploiter documentation + the provided scan context, never
-     invented scan data).
+  1. A real LLM when an API key is set (GOOGLE_AI_API_KEY for Gemini's free
+     tier, or OPENAI_API_KEY) with a strict system prompt: only Xploiter
+     documentation + the provided scan context, never invented scan data.
   2. A built-in knowledge-based responder otherwise (offline-safe), with
      short canned translations for Urdu, Arabic and Spanish on the main
      topics and an English fallback.
 
-Nothing here touches the scan pipeline.
+Nothing here touches the scan pipeline. When no LLM key is set, the UI
+labels the assistant as offline so nobody mistakes canned answers for a live AI.
 """
 import html
 import json
@@ -20,6 +21,7 @@ from typing import Optional
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+GOOGLE_AI_API_KEY = os.getenv("GOOGLE_AI_API_KEY", "").strip()  # Gemini free tier
 
 SYSTEM_PROMPT = """You are the Xploiter AI Assistant. Xploiter is an API security scanner.
 
@@ -225,6 +227,40 @@ def knowledge_answer(question: str, language: str = "auto"):
     return _render_markdown(safe), topic.get("actions", [])
 
 
+def _gemini_answer(question: str, language: str, scan_context: Optional[str]):
+    """Ask Google's Gemini API (free tier). Raises on any failure."""
+    lang_name = {"en": "English", "ur": "Urdu", "ar": "Arabic", "es": "Spanish"}.get(language, "the user's language")
+    if language == "auto":
+        lang_name = "the user's language (auto-detect from their question)"
+    payload = json.dumps({
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"parts": [{"text": (
+            f"Answer in {lang_name}.\n"
+            f"My scan context (do not invent beyond this):\n{scan_context or 'No scans yet.'}\n\n"
+            f"Question: {question}"
+        )}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 600},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        "?key=" + GOOGLE_AI_API_KEY,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.load(resp)
+    content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    safe = html.escape(content)
+    return _render_markdown(safe)
+
+
+def engine_mode() -> str:
+    """'live' when a real LLM key is configured, else 'offline' (honest label)."""
+    if GOOGLE_AI_API_KEY or OPENAI_API_KEY:
+        return "live"
+    return "offline"
+
+
 def _openai_answer(question: str, language: str, scan_context: Optional[str]):
     """Ask the OpenAI chat API. Raises on any failure (caller falls back)."""
     lang_name = {"en": "English", "ur": "Urdu", "ar": "Arabic", "es": "Spanish"}.get(language, "the user's language")
@@ -258,12 +294,17 @@ def _openai_answer(question: str, language: str, scan_context: Optional[str]):
 
 def answer(question: str, language: str = "auto", scan_context: Optional[str] = None):
     """Public entry: (answer_html, actions). Never raises."""
-    try:
-        if OPENAI_API_KEY:
-            lang = language if language in ("en", "ur", "ar", "es") else detect_language(question)
-            html_answer = _openai_answer(question, lang, scan_context)
-            topic = _match_topic(question)
-            return html_answer, (topic.get("actions", []) if topic else [])
-    except Exception:
-        pass  # fall through to the offline knowledge base
+    lang = language if language in ("en", "ur", "ar", "es") else detect_language(question)
+    topic = _match_topic(question)
+    actions = topic.get("actions", []) if topic else []
+    if GOOGLE_AI_API_KEY:
+        try:
+            return _gemini_answer(question, lang, scan_context), actions
+        except Exception:
+            pass  # fall through to the next engine
+    if OPENAI_API_KEY:
+        try:
+            return _openai_answer(question, lang, scan_context), actions
+        except Exception:
+            pass  # fall through to the offline knowledge base
     return knowledge_answer(question, language)
