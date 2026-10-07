@@ -18,8 +18,7 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from database.db import init_db, SessionLocal, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session_findings
-from database.models import ScanSession, Endpoint, Finding, Report
+from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session_findings, get_session_for_user, set_session_total_endpoints
 from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
@@ -377,16 +376,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
     # Save Session (or reuse the pre-created one for background web scans)
     if session_id is not None:
-        db = SessionLocal()
-        try:
-            session_obj = db.query(ScanSession).filter(ScanSession.id == session_id).first()
-            if session_obj is None:
-                raise ValueError(f"Scan session {session_id} not found")
-            session_obj.total_endpoints_found = len(discovered_endpoints)
-            db.commit()
-            db.refresh(session_obj)
-        finally:
-            db.close()
+        session_obj = get_session_for_user(session_id, None)
+        if session_obj is None:
+            raise ValueError(f"Scan session {session_id} not found")
+        set_session_total_endpoints(session_id, len(discovered_endpoints))
+        session_obj.total_endpoints_found = len(discovered_endpoints)
     else:
         session_obj = save_scan_session(target_url=target_url, total_endpoints=len(discovered_endpoints))
     # Progress baseline for the live "time left" banner (reset even on reuse).
@@ -762,38 +756,34 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
         if sarif_output:
             from reports.sarif_exporter import SARIFReportExporter
-            export_db = SessionLocal()
-            try:
-                persisted_session = export_db.query(ScanSession).filter(ScanSession.id == session_obj.id).first()
-                persisted_findings = export_db.query(Finding).filter(Finding.session_id == session_obj.id).all()
-                session_data = {
-                    "id": persisted_session.id,
-                    "target_url": persisted_session.target_url,
-                    "overall_risk_score": persisted_session.overall_risk_score,
-                    "overall_severity": persisted_session.overall_severity,
-                    "total_endpoints_found": persisted_session.total_endpoints_found,
-                    "total_vulnerabilities_found": persisted_session.total_vulnerabilities_found,
+            persisted_session = get_session_for_user(session_obj.id, None)
+            persisted_findings = get_session_findings(session_obj.id)
+            session_data = {
+                "id": persisted_session.id,
+                "target_url": persisted_session.target_url,
+                "overall_risk_score": persisted_session.overall_risk_score,
+                "overall_severity": persisted_session.overall_severity,
+                "total_endpoints_found": persisted_session.total_endpoints_found,
+                "total_vulnerabilities_found": persisted_session.total_vulnerabilities_found,
+            }
+            findings_data = [
+                {
+                    "url": finding.endpoint.url if finding.endpoint else persisted_session.target_url,
+                    "method": finding.endpoint.method if finding.endpoint else "GET",
+                    "attack_type": finding.attack_type,
+                    "finding_status": finding.finding_status,
+                    "severity": finding.severity,
+                    "risk_score": finding.risk_score,
+                    "signature_triggered": finding.signature_triggered,
+                    "recommendation": finding.recommendation,
+                    "request_payload": finding.request_payload,
+                    "response_status": finding.response_status,
+                    "response_size": finding.response_size,
+                    "response_time": finding.response_time,
                 }
-                findings_data = [
-                    {
-                        "url": finding.endpoint.url if finding.endpoint else persisted_session.target_url,
-                        "method": finding.endpoint.method if finding.endpoint else "GET",
-                        "attack_type": finding.attack_type,
-                        "finding_status": finding.finding_status,
-                        "severity": finding.severity,
-                        "risk_score": finding.risk_score,
-                        "signature_triggered": finding.signature_triggered,
-                        "recommendation": finding.recommendation,
-                        "request_payload": finding.request_payload,
-                        "response_status": finding.response_status,
-                        "response_size": finding.response_size,
-                        "response_time": finding.response_time,
-                    }
-                    for finding in persisted_findings
-                ]
-                SARIFReportExporter().export(session_data, findings_data, output_path=sarif_output)
-            finally:
-                export_db.close()
+                for finding in persisted_findings
+            ]
+            SARIFReportExporter().export(session_data, findings_data, output_path=sarif_output)
 
         print("\n" + "="*65)
         print(" SCAN PIPELINE COMPLETED SUCCESSFULLY")

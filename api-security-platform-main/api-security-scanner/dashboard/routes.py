@@ -19,18 +19,16 @@ from config.settings import (
     CSRF_ENABLED,
     APP_VERSION,
 )
-from sqlalchemy.orm import joinedload
 from database.db import (
     save_scan_session, save_endpoint, save_finding, complete_scan_session,
     fail_scan_session, touch_scan_session, format_scan_eta,
     get_all_sessions, get_session_for_user, get_session_findings,
-    get_finding_by_id, delete_session, SessionLocal,
+    get_finding_by_id, delete_session, delete_user, get_user_by_id,
     get_user_by_username, get_user_by_firebase_uid,
     get_or_create_firebase_user, update_user_name,
     create_reset_otp, get_latest_valid_reset_otp, increment_otp_attempts,
     mark_otp_verified, mark_otp_used, count_recent_otps,
 )
-from database.models import ScanSession, Finding, Endpoint, User
 from dashboard.auth_validators import (
     validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.emailer import is_email_configured, send_otp_email
@@ -121,10 +119,11 @@ def _launch_background_scan(target_url: str, user_id=None, extra_headers=None) -
     return session_obj.id
 
 
-def reap_stale_scan(db_session, session_obj) -> bool:
+def reap_stale_scan(session_obj) -> bool:
     """Mark a 'running' scan as failed when its worker heartbeat went stale.
 
-    Returns True when the session was reaped. The caller owns the commit.
+    Backend-agnostic: persists via fail_scan_session and mirrors the change
+    onto the passed object. Returns True when the session was reaped.
     """
     if session_obj is None or getattr(session_obj, "status", None) != "running":
         return False
@@ -132,6 +131,8 @@ def reap_stale_scan(db_session, session_obj) -> bool:
     if heartbeat is None:
         return False
     if datetime.utcnow() - heartbeat > timedelta(seconds=STALE_SCAN_AFTER_SECONDS):
+        fail_scan_session(session_obj.id,
+                          f"no worker heartbeat for >{STALE_SCAN_AFTER_SECONDS}s")
         session_obj.status = "failed"
         session_obj.scan_end_time = datetime.utcnow()
         logger.warning(
@@ -145,6 +146,8 @@ def reap_stale_scan(db_session, session_obj) -> bool:
     progress_ts = getattr(session_obj, "progress_updated_at", None)
     if progress_ts is not None:
         if datetime.utcnow() - progress_ts > timedelta(seconds=PROGRESS_STALL_AFTER_SECONDS):
+            fail_scan_session(session_obj.id,
+                              f"no progress for >{PROGRESS_STALL_AFTER_SECONDS}s")
             session_obj.status = "failed"
             session_obj.scan_end_time = datetime.utcnow()
             logger.warning(
@@ -667,7 +670,7 @@ def start_scan():
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 
-@dashboard_bp.route("/scan/<int:session_id>/cancel", methods=["POST"])
+@dashboard_bp.route("/scan/<session_id>/cancel", methods=["POST"])
 @login_required
 def cancel_scan(session_id):
     """Cancel a running scan: mark it failed so polling stops.
@@ -681,71 +684,63 @@ def cancel_scan(session_id):
     fail_scan_session(session_id, "Cancelled by user")
     return redirect(url_for("dashboard.results", session_id=session_id))
 
-@dashboard_bp.route("/results/<int:session_id>")
+@dashboard_bp.route("/results/<session_id>")
 @login_required
 def results(session_id):
-    db = SessionLocal()
-    try:
-        user_id = get_current_user_id()
-        query = db.query(ScanSession).options(joinedload(ScanSession.endpoints), joinedload(ScanSession.findings)).filter(ScanSession.id == session_id)
-        if user_id is not None:
-            query = query.filter(ScanSession.user_id == user_id)
-        session_data = query.first()
-        if not session_data:
-            return "Session not found", 404
+    user_id = get_current_user_id()
+    session_data = get_session_for_user(session_id, user_id)
+    if not session_data:
+        return "Session not found", 404
 
-        # If the worker died (restart/crash), the row would sit at "running"
-        # forever and the progress banner would poll forever -- reap it.
-        if reap_stale_scan(db, session_data):
-            db.commit()
+    # If the worker died (restart/crash), the row would sit at "running"
+    # forever and the progress banner would poll forever -- reap it.
+    reap_stale_scan(session_data)
 
-        findings = get_session_findings(session_id)
+    findings = get_session_findings(session_id)
 
-        # Group findings by endpoint for the Top Risks view (deduped,
-        # scored, sorted). Raw findings stay untouched for charts/detail.
-        finding_dicts = [{
-            "id": f.id,
-            "url": f.endpoint.url if f.endpoint else session_data.target_url,
-            "method": f.endpoint.method if f.endpoint else "GET",
-            "attack_type": f.attack_type,
-            "severity": f.severity,
-            "finding_status": f.finding_status,
-            "risk_score": f.risk_score,
-            "recommendation": f.recommendation,
-        } for f in findings]
-        grouped = group_findings(finding_dicts)
-        endpoint_groups = grouped["groups"]
-        # The single scoring rule: header numbers always match history/dashboard.
-        scan_summary = summarize_findings(finding_dicts)
-        total_endpoints = len(session_data.endpoints or [])
-        passed_count = max(0, total_endpoints - len(endpoint_groups))
+    # Group findings by endpoint for the Top Risks view (deduped,
+    # scored, sorted). Raw findings stay untouched for charts/detail.
+    finding_dicts = [{
+        "id": f.id,
+        "url": f.endpoint.url if f.endpoint else session_data.target_url,
+        "method": f.endpoint.method if f.endpoint else "GET",
+        "attack_type": f.attack_type,
+        "severity": f.severity,
+        "finding_status": f.finding_status,
+        "risk_score": f.risk_score,
+        "recommendation": f.recommendation,
+    } for f in findings]
+    grouped = group_findings(finding_dicts)
+    endpoint_groups = grouped["groups"]
+    # The single scoring rule: header numbers always match history/dashboard.
+    scan_summary = summarize_findings(finding_dicts)
+    total_endpoints = len(session_data.endpoints or [])
+    passed_count = max(0, total_endpoints - len(endpoint_groups))
 
-        # Categorize stats for Chart.js
-        severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
-        attack_counts = {}
+    # Categorize stats for Chart.js
+    severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+    attack_counts = {}
 
-        for f in findings:
-            sev = f.severity
-            severity_counts[sev] = severity_counts.get(sev, 0) + 1
-            att = f.attack_type
-            attack_counts[att] = attack_counts.get(att, 0) + 1
+    for f in findings:
+        sev = f.severity
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+        att = f.attack_type
+        attack_counts[att] = attack_counts.get(att, 0) + 1
 
-        return render_template(
-            "results.html",
-            session_data=session_data,
-            findings=findings,
-            severity_counts=severity_counts,
-            attack_counts=attack_counts,
-            progress_eta=format_scan_eta(session_data),
-            endpoint_groups=endpoint_groups,
-            top_risks=endpoint_groups[:TOP_RISKS_COUNT],
-            group_summary=grouped["summary"],
-            scan_summary=scan_summary,
-            total_endpoints=total_endpoints,
-            passed_count=passed_count,
-        )
-    finally:
-        db.close()
+    return render_template(
+        "results.html",
+        session_data=session_data,
+        findings=findings,
+        severity_counts=severity_counts,
+        attack_counts=attack_counts,
+        progress_eta=format_scan_eta(session_data),
+        endpoint_groups=endpoint_groups,
+        top_risks=endpoint_groups[:TOP_RISKS_COUNT],
+        group_summary=grouped["summary"],
+        scan_summary=scan_summary,
+        total_endpoints=total_endpoints,
+        passed_count=passed_count,
+    )
 
 @dashboard_bp.route("/history")
 @login_required
@@ -765,23 +760,18 @@ def history():
         cutoff = datetime.utcnow() - timedelta(days=days)
         sessions = [s for s in sessions
                     if s.scan_start_time and s.scan_start_time >= cutoff]
-    db = SessionLocal()
-    try:
-        rows = []
-        for s in sessions:
-            findings = db.query(Finding).options(joinedload(Finding.endpoint)).filter(
-                Finding.session_id == s.id, Finding.risk_score > 0).all()
-            rows.append({
-                "session": s,
-                "summary": summarize_findings(_finding_dicts(findings, s.target_url)),
-            })
-    finally:
-        db.close()
+    rows = []
+    for s in sessions:
+        rows.append({
+            "session": s,
+            "summary": summarize_findings(
+                _finding_dicts(get_session_findings(s.id), s.target_url)),
+        })
     return render_template("history.html", rows=rows,
                            q=request.args.get("q") or "",
                            severity=severity, date=date)
 
-@dashboard_bp.route("/finding/<int:finding_id>")
+@dashboard_bp.route("/finding/<finding_id>")
 @login_required
 def finding_detail(finding_id):
     finding = get_finding_by_id(finding_id)
@@ -799,92 +789,85 @@ def finding_detail(finding_id):
         )
     return render_template("report.html", finding=finding)
 
-@dashboard_bp.route("/export/<int:session_id>")
+@dashboard_bp.route("/export/<session_id>")
 @login_required
 def export_report(session_id):
     fmt = request.args.get("format", "pdf").lower()
-    db = SessionLocal()
-    try:
-        user_id = get_current_user_id()
-        query = db.query(ScanSession).filter(ScanSession.id == session_id)
-        if user_id is not None:
-            query = query.filter(ScanSession.user_id == user_id)
-        session_obj = query.first()
-        if not session_obj:
-            return "Session not found", 404
-        
-        session_data = {
-            "id": session_obj.id,
-            "target_url": session_obj.target_url,
-            "scan_start_time": session_obj.scan_start_time,
-            "overall_risk_score": session_obj.overall_risk_score,
-            "overall_severity": session_obj.overall_severity,
-            "total_endpoints_found": session_obj.total_endpoints_found,
-            "total_vulnerabilities_found": session_obj.total_vulnerabilities_found
-        }
+    user_id = get_current_user_id()
+    session_obj = get_session_for_user(session_id, user_id)
+    if not session_obj:
+        return "Session not found", 404
 
-        endpoints_list = [{"url": ep.url, "method": ep.method} for ep in session_obj.endpoints]
-        findings = get_session_findings(session_id)
-        findings_data = []
-        for f in findings:
-            findings_data.append({
-                "id": f.id,
-                "url": f.endpoint.url if f.endpoint else session_obj.target_url,
-                "method": f.endpoint.method if f.endpoint else "GET",
-                "attack_type": f.attack_type,
-                "finding_status": f.finding_status,
-                "severity": f.severity,
-                "risk_score": f.risk_score,
-                "signature_triggered": f.signature_triggered,
-                "ml_score": f.ml_score,
-                "lstm_score": f.lstm_score,
-                "autoencoder_score": f.autoencoder_score,
-                "recommendation": f.recommendation,
-                "response_status": f.response_status,
-                "response_size": f.response_size,
-                "response_time": f.response_time
-            })
+    session_data = {
+        "id": session_obj.id,
+        "target_url": session_obj.target_url,
+        "scan_start_time": session_obj.scan_start_time,
+        "overall_risk_score": session_obj.overall_risk_score,
+        "overall_severity": session_obj.overall_severity,
+        "total_endpoints_found": session_obj.total_endpoints_found,
+        "total_vulnerabilities_found": session_obj.total_vulnerabilities_found
+    }
 
-        from reports.pdf_generator import PDFReportGenerator
-        from reports.json_exporter import JSONReportExporter
-        from reports.html_exporter import HTMLReportExporter
-        from reports.sarif_exporter import SARIFReportExporter
-        from flask import send_file
-        from dashboard.results_grouping import group_findings, TOP_RISKS_COUNT
+    endpoints_list = [{"url": ep.url, "method": ep.method} for ep in session_obj.endpoints]
+    findings = get_session_findings(session_id)
+    findings_data = []
+    for f in findings:
+        findings_data.append({
+            "id": f.id,
+            "url": f.endpoint.url if f.endpoint else session_obj.target_url,
+            "method": f.endpoint.method if f.endpoint else "GET",
+            "attack_type": f.attack_type,
+            "finding_status": f.finding_status,
+            "severity": f.severity,
+            "risk_score": f.risk_score,
+            "signature_triggered": f.signature_triggered,
+            "ml_score": f.ml_score,
+            "lstm_score": f.lstm_score,
+            "autoencoder_score": f.autoencoder_score,
+            "recommendation": f.recommendation,
+            "response_status": f.response_status,
+            "response_size": f.response_size,
+            "response_time": f.response_time
+        })
 
-        grouped = group_findings(findings_data)
-        top_risks = grouped["groups"][:TOP_RISKS_COUNT]
-        # Order findings by their endpoint group's score so top risks come
-        # first in every export (SARIF keeps the flat finding list).
-        group_rank = {}
-        for rank, g in enumerate(grouped["groups"]):
-            for v in g["vulns"]:
-                for fid in v["finding_ids"]:
-                    group_rank[fid] = rank
-        findings_data.sort(key=lambda f: (group_rank.get(f["id"], 10**9), -(f["risk_score"] or 0)))
+    from reports.pdf_generator import PDFReportGenerator
+    from reports.json_exporter import JSONReportExporter
+    from reports.html_exporter import HTMLReportExporter
+    from reports.sarif_exporter import SARIFReportExporter
+    from flask import send_file
+    from dashboard.results_grouping import group_findings, TOP_RISKS_COUNT
 
-        if fmt == "json":
-            exporter = JSONReportExporter()
-            out_file = exporter.export(session_data, endpoints_list, findings_data,
-                                       top_risks=top_risks)
-            return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.json")
-        elif fmt == "html":
-            exporter = HTMLReportExporter()
-            out_file = exporter.export(session_data, findings_data, top_risks=top_risks)
-            return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.html")
-        elif fmt == "sarif":
-            exporter = SARIFReportExporter()
-            out_file = exporter.export(session_data, findings_data)
-            return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.sarif")
-        else:
-            generator = PDFReportGenerator()
-            out_file = generator.generate(session_data, findings_data, top_risks=top_risks)
-            return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.pdf")
+    grouped = group_findings(findings_data)
+    top_risks = grouped["groups"][:TOP_RISKS_COUNT]
+    # Order findings by their endpoint group's score so top risks come
+    # first in every export (SARIF keeps the flat finding list).
+    group_rank = {}
+    for rank, g in enumerate(grouped["groups"]):
+        for v in g["vulns"]:
+            for fid in v["finding_ids"]:
+                group_rank[fid] = rank
+    findings_data.sort(key=lambda f: (group_rank.get(f["id"], 10**9), -(f["risk_score"] or 0)))
 
-    finally:
-        db.close()
+    if fmt == "json":
+        exporter = JSONReportExporter()
+        out_file = exporter.export(session_data, endpoints_list, findings_data,
+                                   top_risks=top_risks)
+        return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.json")
+    elif fmt == "html":
+        exporter = HTMLReportExporter()
+        out_file = exporter.export(session_data, findings_data, top_risks=top_risks)
+        return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.html")
+    elif fmt == "sarif":
+        exporter = SARIFReportExporter()
+        out_file = exporter.export(session_data, findings_data)
+        return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.sarif")
+    else:
+        generator = PDFReportGenerator()
+        out_file = generator.generate(session_data, findings_data, top_risks=top_risks)
+        return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.pdf")
 
-@dashboard_bp.route("/delete_scan/<int:session_id>", methods=["POST"])
+
+@dashboard_bp.route("/delete_scan/<session_id>", methods=["POST"])
 @login_required
 def delete_scan(session_id):
     if not get_session_for_user(session_id, get_current_user_id()):
@@ -912,14 +895,7 @@ def _finding_dicts(findings, fallback_url=""):
 
 
 def _current_user():
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == get_current_user_id()).first()
-        if user:
-            db.expunge(user)
-        return user
-    finally:
-        db.close()
+    return get_user_by_id(get_current_user_id())
 
 
 @dashboard_bp.route("/dashboard")
@@ -933,22 +909,16 @@ def dashboard():
     avg_score = round(sum(s.overall_risk_score for s in scored) / len(scored), 1) if scored else 0
     last = sessions[0].scan_start_time if sessions and sessions[0].scan_start_time else None
 
-    db = SessionLocal()
-    try:
-        q = db.query(Finding).join(ScanSession, Finding.session_id == ScanSession.id)
-        if user_id is not None:
-            q = q.filter(ScanSession.user_id == user_id)
-        recent_ids = [s.id for s in sessions[:10]]
-        recent_findings = (q.filter(Finding.session_id.in_(recent_ids)).all()
-                           if recent_ids else [])
-        critical_findings = sum(
-            1 for f in recent_findings
-            if f.severity == "Critical" and (f.finding_status or "Informational") in VULN_STATUSES)
-        severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
-        for f in recent_findings:
-            severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
-    finally:
-        db.close()
+    recent_ids = [s.id for s in sessions[:10]]
+    recent_findings = []
+    for _sid in recent_ids:
+        recent_findings.extend(get_session_findings(_sid))
+    critical_findings = sum(
+        1 for f in recent_findings
+        if f.severity == "Critical" and (f.finding_status or "Informational") in VULN_STATUSES)
+    severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+    for f in recent_findings:
+        severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
 
     trend = [s for s in sessions[:10] if s.scan_start_time][::-1]
     risk_over_time = {
@@ -1106,14 +1076,7 @@ def delete_my_scans():
 @login_required
 def delete_my_account():
     user_id = get_current_user_id()
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            db.delete(user)  # sessions cascade via the relationship
-            db.commit()
-    finally:
-        db.close()
+    delete_user(user_id)
     session.clear()
     return redirect(url_for("dashboard.landing"))
 
@@ -1231,70 +1194,62 @@ def api_list_sessions():
     return jsonify({"status": "success", "sessions": sessions_data}), 200
 
 
-@dashboard_bp.route("/api/sessions/<int:session_id>", methods=["GET"])
+@dashboard_bp.route("/api/sessions/<session_id>", methods=["GET"])
 @login_required
 def api_get_session(session_id):
-    db = SessionLocal()
-    try:
-        user_id = get_current_user_id()
-        query = db.query(ScanSession).filter(ScanSession.id == session_id)
-        if user_id is not None:
-            query = query.filter(ScanSession.user_id == user_id)
-        session_obj = query.first()
-        if not session_obj:
-            return jsonify({"status": "error", "message": "Session not found"}), 404
+    user_id = get_current_user_id()
+    session_obj = get_session_for_user(session_id, user_id)
+    if not session_obj:
+        return jsonify({"status": "error", "message": "Session not found"}), 404
 
-        # Reap scans whose worker died, so API pollers see a terminal state.
-        if reap_stale_scan(db, session_obj):
-            db.commit()
+    # Reap scans whose worker died, so API pollers see a terminal state.
+    reap_stale_scan(session_obj)
 
-        findings = get_session_findings(session_id)
-        findings_data = []
-        for f in findings:
-            findings_data.append({
-                "id": f.id,
-                "url": f.endpoint.url if f.endpoint else session_obj.target_url,
-                "attack_type": f.attack_type,
-                "severity": f.severity,
-                "risk_score": f.risk_score,
-                "finding_status": f.finding_status,
-                "signature_triggered": f.signature_triggered,
-                "ml_score": f.ml_score,
-                "lstm_score": f.lstm_score,
-                "autoencoder_score": f.autoencoder_score,
-                "recommendation": f.recommendation,
-                "response_status": f.response_status,
-                "response_size": f.response_size,
-                "response_time": f.response_time
-            })
+    findings = get_session_findings(session_id)
+    findings_data = []
+    for f in findings:
+        findings_data.append({
+            "id": f.id,
+            "url": f.endpoint.url if f.endpoint else session_obj.target_url,
+            "attack_type": f.attack_type,
+            "severity": f.severity,
+            "risk_score": f.risk_score,
+            "finding_status": f.finding_status,
+            "signature_triggered": f.signature_triggered,
+            "ml_score": f.ml_score,
+            "lstm_score": f.lstm_score,
+            "autoencoder_score": f.autoencoder_score,
+            "recommendation": f.recommendation,
+            "response_status": f.response_status,
+            "response_size": f.response_size,
+            "response_time": f.response_time
+        })
 
-        endpoints_data = [{"url": ep.url, "method": ep.method} for ep in session_obj.endpoints]
+    endpoints_data = [{"url": ep.url, "method": ep.method} for ep in session_obj.endpoints]
 
-        return jsonify({
-            "status": "success",
-            "session": {
-                "id": session_obj.id,
-                "target_url": session_obj.target_url,
-                "scan_start_time": session_obj.scan_start_time.isoformat() if session_obj.scan_start_time else None,
-                "scan_end_time": session_obj.scan_end_time.isoformat() if session_obj.scan_end_time else None,
-                "scan_status": getattr(session_obj, "status", "complete"),
-                "overall_risk_score": session_obj.overall_risk_score,
-                "overall_severity": session_obj.overall_severity,
-                "total_endpoints_found": session_obj.total_endpoints_found,
-                "total_vulnerabilities_found": session_obj.total_vulnerabilities_found,
-                "progress_done": int(session_obj.progress_done or 0),
-                "progress_total": int(session_obj.progress_total or 0),
-                "progress_stage": session_obj.progress_stage or "",
-                "progress_eta": format_scan_eta(session_obj)
-            },
-            "endpoints": endpoints_data,
-            "findings": findings_data
-        }), 200
-    finally:
-        db.close()
+    return jsonify({
+        "status": "success",
+        "session": {
+            "id": session_obj.id,
+            "target_url": session_obj.target_url,
+            "scan_start_time": session_obj.scan_start_time.isoformat() if session_obj.scan_start_time else None,
+            "scan_end_time": session_obj.scan_end_time.isoformat() if session_obj.scan_end_time else None,
+            "scan_status": getattr(session_obj, "status", "complete"),
+            "overall_risk_score": session_obj.overall_risk_score,
+            "overall_severity": session_obj.overall_severity,
+            "total_endpoints_found": session_obj.total_endpoints_found,
+            "total_vulnerabilities_found": session_obj.total_vulnerabilities_found,
+            "progress_done": int(session_obj.progress_done or 0),
+            "progress_total": int(session_obj.progress_total or 0),
+            "progress_stage": session_obj.progress_stage or "",
+            "progress_eta": format_scan_eta(session_obj)
+        },
+        "endpoints": endpoints_data,
+        "findings": findings_data
+    }), 200
 
 
-@dashboard_bp.route("/api/sessions/<int:session_id>", methods=["DELETE"])
+@dashboard_bp.route("/api/sessions/<session_id>", methods=["DELETE"])
 @login_required
 def api_delete_session(session_id):
     if not get_session_for_user(session_id, get_current_user_id()):
