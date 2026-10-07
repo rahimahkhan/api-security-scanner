@@ -1,0 +1,47 @@
+{% extends "base_public.html" %}
+
+{% block title %}Xploiter — Find API vulnerabilities before attackers do{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <div>
+        <div class="kicker">API SECURITY SCANNER</div>
+        <h1>Find API vulnerabilities before attackers do</h1>
+        <p class="lead">Scan your own APIs against the OWASP API Top 10 and get a short, ranked list of what to fix first.</p>
+        <div class="btn-row">
+            <a class="btn btn-primary" href="{{ url_for('dashboard.signup') }}">Get Started</a>
+            <a class="btn btn-outline" href="{{ url_for('dashboard.download_cli') }}">Download CLI</a>
+        </div>
+    </div>
+    <div class="report-preview">
+        <div class="rp-title">SAMPLE REPORT PREVIEW</div>
+        <div class="rp-row"><span class="badge critical">Critical</span><div class="rp-bar"></div></div>
+        <div class="rp-row"><span class="badge high">High</span><div class="rp-bar"></div></div>
+        <div class="rp-row"><span class="badge medium">Medium</span><div class="rp-bar"></div></div>
+        <div class="rp-chart">[Risk score chart]</div>
+    </div>
+</div>
+
+<div class="feature-grid" id="features">
+    <div class="card feature-card">
+        <h3>Active probes</h3>
+        <p>SQLi, XSS, BOLA, LFI and more</p>
+    </div>
+    <div class="card feature-card">
+        <h3>Passive checks</h3>
+        <p>Headers, CORS, data leakage</p>
+    </div>
+    <div class="card feature-card">
+        <h3>Safe scanning</h3>
+        <p>Endpoint budget, authorized targets only</p>
+    </div>
+    <div class="card feature-card">
+        <h3>Export reports</h3>
+        <p>PDF, JSON, HTML, SARIF</p>
+    </div>
+</div>
+
+<div class="owasp-strip">
+    <strong>OWASP API Top 10 coverage:</strong> BOLA · Broken Authentication · BOPLA · Resource Consumption · BFLA · Business Flow Abuse · SSRF · Security Misconfiguration · Inventory Management · Unsafe Consumption
+</div>
+{% endblock %}

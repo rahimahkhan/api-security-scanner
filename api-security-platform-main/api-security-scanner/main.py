@@ -6,7 +6,7 @@ import os
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -295,12 +295,17 @@ def _make_discovery_progress_callback(session_id, min_interval: float = 3.0):
     return _callback
 
 
-def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None):
+def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None,
+                 extra_headers: Optional[Dict[str, str]] = None):
     """Run the full scan pipeline.
 
     session_id: when given (background web scans), reuse the already-created
     scan session instead of creating a new one, and mark it failed if the
     pipeline raises.
+
+    extra_headers: optional auth headers (e.g. Authorization, X-API-Key,
+    Cookie) merged into the probe requests' default headers. When None
+    (the default) every request is built exactly as before.
     """
     valid, normalized_or_reason = validate_target_url(target_url)
     if not valid:
@@ -352,7 +357,17 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
         discovered_endpoints = [{"url": target_url, "method": "GET"}]
 
     # 2. Instantiate Engines & Detectors
-    request_engine = RequestEngine()
+    if extra_headers:
+        # Optional auth headers for protected APIs: merged over (never
+        # replacing) the default probe headers. No headers -> old behavior.
+        _probe_headers = {
+            "User-Agent": "APISecurityPlatform/1.0",
+            "Accept": "application/json, text/html, */*",
+        }
+        _probe_headers.update(extra_headers)
+        request_engine = RequestEngine(headers=_probe_headers)
+    else:
+        request_engine = RequestEngine()
     response_parser = ResponseParser()
     signature_detector = SignatureDetector()
     ml_detector = MLAnomalyDetector()

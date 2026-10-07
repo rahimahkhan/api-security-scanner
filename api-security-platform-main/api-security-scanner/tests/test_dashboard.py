@@ -9,11 +9,11 @@ def test_dashboard_routes():
 
     response_index = client.get("/")
     assert response_index.status_code == 200
-    assert b"Complete API Security Scan" in response_index.data
+    assert b"New scan" in response_index.data
 
     response_history = client.get("/history")
     assert response_history.status_code == 200
-    assert b"Inspection Scan History" in response_history.data
+    assert b"Scan history" in response_history.data
 
 def test_dashboard_complete_pipeline_ui():
     app = create_app()
@@ -22,8 +22,9 @@ def test_dashboard_complete_pipeline_ui():
 
     response = client.get("/")
     assert response.status_code == 200
-    assert b"Complete API Security Scan" in response.data
-    assert b"GraphQL introspection" in response.data
+    assert b"New scan" in response.data
+    assert b"https://api.example.com" in response.data
+    assert b"complete pipeline" in response.data
     assert b"Export SARIF" not in response.data
     assert b"module_sqli" not in response.data
 

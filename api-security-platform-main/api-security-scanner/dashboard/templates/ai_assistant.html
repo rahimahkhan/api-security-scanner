@@ -1,0 +1,129 @@
+{% extends "base_app.html" %}
+
+{% block title %}AI Assistant — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+    <h1>AI Assistant</h1>
+    <div class="assist-controls" style="margin-bottom:0">
+        <label for="assist-lang">Language</label>
+        <select id="assist-lang">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="en">English</option>
+            <option value="ur">Urdu</option>
+            <option value="ar">Arabic</option>
+            <option value="es">Spanish</option>
+        </select>
+        <label for="assist-context">Context</label>
+        <select id="assist-context">
+            <option value="latest" selected>Latest scan</option>
+            <option value="none">No scan context</option>
+        </select>
+    </div>
+</div>
+
+<div class="assist-banner">
+    <strong>Platform guide:</strong> the assistant explains how Xploiter works, step by step.
+    If you do not understand a screen, a result, or a term, type your question and it will guide you.
+    Ask in any language.
+</div>
+
+<div class="card">
+    <div class="chat-box" id="chat-box"></div>
+
+    <div class="prompt-chips">
+        <button class="prompt-chip" type="button">How do I run a scan?</button>
+        <button class="prompt-chip" type="button">What should I fix first?</button>
+        <button class="prompt-chip" type="button">Explain this finding</button>
+        <button class="prompt-chip" type="button">I do not understand this page</button>
+    </div>
+
+    <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Ask anything about the platform or your results" autocomplete="off">
+        <button class="btn btn-primary" id="chat-send" type="button">Send</button>
+    </div>
+    <p class="assist-note">Answers use Xploiter documentation and your own scan data. Review any fix before applying it.</p>
+</div>
+
+<script>
+(function () {
+    var box = document.getElementById("chat-box");
+    var input = document.getElementById("chat-input");
+    var sendBtn = document.getElementById("chat-send");
+    var langSel = document.getElementById("assist-lang");
+    var ctxSel = document.getElementById("assist-context");
+    var prefill = {{ prefill | tojson }};
+
+    function addMsg(text, who, actions) {
+        var div = document.createElement("div");
+        div.className = "chat-msg " + who;
+        var p = document.createElement("div");
+        p.innerHTML = text;
+        div.appendChild(p);
+        if (actions && actions.length) {
+            var row = document.createElement("div");
+            row.className = "chat-actions";
+            actions.forEach(function (a) {
+                var link = document.createElement("a");
+                link.className = "btn btn-outline btn-sm";
+                link.href = a.href;
+                link.textContent = a.label;
+                row.appendChild(link);
+            });
+            div.appendChild(row);
+        }
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+        return div;
+    }
+
+    function send(text) {
+        text = (text || "").trim();
+        if (!text) return;
+        addMsg(escapeHtml(text), "user");
+        input.value = "";
+        var typing = addMsg('<span class="typing-dots">Thinking</span>', "bot");
+        sendBtn.disabled = true;
+        fetch("{{ url_for('dashboard.assistant_ask') }}", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                question: text,
+                language: langSel.value,
+                context: ctxSel.value
+            })
+        }).then(function (r) { return r.json(); })
+        .then(function (data) {
+            typing.remove();
+            sendBtn.disabled = false;
+            if (data.status === "ok") {
+                addMsg(data.answer_html, "bot", data.actions || []);
+            } else {
+                addMsg("Sorry — I could not answer that right now. Please try again.", "bot");
+            }
+            box.scrollTop = box.scrollHeight;
+        })
+        .catch(function () {
+            typing.remove();
+            sendBtn.disabled = false;
+            addMsg("Could not reach the server. Please try again.", "bot");
+        });
+    }
+
+    function escapeHtml(s) {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    sendBtn.addEventListener("click", function () { send(input.value); });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") send(input.value); });
+    document.querySelectorAll(".prompt-chip").forEach(function (chip) {
+        chip.addEventListener("click", function () { send(chip.textContent); });
+    });
+
+    if (prefill) { send(prefill); }
+    else {
+        addMsg("Hello! Ask me how to run a scan, what a finding means, or what to fix first — in your own language.", "bot");
+    }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base_public.html" %}
+
+{% block title %}Docs — Xploiter{% endblock %}
+
+{% block content %}
+<div class="docs-layout">
+    <aside class="docs-side card">
+        <input type="text" id="docs-search" placeholder="Search docs" style="padding:0.62rem 0.85rem; border:1.5px solid var(--border); border-radius:10px; font-family:inherit; background:var(--input-bg); color:var(--text);">
+        <a href="#getting-started" class="active">Getting started</a>
+        <a href="#running-a-scan">Running a scan</a>
+        <a href="#reading-results">Reading results</a>
+        <a href="#vulnerability-checks">Vulnerability checks</a>
+        <a href="#exporting-reports">Exporting reports</a>
+        <a href="#using-the-cli">Using the CLI</a>
+        <a href="#ai-assistant">AI Assistant</a>
+        <a href="#faq">FAQ</a>
+    </aside>
+
+    <div class="card" id="docs-body">
+        <h1 style="font-size:1.8rem; font-weight:800; margin-bottom:1rem;">Getting started</h1>
+
+        <section id="getting-started" class="mb-2">
+            <p class="text-muted">Xploiter scans the APIs you own for the OWASP API Top 10 vulnerabilities and returns a short, ranked list of what to fix first. It is built for developers, students, and security teams who want proof-backed findings — not noise.</p>
+        </section>
+
+        <section id="running-a-scan" class="mb-2">
+            <h3>1. Create an account</h3>
+            <p class="text-muted">Sign up with your email or continue with Google. Your scans stay private to your account.</p>
+            <h3 class="mt-2">2. Run your first scan</h3>
+            <p class="text-muted">Open <strong>New Scan</strong>, enter your API's base URL (for example <code>https://api.example.com</code>), tick the authorization checkbox, and press <strong>Start scan</strong>. Add a bearer token if your API needs authentication.</p>
+            <h3 class="mt-2">3. Read your top risks</h3>
+            <p class="text-muted">When the scan finishes, the results page shows the 6 riskiest endpoints first, grouped and ranked — no repeated rows for the same endpoint.</p>
+        </section>
+
+        <section id="reading-results" class="mb-2">
+            <h3>Reading results</h3>
+            <p class="text-muted">Findings are <strong>Confirmed</strong> (proven with evidence), <strong>Suspected</strong> (strong signals, unproven), or <strong>Informational</strong>. Each endpoint card shows a "Fix first" recommendation. Use the tabs to filter, or "Show all endpoints" for the full list.</p>
+        </section>
+
+        <section id="vulnerability-checks" class="mb-2">
+            <h3>Vulnerability checks</h3>
+            <p class="text-muted">Xploiter tests for SQL injection, reflected XSS, BOLA/IDOR, broken authentication, CORS misconfiguration, command injection, local file inclusion, open redirect, XXE, and GraphQL introspection. See the in-app <a href="{{ url_for('dashboard.vuln_guide') }}">Vulnerability Guide</a> for what each check means and how to fix it.</p>
+        </section>
+
+        <section id="exporting-reports" class="mb-2">
+            <h3>Exporting reports</h3>
+            <p class="text-muted">Every finished scan can be downloaded as <strong>PDF</strong>, <strong>JSON</strong>, <strong>HTML</strong>, or <strong>SARIF</strong> 2.1.0. Reports start with the top risks, followed by the full endpoint list.</p>
+        </section>
+
+        <section id="using-the-cli" class="mb-2">
+            <h3>Using the CLI</h3>
+            <p class="text-muted">Download the CLI from the landing page, generate a token in <strong>Settings → CLI token</strong>, then run <code>python xploiter_cli.py scan https://api.example.com --token &lt;token&gt;</code>.</p>
+        </section>
+
+        <section id="ai-assistant" class="mb-2">
+            <h3>AI Assistant</h3>
+            <p class="text-muted">The in-app assistant explains any screen, result, or term in your language (English, Urdu, Arabic, Spanish). Always review a suggested fix before applying it.</p>
+        </section>
+
+        <section id="faq" class="mb-2">
+            <h3>FAQ</h3>
+            <p class="text-muted"><strong>Is it safe to scan my production API?</strong> — Xploiter uses bounded concurrency and an endpoint budget, and only runs non-destructive probes. Scan staging first when you can.<br><br>
+            <strong>Can I scan someone else's API?</strong> — Only APIs you own or are explicitly authorized to test. The new-scan form requires you to confirm this.<br><br>
+            <strong>Why are some findings "Suspected"?</strong> — A finding is Confirmed only with proof (e.g. an error message or a redirected response). Anything less stays Suspected so you can judge it yourself.</p>
+        </section>
+
+        <div class="assist-banner mt-2">Still stuck? Ask the AI Assistant. It answers in your language.</div>
+        <p class="text-muted" style="font-size:0.85rem;">Was this page helpful? Yes / No</p>
+    </div>
+</div>
+
+<script>
+(function () {
+    var input = document.getElementById("docs-search");
+    var links = document.querySelectorAll(".docs-side a");
+    if (!input) return;
+    input.addEventListener("input", function () {
+        var q = input.value.trim().toLowerCase();
+        links.forEach(function (a) {
+            a.style.display = (!q || a.textContent.toLowerCase().indexOf(q) !== -1) ? "" : "none";
+        });
+    });
+})();
+</script>
+{% endblock %}

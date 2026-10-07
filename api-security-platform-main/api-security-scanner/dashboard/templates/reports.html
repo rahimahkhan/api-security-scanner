@@ -1,0 +1,61 @@
+{% extends "base_app.html" %}
+
+{% block title %}Reports — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Reports</h1>
+</div>
+<p class="page-sub">Download the report for any finished scan.</p>
+
+<form class="history-tools" method="GET" action="{{ url_for('dashboard.reports') }}">
+    <input type="text" name="q" placeholder="Search by target" value="{{ q or '' }}">
+    <select name="date">
+        <option value="">Any date</option>
+        <option value="today" {% if date == "today" %}selected{% endif %}>Today</option>
+        <option value="week" {% if date == "week" %}selected{% endif %}>Last 7 days</option>
+        <option value="month" {% if date == "month" %}selected{% endif %}>Last 30 days</option>
+    </select>
+    <button type="submit" class="btn btn-outline">Filter</button>
+</form>
+
+{% if sessions %}
+<div class="card table-card">
+    <table class="data responsive-cards">
+        <thead>
+            <tr>
+                <th>Report</th>
+                <th>Target URL</th>
+                <th>Date</th>
+                <th>Score</th>
+                <th>Download</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sess in sessions %}
+            <tr>
+                <td data-label="Report">Scan report #{{ sess.id }}</td>
+                <td data-label="Target"><code>{{ sess.target_url }}</code></td>
+                <td data-label="Date">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') if sess.scan_start_time else 'N/A' }}</td>
+                <td data-label="Score"><strong>{{ sess.overall_risk_score }}</strong></td>
+                <td data-label="Download" class="no-label">
+                    <a class="btn-sm" href="{{ url_for('dashboard.export_report', session_id=sess.id, format='pdf') }}">PDF</a>
+                    <a class="btn-sm" href="{{ url_for('dashboard.export_report', session_id=sess.id, format='json') }}">JSON</a>
+                    <a class="btn-sm" href="{{ url_for('dashboard.export_report', session_id=sess.id, format='html') }}">HTML</a>
+                    <a class="btn-sm" href="{{ url_for('dashboard.export_report', session_id=sess.id, format='sarif') }}">SARIF</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="text-muted mt-2" style="font-size:0.88rem">Every report starts with the top risks, followed by the full endpoint list.</p>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>No reports yet. Finish a scan to create one.</p>
+        <a class="btn btn-primary" href="{{ url_for('dashboard.new_scan') }}">New Scan</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

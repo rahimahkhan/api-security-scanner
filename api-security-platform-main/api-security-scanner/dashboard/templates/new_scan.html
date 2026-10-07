@@ -1,0 +1,95 @@
+{% extends "base_app.html" %}
+
+{% block title %}New scan — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>New scan</h1>
+</div>
+
+<div class="scan-layout">
+    <div class="card">
+        <form action="{{ url_for('dashboard.start_scan') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="target_url">Target API base URL</label>
+                <input type="url" id="target_url" name="target_url" placeholder="https://api.example.com" required>
+                <p class="form-help">Every scan runs the complete pipeline: active probes, passive checks, and safety limits.</p>
+            </div>
+
+            <div class="form-group">
+                <label for="auth_type">Authentication</label>
+                <select id="auth_type" name="auth_type">
+                    <option value="none" selected>None</option>
+                    <option value="bearer">Bearer token</option>
+                    <option value="api_key">API key</option>
+                    <option value="cookie">Cookie</option>
+                </select>
+                <div class="auth-fields" id="auth-fields">
+                    <label for="auth_value">Token value</label>
+                    <input type="text" id="auth_value" name="auth_value" placeholder="Paste the token or key" autocomplete="off">
+                    <p class="form-help">Sent with every probe request. Never stored — used for this scan only.</p>
+                </div>
+            </div>
+
+            <div class="form-group" id="spec">
+                <label>API specification <span class="text-muted" style="font-weight:400">(optional)</span></label>
+                <label class="dropzone" for="spec_file">
+                    <span id="spec-file-label">Optional: upload OpenAPI / Postman file to discover endpoints</span>
+                    <input type="file" id="spec_file" name="spec_file" accept=".json,.yaml,.yml">
+                </label>
+            </div>
+
+            <label class="checkbox-row">
+                <input type="checkbox" name="authorized" value="yes" required>
+                <span>I am authorized to test this target</span>
+            </label>
+
+            <button type="submit" class="btn btn-primary btn-block">Start scan</button>
+        </form>
+    </div>
+
+    <div class="card progress-panel" id="live-progress-panel">
+        <h3>Live progress</h3>
+        {% if running_scan %}
+        <div class="progress-bar"><div class="progress-fill" id="np-fill"></div></div>
+        <p class="progress-meta">Current module: <strong id="np-stage">{{ running_scan.progress_stage or "Starting" }}</strong></p>
+        <p class="progress-meta">Endpoints: <strong><span id="np-done">{{ running_scan.progress_done or 0 }}</span> / <span id="np-total">{{ running_scan.progress_total or 20 }}</span></strong></p>
+        <p class="progress-meta">Findings so far: <strong id="np-findings">{{ running_scan.total_vulnerabilities_found or 0 }}</strong></p>
+        <form action="{{ url_for('dashboard.cancel_scan', session_id=running_scan.id) }}" method="POST" class="mt-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Cancel this scan?')">Cancel scan</button>
+        </form>
+        <script>
+        (function () {
+            var sid = {{ running_scan.id }};
+            var timer = setInterval(function () {
+                fetch("/api/sessions/" + sid).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
+                    if (!data) return;
+                    var s = data.session || {};
+                    var done = s.progress_done || 0, total = s.progress_total || 0;
+                    var fill = document.getElementById("np-fill");
+                    if (fill && total > 0) fill.style.width = Math.min(100, Math.round(done / total * 100)) + "%";
+                    var set = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+                    set("np-stage", s.progress_stage || "Starting");
+                    set("np-done", done);
+                    set("np-total", total || 20);
+                    set("np-findings", (data.findings || []).length);
+                    if (s.scan_status && s.scan_status !== "running") {
+                        clearInterval(timer);
+                        window.location.href = "/results/" + sid;
+                    }
+                }).catch(function () {});
+            }, 5000);
+        })();
+        </script>
+        {% else %}
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <p class="progress-meta">Current module: <strong>—</strong></p>
+        <p class="progress-meta">Endpoints: <strong>— / —</strong></p>
+        <p class="progress-meta">Findings so far: <strong>—</strong></p>
+        <p class="form-help mt-1">No scan running. Start one to watch live progress here.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,67 +1,302 @@
-// Chart.js initialization for Results Page — OWASP ZAP Cybersecurity Theme
-document.addEventListener("DOMContentLoaded", () => {
-    if (window.severityData && document.getElementById("severityChart")) {
-        const sevCtx = document.getElementById("severityChart").getContext("2d");
-        new Chart(sevCtx, {
-            type: "bar",
-            data: {
-                labels: Object.keys(window.severityData),
-                datasets: [{
-                    label: "Findings Count",
-                    data: Object.values(window.severityData),
-                    backgroundColor: [
-                        "#15803d", // Low (Green)
-                        "#b45309", // Medium (Amber)
-                        "#c2410c", // High (Orange)
-                        "#b91c1c"  // Critical (Red)
-                    ],
-                    borderRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    y: { beginAtZero: true, ticks: { stepSize: 1 } }
-                }
-            }
+// Xploiter UI — theme, navigation, and shared widgets.
+(function () {
+    "use strict";
+
+    function onReady(fn) {
+        if (document.readyState !== "loading") fn();
+        else document.addEventListener("DOMContentLoaded", fn);
+    }
+
+    /* ---------- Theme ---------- */
+    function applyThemeChoice(choice) {
+        var theme = choice;
+        if (choice === "system") {
+            theme = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+        }
+        document.documentElement.setAttribute("data-theme", theme || "light");
+        try { localStorage.setItem("xploiter-theme", choice); } catch (e) {}
+        syncAppearanceRadios(choice);
+    }
+    function currentChoice() {
+        try { return localStorage.getItem("xploiter-theme") || "light"; }
+        catch (e) { return "light"; }
+    }
+    function syncAppearanceRadios(choice) {
+        document.querySelectorAll('input[name="appearance"]').forEach(function (r) {
+            r.checked = (r.value === choice);
         });
     }
 
-    if (window.attackData && document.getElementById("attackTypeChart")) {
-        const attackCtx = document.getElementById("attackTypeChart").getContext("2d");
-        new Chart(attackCtx, {
-            type: "pie",
-            data: {
-                labels: Object.keys(window.attackData),
-                datasets: [{
-                    data: Object.values(window.attackData),
-                    backgroundColor: [
-                        "#0072ff", // ZAP Blue
-                        "#00c6ff", // ZAP Electric Cyan
-                        "#00a896", // ZAP Teal
-                        "#028090", // ZAP Deep Teal
-                        "#f59e0b", // Amber
-                        "#ef4444", // Crimson
-                        "#6366f1", // Indigo
-                        "#8b5cf6"  // Violet
-                    ]
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: true,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            font: { family: "'Plus Jakarta Sans', sans-serif", weight: '600', size: 11 }
-                        }
-                    }
-                }
-            }
-        });
+    /* ---------- Alerts badge (localStorage read-state) ---------- */
+    var READ_KEY = "xploiter-alerts-read";
+    function readIds() {
+        try { return JSON.parse(localStorage.getItem(READ_KEY) || "[]"); }
+        catch (e) { return []; }
     }
-});
+    function refreshAlertBadge() {
+        var badge = document.getElementById("alert-badge");
+        if (!badge) return;
+        var total = 0;
+        document.querySelectorAll("[data-alert-id]").forEach(function () { total += 1; });
+        // On non-alert pages the server renders the total count inside the badge.
+        if (total === 0) total = parseInt(badge.textContent || "0", 10) || 0;
+        var read = readIds();
+        var unread = 0;
+        if (document.querySelectorAll("[data-alert-id]").length) {
+            document.querySelectorAll("[data-alert-id]").forEach(function (el) {
+                if (read.indexOf(el.getAttribute("data-alert-id")) === -1) unread += 1;
+            });
+        } else {
+            // Badge already holds the server-computed total; we cannot know
+            // per-item read state here, so leave the server count as-is.
+            return;
+        }
+        badge.textContent = unread;
+        badge.hidden = unread === 0;
+    }
+
+    onReady(function () {
+        /* Theme toggle (top bar) */
+        var toggle = document.getElementById("theme-toggle");
+        if (toggle) {
+            toggle.addEventListener("click", function () {
+                var now = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+                applyThemeChoice(now);
+            });
+        }
+        /* Appearance radios (settings) */
+        document.querySelectorAll('input[name="appearance"]').forEach(function (r) {
+            r.addEventListener("change", function () { applyThemeChoice(r.value); });
+        });
+        syncAppearanceRadios(currentChoice());
+
+        /* User dropdown */
+        var menuBtn = document.getElementById("user-menu-btn");
+        var dropdown = document.getElementById("user-dropdown");
+        if (menuBtn && dropdown) {
+            menuBtn.addEventListener("click", function (e) {
+                e.stopPropagation();
+                dropdown.classList.toggle("open");
+            });
+            document.addEventListener("click", function (e) {
+                if (!dropdown.contains(e.target)) dropdown.classList.remove("open");
+            });
+        }
+
+        /* Mobile nav drawer */
+        var hamburger = document.getElementById("nav-hamburger");
+        var sidebar = document.getElementById("sidebar");
+        var scrim = document.getElementById("nav-scrim");
+        function closeDrawer() {
+            if (sidebar) sidebar.classList.remove("open");
+            if (scrim) scrim.classList.remove("open");
+        }
+        if (hamburger && sidebar) {
+            hamburger.addEventListener("click", function () {
+                sidebar.classList.toggle("open");
+                if (scrim) scrim.classList.toggle("open", sidebar.classList.contains("open"));
+            });
+        }
+        if (scrim) scrim.addEventListener("click", closeDrawer);
+
+        /* More sheet (phone bottom tabs) */
+        var moreTab = document.getElementById("more-tab");
+        var sheet = document.getElementById("more-sheet");
+        var sheetScrim = document.getElementById("sheet-scrim");
+        function closeSheet() {
+            if (sheet) sheet.classList.remove("open");
+            if (sheetScrim) sheetScrim.classList.remove("open");
+        }
+        if (moreTab && sheet) moreTab.addEventListener("click", function () {
+            sheet.classList.add("open");
+            if (sheetScrim) sheetScrim.classList.add("open");
+        });
+        if (sheetScrim) sheetScrim.addEventListener("click", closeSheet);
+
+        /* Export dropdowns */
+        document.querySelectorAll("[data-export-toggle]").forEach(function (btn) {
+            btn.addEventListener("click", function (e) {
+                e.stopPropagation();
+                var menu = btn.parentElement.querySelector(".export-menu");
+                if (menu) menu.classList.toggle("open");
+            });
+        });
+        document.addEventListener("click", function () {
+            document.querySelectorAll(".export-menu.open").forEach(function (m) { m.classList.remove("open"); });
+        });
+
+        /* Generic filter tabs (results page) */
+        document.querySelectorAll(".filter-tabs").forEach(function (tabs) {
+            var buttons = tabs.querySelectorAll(".filter-tab");
+            buttons.forEach(function (tab) {
+                tab.addEventListener("click", function () {
+                    buttons.forEach(function (t) { t.classList.remove("active"); });
+                    tab.classList.add("active");
+                    var f = tab.getAttribute("data-filter");
+                    var scope = tabs.getAttribute("data-scope") || document;
+                    (typeof scope === "string" ? document : scope)
+                        .querySelectorAll("[data-status]").forEach(function (el) {
+                            el.style.display = (f === "all" || el.getAttribute("data-status") === f) ? "" : "none";
+                        });
+                });
+            });
+        });
+
+        /* Alerts: tabs + mark all as read */
+        var alertTabs = document.querySelectorAll(".alert-tabs .filter-tab");
+        alertTabs.forEach(function (tab) {
+            tab.addEventListener("click", function () {
+                alertTabs.forEach(function (t) { t.classList.remove("active"); });
+                tab.classList.add("active");
+                var onlyUnread = tab.getAttribute("data-filter") === "unread";
+                var read = readIds();
+                document.querySelectorAll("[data-alert-id]").forEach(function (el) {
+                    var isRead = read.indexOf(el.getAttribute("data-alert-id")) !== -1;
+                    el.querySelector(".alert-dot").classList.toggle("read", isRead);
+                    el.style.display = (onlyUnread && isRead) ? "none" : "";
+                });
+            });
+        });
+        // Paint read state on load.
+        (function () {
+            var read = readIds();
+            document.querySelectorAll("[data-alert-id]").forEach(function (el) {
+                if (read.indexOf(el.getAttribute("data-alert-id")) !== -1) {
+                    el.querySelector(".alert-dot").classList.add("read");
+                }
+            });
+        })();
+        var markAll = document.getElementById("mark-all-read");
+        if (markAll) {
+            markAll.addEventListener("click", function () {
+                var ids = [];
+                document.querySelectorAll("[data-alert-id]").forEach(function (el) {
+                    ids.push(el.getAttribute("data-alert-id"));
+                });
+                try { localStorage.setItem(READ_KEY, JSON.stringify(ids)); } catch (e) {}
+                document.querySelectorAll("[data-alert-id] .alert-dot").forEach(function (d) { d.classList.add("read"); });
+                refreshAlertBadge();
+            });
+        }
+        refreshAlertBadge();
+
+        /* History: select-all checkbox */
+        var selectAll = document.getElementById("select-all-scans");
+        if (selectAll) {
+            selectAll.addEventListener("change", function () {
+                document.querySelectorAll(".scan-checkbox").forEach(function (cb) { cb.checked = selectAll.checked; });
+            });
+        }
+
+        /* New scan: auth type conditional fields */
+        var authType = document.getElementById("auth_type");
+        var authFields = document.getElementById("auth-fields");
+        var authValue = document.getElementById("auth_value");
+        if (authType && authFields) {
+            var AUTH_LABELS = {
+                bearer: "Bearer token",
+                api_key: "API key",
+                cookie: "Cookie (e.g. sessionid=abc123)"
+            };
+            authType.addEventListener("change", function () {
+                var v = authType.value;
+                if (v && v !== "none") {
+                    authFields.classList.add("show");
+                    var label = authFields.querySelector("label");
+                    if (label && AUTH_LABELS[v]) label.textContent = AUTH_LABELS[v];
+                    if (authValue) authValue.required = true;
+                } else {
+                    authFields.classList.remove("show");
+                    if (authValue) { authValue.required = false; authValue.value = ""; }
+                }
+            });
+        }
+
+        /* New scan: dropzone file name */
+        var specInput = document.getElementById("spec_file");
+        var specLabel = document.getElementById("spec-file-label");
+        if (specInput && specLabel) {
+            specInput.addEventListener("change", function () {
+                if (specInput.files && specInput.files.length) {
+                    specLabel.innerHTML = 'Selected: <span class="file-name"></span>';
+                    specLabel.querySelector(".file-name").textContent = specInput.files[0].name;
+                }
+            });
+        }
+
+        /* Vuln guide: code tabs */
+        document.querySelectorAll(".code-tabs").forEach(function (tabs) {
+            var btns = tabs.querySelectorAll(".code-tab");
+            btns.forEach(function (btn) {
+                btn.addEventListener("click", function () {
+                    btns.forEach(function (b) { b.classList.remove("active"); });
+                    btn.classList.add("active");
+                    var lang = btn.getAttribute("data-lang");
+                    tabs.parentElement.querySelectorAll(".code-block").forEach(function (block) {
+                        block.style.display = block.getAttribute("data-lang") === lang ? "" : "none";
+                    });
+                });
+            });
+        });
+
+        /* Results page charts (kept from the previous dashboard) */
+        if (window.severityData && document.getElementById("severityChart")) {
+            new Chart(document.getElementById("severityChart").getContext("2d"), {
+                type: "doughnut",
+                data: {
+                    labels: Object.keys(window.severityData),
+                    datasets: [{
+                        data: Object.values(window.severityData),
+                        backgroundColor: ["#64748b", "#475569", "#c2410c", "#b91c1c"],
+                        borderWidth: 2,
+                        borderColor: getComputedStyle(document.documentElement).getPropertyValue("--card") || "#ffffff"
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }
+                }
+            });
+        }
+        if (window.attackData && document.getElementById("attackTypeChart")) {
+            new Chart(document.getElementById("attackTypeChart").getContext("2d"), {
+                type: "bar",
+                data: {
+                    labels: Object.keys(window.attackData),
+                    datasets: [{
+                        data: Object.values(window.attackData),
+                        backgroundColor: "#2563eb",
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }
+                }
+            });
+        }
+        if (window.riskOverTime && document.getElementById("riskOverTimeChart")) {
+            new Chart(document.getElementById("riskOverTimeChart").getContext("2d"), {
+                type: "line",
+                data: {
+                    labels: window.riskOverTime.labels,
+                    datasets: [{
+                        label: "Risk score",
+                        data: window.riskOverTime.scores,
+                        borderColor: "#2563eb",
+                        backgroundColor: "rgba(37,99,235,0.12)",
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: { y: { beginAtZero: true, max: 100 } }
+                }
+            });
+        }
+    });
+})();

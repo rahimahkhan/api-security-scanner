@@ -1,21 +1,41 @@
-{% extends "base.html" %}
+{% extends "base_app.html" %}
 
-{% block title %}Scan History - API Security Platform{% endblock %}
+{% block title %}Scan history — Xploiter{% endblock %}
 
 {% block content %}
 <div class="page-header">
-    <h1>Inspection Scan History</h1>
-    <p>Historical telemetry logs and target evaluation records.</p>
+    <h1>Scan history</h1>
 </div>
 
+<form class="history-tools" method="GET" action="{{ url_for('dashboard.history') }}">
+    <input type="text" name="q" placeholder="Search by target or session ID" value="{{ q or '' }}">
+    <select name="severity">
+        <option value="">All severities</option>
+        {% for sev in ["Critical", "High", "Medium", "Low", "Informational"] %}
+        <option value="{{ sev }}" {% if severity == sev %}selected{% endif %}>{{ sev }}</option>
+        {% endfor %}
+    </select>
+    <select name="date">
+        <option value="">Any date</option>
+        <option value="today" {% if date == "today" %}selected{% endif %}>Today</option>
+        <option value="week" {% if date == "week" %}selected{% endif %}>Last 7 days</option>
+        <option value="month" {% if date == "month" %}selected{% endif %}>Last 30 days</option>
+    </select>
+    <button type="submit" class="btn btn-outline">Filter</button>
+    <span class="spacer"></span>
+    <button type="submit" class="btn btn-outline" formaction="{{ url_for('dashboard.compare') }}" formmethod="GET" id="compare-btn">Compare selected</button>
+</form>
+
+{% if sessions %}
 <div class="card table-card">
-    <table>
+    <table class="data responsive-cards">
         <thead>
             <tr>
+                <th><input type="checkbox" id="select-all-scans" title="Select all"></th>
                 <th>Session ID</th>
                 <th>Target URL</th>
                 <th>Date</th>
-                <th>Risk Score</th>
+                <th>Risk score</th>
                 <th>Severity</th>
                 <th>Vulnerabilities</th>
                 <th>Action</th>
@@ -24,26 +44,47 @@
         <tbody>
             {% for sess in sessions %}
             <tr>
-                <td>#{{ sess.id }}</td>
-                <td><code>{{ sess.target_url }}</code></td>
-                <td>{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') if sess.scan_start_time else 'N/A' }}</td>
-                <td><strong>{{ sess.overall_risk_score }}</strong></td>
-                <td><span class="badge {{ sess.overall_severity|lower }}">{{ sess.overall_severity }}</span></td>
-                <td>{{ sess.total_vulnerabilities_found }}</td>
-                <td class="actions-cell">
-                    <a href="{{ url_for('dashboard.results', session_id=sess.id) }}" class="btn-sm">View</a>
-                    <form action="{{ url_for('dashboard.delete_scan', session_id=sess.id) }}" method="POST" style="display:inline;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn-sm btn-danger" onclick="return confirm('Delete this scan session record?')">Delete</button>
-                    </form>
+                <td class="no-label"><input type="checkbox" class="scan-checkbox" name="ids" value="{{ sess.id }}" form="compare-form"></td>
+                <td data-label="Session">#{{ sess.id }}</td>
+                <td data-label="Target"><code>{{ sess.target_url }}</code></td>
+                <td data-label="Date">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') if sess.scan_start_time else 'N/A' }}</td>
+                <td data-label="Score"><strong>{{ sess.overall_risk_score }}</strong></td>
+                <td data-label="Severity"><span class="badge {{ sess.overall_severity|lower }}">{{ sess.overall_severity }}</span></td>
+                <td data-label="Findings">{{ sess.total_vulnerabilities_found }}</td>
+                <td class="no-label">
+                    <a href="{{ url_for('dashboard.results', session_id=sess.id) }}" class="btn-sm">View report</a>
                 </td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="7" class="text-center">No past inspection scan sessions recorded.</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+<form id="compare-form" method="GET" action="{{ url_for('dashboard.compare') }}" style="display:none"></form>
+<script>
+// Move checked boxes into the hidden compare form on submit.
+document.getElementById("compare-btn").addEventListener("click", function (e) {
+    var checked = Array.prototype.filter.call(document.querySelectorAll(".scan-checkbox"), function (cb) { return cb.checked; });
+    if (checked.length < 2) {
+        e.preventDefault();
+        alert("Select at least two scans to compare.");
+        return;
+    }
+    e.preventDefault();
+    var form = document.getElementById("compare-form");
+    checked.forEach(function (cb) {
+        var input = document.createElement("input");
+        input.type = "hidden"; input.name = "ids"; input.value = cb.value;
+        form.appendChild(input);
+    });
+    form.submit();
+});
+</script>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>No scans yet. Run your first scan.</p>
+        <a class="btn btn-primary" href="{{ url_for('dashboard.new_scan') }}">New Scan</a>
+    </div>
+</div>
+{% endif %}
 {% endblock %}

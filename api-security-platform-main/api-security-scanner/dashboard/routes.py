@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import sys
 import hashlib
@@ -8,7 +9,7 @@ import threading
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app
+from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app, g, send_file
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,17 +26,21 @@ from database.db import (
     get_all_sessions, get_session_for_user, get_session_findings,
     get_finding_by_id, delete_session, SessionLocal,
     get_user_by_username, get_user_by_firebase_uid,
-    get_or_create_firebase_user,
+    get_or_create_firebase_user, get_user_by_cli_token,
+    regenerate_cli_token, update_user_name,
     create_reset_otp, get_latest_valid_reset_otp, increment_otp_attempts,
     mark_otp_verified, mark_otp_used, count_recent_otps,
 )
-from database.models import ScanSession, Finding, Endpoint
+from database.models import ScanSession, Finding, Endpoint, User
 from dashboard.auth_validators import (
     validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.emailer import is_email_configured, send_otp_email
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
 )
+from dashboard.results_grouping import group_findings, TOP_RISKS_COUNT
+from dashboard.vuln_guide_content import GUIDE_CHECKS, get_check
+from dashboard import assistant as assistant_engine
 from core.discovery import EndpointDiscovery
 from core.request_engine import RequestEngine
 from core.response_parser import ResponseParser
@@ -60,7 +65,7 @@ HEARTBEAT_INTERVAL_SECONDS = 60
 PROGRESS_STALL_AFTER_SECONDS = int(os.getenv("PROGRESS_STALL_AFTER_SECONDS", "900"))
 
 
-def _scan_worker(target_url: str, session_id: int) -> None:
+def _scan_worker(target_url: str, session_id: int, extra_headers=None) -> None:
     """Background thread entry point: run the pipeline against the pre-created session."""
     stop_heartbeat = threading.Event()
 
@@ -74,7 +79,8 @@ def _scan_worker(target_url: str, session_id: int) -> None:
     hb_thread = threading.Thread(target=_heartbeat, daemon=True, name=f"heartbeat-{session_id}")
     hb_thread.start()
     try:
-        run_pipeline(target_url, return_session_id=True, session_id=session_id)
+        run_pipeline(target_url, return_session_id=True, session_id=session_id,
+                     extra_headers=extra_headers)
     except Exception as exc:  # never let the thread die silently
         logger.error(f"Background scan {session_id} crashed: {exc}")
         try:
@@ -83,9 +89,20 @@ def _scan_worker(target_url: str, session_id: int) -> None:
             pass
     finally:
         stop_heartbeat.set()
+        # A user-cancelled scan stays failed even if the worker just finished.
+        if session_id in _cancelled_scans:
+            try:
+                fail_scan_session(session_id, "Cancelled by user")
+            except Exception:
+                pass
 
 
-def _launch_background_scan(target_url: str, user_id=None) -> int:
+# Session ids the user asked to cancel. The worker checks this after the
+# pipeline returns so a late finish can't resurrect a cancelled scan.
+_cancelled_scans = set()
+
+
+def _launch_background_scan(target_url: str, user_id=None, extra_headers=None) -> int:
     """Create the session row immediately and run the scan in a daemon thread.
 
     Returns the session id at once so HTTP clients never block on (or time
@@ -94,7 +111,7 @@ def _launch_background_scan(target_url: str, user_id=None) -> int:
     session_obj = save_scan_session(target_url=target_url, status="running", user_id=user_id)
     thread = threading.Thread(
         target=_scan_worker,
-        args=(target_url, session_obj.id),
+        args=(target_url, session_obj.id, extra_headers),
         daemon=True,
         name=f"scan-{session_obj.id}",
     )
@@ -156,9 +173,24 @@ def is_auth_enabled() -> bool:
 
 def get_current_user_id():
     """Logged-in user's id, or None when auth is disabled / not logged in."""
+    cli_user_id = getattr(g, "cli_user_id", None)
+    if cli_user_id is not None:
+        return cli_user_id
     if not is_auth_enabled():
         return None
     return session.get("user_id")
+
+
+def _api_token_user_id():
+    """User id from a valid `Authorization: Bearer <CLI token>` header."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    user = get_user_by_cli_token(token)
+    return user.id if user else False  # False = token present but invalid
 
 
 def is_csrf_enabled() -> bool:
@@ -170,10 +202,22 @@ def is_csrf_enabled() -> bool:
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if is_auth_enabled() and not session.get("user_id"):
-            if request.path.startswith("/api/"):
-                return jsonify({"status": "error", "message": "Authentication required"}), 401
-            return redirect(url_for("dashboard.login", next=request.path))
+        if is_auth_enabled():
+            user_id = session.get("user_id")
+            if user_id is None and request.path.startswith("/api/"):
+                # Programmatic access: the Xploiter CLI authenticates with a
+                # Bearer token from Settings > CLI token (CSRF-exempt, like
+                # all /api/* routes).
+                token_user = _api_token_user_id()
+                if token_user is False:
+                    return jsonify({"status": "error", "message": "Invalid API token"}), 401
+                if token_user:
+                    g.cli_user_id = token_user
+                    return f(*args, **kwargs)
+            if not session.get("user_id") and getattr(g, "cli_user_id", None) is None:
+                if request.path.startswith("/api/"):
+                    return jsonify({"status": "error", "message": "Authentication required"}), 401
+                return redirect(url_for("dashboard.login", next=request.path))
         return f(*args, **kwargs)
     return decorated_function
 
@@ -183,9 +227,14 @@ def inject_globals():
     user_id = get_current_user_id()
     if is_auth_enabled() and user_id is None:
         recent = []  # logged out: never leak other users' scans in the sidebar
+        alert_count = 0
     else:
         recent = get_all_sessions(user_id)[:5]
-    authed = bool(session.get("user_id")) or not is_auth_enabled()
+        try:
+            alert_count = len(_build_alerts(user_id))
+        except Exception:
+            alert_count = 0
+    authed = bool(session.get("user_id")) or getattr(g, "cli_user_id", None) is not None or not is_auth_enabled()
     return dict(
         recent_sessions=recent,
         csrf_token=get_or_create_csrf_token,
@@ -193,7 +242,50 @@ def inject_globals():
         is_authenticated=authed,
         current_username=session.get("username"),
         app_version=APP_VERSION,
+        alert_count=alert_count,
     )
+
+
+def _build_alerts(user_id):
+    """Alert items derived from the user's recent scan sessions.
+
+    Each alert: id, kind (badge class), label, message, when, url, action.
+    Pure presentation over existing session rows — no new state.
+    """
+    alerts = []
+    sessions = get_all_sessions(user_id)[:10]
+    for s in sessions:
+        when = s.scan_start_time.strftime("%Y-%m-%d %H:%M") if s.scan_start_time else ""
+        target = s.target_url
+        if (s.status or "complete") == "failed":
+            alerts.append({
+                "id": f"failed-{s.id}", "kind": "failed", "label": "Failed",
+                "message": f"Scan of {target} could not reach the target.",
+                "when": when, "url": url_for("dashboard.new_scan"), "action": "Try again",
+            })
+        elif (s.status or "complete") == "running":
+            continue  # a running scan is progress, not an alert
+        else:
+            critical = sum(
+                1 for f in get_session_findings(s.id) if f.severity == "Critical"
+            )
+            if critical:
+                alerts.append({
+                    "id": f"critical-{s.id}", "kind": "critical", "label": "Critical",
+                    "message": f"Scan of {target} finished with {critical} critical finding{'s' if critical != 1 else ''}.",
+                    "when": when, "url": url_for("dashboard.results", session_id=s.id), "action": "View results",
+                })
+            alerts.append({
+                "id": f"scan-{s.id}", "kind": "scan", "label": "Scan",
+                "message": f"Scan of {target} completed.",
+                "when": when, "url": url_for("dashboard.results", session_id=s.id), "action": "View results",
+            })
+            alerts.append({
+                "id": f"report-{s.id}", "kind": "report", "label": "Report",
+                "message": f"Report for {target} is ready to download.",
+                "when": when, "url": url_for("dashboard.reports"), "action": "Open reports",
+            })
+    return alerts
 
 
 @dashboard_bp.before_request
@@ -237,10 +329,10 @@ def _unique_username(base: str) -> str:
 @dashboard_bp.route("/login", methods=["GET"])
 def login():
     if session.get("user_id"):
-        return redirect(url_for("dashboard.index"))
-    next_url = request.args.get("next") or url_for("dashboard.index")
+        return redirect(url_for("dashboard.dashboard"))
+    next_url = request.args.get("next") or url_for("dashboard.dashboard")
     if not next_url.startswith("/"):
-        next_url = url_for("dashboard.index")
+        next_url = url_for("dashboard.dashboard")
     return render_template("login.html", next_url=next_url,
                            firebase_config=firebase_web_config(),
                            firebase_configured=firebase_configured())
@@ -249,9 +341,9 @@ def login():
 @dashboard_bp.route("/signup", methods=["GET"])
 def signup():
     if not is_auth_enabled():
-        return redirect(url_for("dashboard.index"))
+        return redirect(url_for("dashboard.dashboard"))
     if session.get("user_id"):
-        return redirect(url_for("dashboard.index"))
+        return redirect(url_for("dashboard.dashboard"))
     return render_template("signup.html",
                            firebase_config=firebase_web_config(),
                            firebase_configured=firebase_configured())
@@ -307,16 +399,18 @@ def firebase_session():
         else:
             # Google sign-in (or any flow without a typed username): derive one.
             username = _unique_username(claims.get("name") or email.split("@")[0])
+        # Optional display name from the signup form (falls back to Firebase).
+        display_name = (data.get("name") or "").strip() or claims.get("name")
         user = get_or_create_firebase_user(
             uid, email, username,
-            name=claims.get("name"), avatar_url=claims.get("picture"))
+            name=display_name, avatar_url=claims.get("picture"))
         logger.info(f"New dashboard user via Firebase: {username} ({email})")
 
     session["user_id"] = user.id
     session["username"] = user.username
     next_url = (data.get("next") or "").strip()
     if not next_url.startswith("/"):
-        next_url = url_for("dashboard.index")
+        next_url = url_for("dashboard.dashboard")
     return jsonify({"status": "ok", "redirect": next_url})
 
 
@@ -529,8 +623,106 @@ def logout():
 @dashboard_bp.route("/")
 @login_required
 def index():
-    recent_sessions = get_all_sessions(get_current_user_id())[:5]
-    return render_template("index.html", recent_sessions=recent_sessions)
+    # Legacy landing route: renders the New Scan page (kept working).
+    return _render_new_scan()
+
+
+@dashboard_bp.route("/new-scan")
+@login_required
+def new_scan():
+    return _render_new_scan()
+
+
+def _render_new_scan():
+    """Shared renderer for / and /new-scan."""
+    user_id = get_current_user_id()
+    running_scan = None
+    for s in get_all_sessions(user_id):
+        if (s.status or "complete") == "running":
+            running_scan = s
+            break
+    return render_template("new_scan.html", running_scan=running_scan)
+
+
+def _auth_headers_from_form():
+    """Translate the New Scan auth fields into probe headers (or None).
+
+    Returns None when auth type is "none"/empty so the pipeline behaves
+    exactly as before.
+    """
+    auth_type = (request.form.get("auth_type") or "none").strip().lower()
+    auth_value = (request.form.get("auth_value") or "").strip()
+    if auth_type in ("", "none") or not auth_value:
+        return None
+    if auth_type == "bearer":
+        return {"Authorization": f"Bearer {auth_value}"}
+    if auth_type == "api_key":
+        return {"X-API-Key": auth_value}
+    if auth_type == "cookie":
+        return {"Cookie": auth_value}
+    return None
+
+
+def _handle_spec_upload():
+    """Save an uploaded OpenAPI/Postman file and count its endpoints.
+
+    Discovery is intentionally untouched: the file is stored under
+    scan_reports/ and only a note (with the parsed endpoint count) is
+    surfaced on the results page.
+    """
+    upload = request.files.get("spec_file")
+    if upload is None or not (upload.filename or "").strip():
+        return None
+    filename = re.sub(r"[^A-Za-z0-9_.-]", "_", upload.filename.strip())[:80]
+    reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scan_reports")
+    os.makedirs(reports_dir, exist_ok=True)
+    dest = os.path.join(reports_dir, f"spec_{int(datetime.utcnow().timestamp())}_{filename}")
+    try:
+        upload.save(dest)
+    except Exception as exc:
+        logger.warning(f"Could not save uploaded spec file: {exc}")
+        return None
+    count = _count_spec_endpoints(dest)
+    if count is None:
+        return f"Saved {filename} for reference (couldn't parse its endpoints — discovery ran as usual)."
+    return (f"Uploaded spec '{filename}' lists ~{count} endpoints. "
+            f"Discovery ran as usual and may find more or fewer.")
+
+
+def _count_spec_endpoints(path):
+    """Best-effort endpoint count from an OpenAPI/Postman file."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+        try:
+            spec = json.loads(raw)
+        except Exception:
+            spec = None
+        if isinstance(spec, dict):
+            paths = spec.get("paths")
+            if isinstance(paths, dict):
+                methods = {"get", "post", "put", "delete", "patch", "head", "options", "trace"}
+                return sum(1 for p, ops in paths.items()
+                           if isinstance(ops, dict) for m in ops if m in methods) or len(paths)
+            items = spec.get("item")  # Postman collection
+            if isinstance(items, list):
+                return _count_postman_items(items)
+            return None
+        # YAML-ish fallback: count indented path lines like "  /users:".
+        found = re.findall(r"(?m)^\s{2,6}(/[^:\s]*)(\s*:\s*)$", raw)
+        return len(set(found)) or None
+    except Exception:
+        return None
+
+
+def _count_postman_items(items):
+    n = 0
+    for item in items or []:
+        if isinstance(item, dict) and "item" in item:
+            n += _count_postman_items(item["item"])
+        else:
+            n += 1
+    return n
 
 
 @dashboard_bp.route("/scan", methods=["POST"])
@@ -538,14 +730,44 @@ def index():
 def start_scan():
     target_url = request.form.get("target_url")
     if not target_url:
-        return redirect(url_for("dashboard.index"))
+        return redirect(url_for("dashboard.new_scan"))
 
     valid, normalized_or_reason = validate_target_url(target_url)
     if not valid:
         return f"Invalid target URL: {normalized_or_reason}", 400
 
+    # The wireframe requires the authorization checkbox; the API contract
+    # (and older form posts) never had it, so the server stays lenient and
+    # the checkbox is enforced in the browser.
+    extra_headers = _auth_headers_from_form()
+    spec_note = _handle_spec_upload()
+
     # Scans run in the background; the results page polls until completion.
-    session_id = _launch_background_scan(normalized_or_reason, user_id=get_current_user_id())
+    # extra_headers is only passed when set, so the monkeypatched launcher in
+    # older tests (target_url, user_id=None) keeps working unchanged.
+    launch_kwargs = {}
+    if extra_headers:
+        launch_kwargs["extra_headers"] = extra_headers
+    session_id = _launch_background_scan(normalized_or_reason, user_id=get_current_user_id(), **launch_kwargs)
+    if spec_note:
+        notes = session.get("spec_notes") or {}
+        notes[str(session_id)] = spec_note
+        session["spec_notes"] = dict(list(notes.items())[-5:])  # keep last few
+    return redirect(url_for("dashboard.results", session_id=session_id))
+
+
+@dashboard_bp.route("/scan/<int:session_id>/cancel", methods=["POST"])
+@login_required
+def cancel_scan(session_id):
+    """Cancel a running scan: mark it failed so polling stops.
+
+    The worker checks the cancelled set when the pipeline returns, so a
+    late finish can't resurrect the session back to "complete".
+    """
+    if not get_session_for_user(session_id, get_current_user_id()):
+        return "Session not found", 404
+    _cancelled_scans.add(session_id)
+    fail_scan_session(session_id, "Cancelled by user")
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 @dashboard_bp.route("/results/<int:session_id>")
@@ -567,7 +789,24 @@ def results(session_id):
             db.commit()
 
         findings = get_session_findings(session_id)
-        
+
+        # Group findings by endpoint for the Top Risks view (deduped,
+        # scored, sorted). Raw findings stay untouched for charts/detail.
+        finding_dicts = [{
+            "id": f.id,
+            "url": f.endpoint.url if f.endpoint else session_data.target_url,
+            "method": f.endpoint.method if f.endpoint else "GET",
+            "attack_type": f.attack_type,
+            "severity": f.severity,
+            "finding_status": f.finding_status,
+            "risk_score": f.risk_score,
+            "recommendation": f.recommendation,
+        } for f in findings]
+        grouped = group_findings(finding_dicts)
+        endpoint_groups = grouped["groups"]
+        total_endpoints = len(session_data.endpoints or [])
+        passed_count = max(0, total_endpoints - len(endpoint_groups))
+
         # Categorize stats for Chart.js
         severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
         attack_counts = {}
@@ -578,6 +817,11 @@ def results(session_id):
             att = f.attack_type
             attack_counts[att] = attack_counts.get(att, 0) + 1
 
+        # One-time note about an uploaded API spec file for this scan.
+        spec_notes = dict(session.get("spec_notes") or {})
+        spec_note = spec_notes.pop(str(session_id), None)
+        session["spec_notes"] = spec_notes
+
         return render_template(
             "results.html",
             session_data=session_data,
@@ -585,6 +829,12 @@ def results(session_id):
             severity_counts=severity_counts,
             attack_counts=attack_counts,
             progress_eta=format_scan_eta(session_data),
+            endpoint_groups=endpoint_groups,
+            top_risks=endpoint_groups[:TOP_RISKS_COUNT],
+            group_summary=grouped["summary"],
+            total_endpoints=total_endpoints,
+            passed_count=passed_count,
+            spec_note=spec_note,
         )
     finally:
         db.close()
@@ -592,8 +842,24 @@ def results(session_id):
 @dashboard_bp.route("/history")
 @login_required
 def history():
-    sessions = get_all_sessions(get_current_user_id())
-    return render_template("history.html", sessions=sessions)
+    user_id = get_current_user_id()
+    sessions = get_all_sessions(user_id)
+    q = (request.args.get("q") or "").strip().lower()
+    severity = (request.args.get("severity") or "").strip()
+    date = (request.args.get("date") or "").strip()
+    if q:
+        sessions = [s for s in sessions
+                    if q in (s.target_url or "").lower() or q in str(s.id)]
+    if severity:
+        sessions = [s for s in sessions if (s.overall_severity or "") == severity]
+    if date in ("today", "week", "month"):
+        days = {"today": 1, "week": 7, "month": 30}[date]
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        sessions = [s for s in sessions
+                    if s.scan_start_time and s.scan_start_time >= cutoff]
+    return render_template("history.html", sessions=sessions,
+                           q=request.args.get("q") or "",
+                           severity=severity, date=date)
 
 @dashboard_bp.route("/finding/<int:finding_id>")
 @login_required
@@ -664,14 +930,27 @@ def export_report(session_id):
         from reports.html_exporter import HTMLReportExporter
         from reports.sarif_exporter import SARIFReportExporter
         from flask import send_file
+        from dashboard.results_grouping import group_findings, TOP_RISKS_COUNT
+
+        grouped = group_findings(findings_data)
+        top_risks = grouped["groups"][:TOP_RISKS_COUNT]
+        # Order findings by their endpoint group's score so top risks come
+        # first in every export (SARIF keeps the flat finding list).
+        group_rank = {}
+        for rank, g in enumerate(grouped["groups"]):
+            for v in g["vulns"]:
+                for fid in v["finding_ids"]:
+                    group_rank[fid] = rank
+        findings_data.sort(key=lambda f: (group_rank.get(f["id"], 10**9), -(f["risk_score"] or 0)))
 
         if fmt == "json":
             exporter = JSONReportExporter()
-            out_file = exporter.export(session_data, endpoints_list, findings_data)
+            out_file = exporter.export(session_data, endpoints_list, findings_data,
+                                       top_risks=top_risks)
             return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.json")
         elif fmt == "html":
             exporter = HTMLReportExporter()
-            out_file = exporter.export(session_data, findings_data)
+            out_file = exporter.export(session_data, findings_data, top_risks=top_risks)
             return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.html")
         elif fmt == "sarif":
             exporter = SARIFReportExporter()
@@ -679,7 +958,7 @@ def export_report(session_id):
             return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.sarif")
         else:
             generator = PDFReportGenerator()
-            out_file = generator.generate(session_data, findings_data)
+            out_file = generator.generate(session_data, findings_data, top_risks=top_risks)
             return send_file(out_file, as_attachment=True, download_name=f"scan_report_{session_id}.pdf")
 
     finally:
@@ -692,6 +971,332 @@ def delete_scan(session_id):
         return "Session not found", 404
     delete_session(session_id)
     return redirect(url_for("dashboard.history"))
+
+# ---------------------------------------------------------
+# New UI pages (wireframes): dashboard, targets, reports, alerts,
+# settings, vulnerability guide, AI assistant, public pages.
+# All read existing session rows; none change the scan pipeline.
+# ---------------------------------------------------------
+
+def _finding_dicts(findings, fallback_url=""):
+    return [{
+        "id": f.id,
+        "url": f.endpoint.url if f.endpoint else fallback_url,
+        "method": f.endpoint.method if f.endpoint else "GET",
+        "attack_type": f.attack_type,
+        "severity": f.severity,
+        "finding_status": f.finding_status,
+        "risk_score": f.risk_score,
+        "recommendation": f.recommendation,
+    } for f in findings]
+
+
+def _current_user():
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == get_current_user_id()).first()
+        if user:
+            db.expunge(user)
+        return user
+    finally:
+        db.close()
+
+
+@dashboard_bp.route("/dashboard")
+@login_required
+def dashboard():
+    user_id = get_current_user_id()
+    sessions = get_all_sessions(user_id)
+
+    scans_run = len(sessions)
+    scored = [s for s in sessions if s.overall_risk_score is not None]
+    avg_score = round(sum(s.overall_risk_score for s in scored) / len(scored), 1) if scored else 0
+    last = sessions[0].scan_start_time if sessions and sessions[0].scan_start_time else None
+
+    db = SessionLocal()
+    try:
+        q = db.query(Finding).join(ScanSession, Finding.session_id == ScanSession.id)
+        if user_id is not None:
+            q = q.filter(ScanSession.user_id == user_id)
+        recent_ids = [s.id for s in sessions[:10]]
+        recent_findings = (q.filter(Finding.session_id.in_(recent_ids)).all()
+                           if recent_ids else [])
+        critical_findings = sum(1 for f in recent_findings if f.severity == "Critical")
+        severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
+        for f in recent_findings:
+            severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
+    finally:
+        db.close()
+
+    trend = [s for s in sessions[:10] if s.scan_start_time][::-1]
+    risk_over_time = {
+        "labels": [s.scan_start_time.strftime("%m-%d") for s in trend],
+        "scores": [round(s.overall_risk_score or 0, 1) for s in trend],
+    }
+
+    top_endpoints = []
+    for s in sessions[:5]:
+        top_endpoints.extend(_finding_dicts(get_session_findings(s.id), s.target_url))
+    top_endpoints = group_findings(top_endpoints)["groups"][:5]
+
+    return render_template(
+        "dashboard.html",
+        stats={
+            "scans_run": scans_run,
+            "critical_findings": critical_findings,
+            "avg_score": avg_score,
+            "last_scan": last.strftime("%Y-%m-%d") if last else None,
+        },
+        severity_counts=severity_counts,
+        risk_over_time=risk_over_time,
+        top_endpoints=top_endpoints,
+    )
+
+
+@dashboard_bp.route("/compare")
+@login_required
+def compare():
+    user_id = get_current_user_id()
+    ids = []
+    for raw in request.args.getlist("ids"):
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+    compared = []
+    for sid in ids[:4]:
+        s = get_session_for_user(sid, user_id)
+        if not s:
+            continue
+        findings = get_session_findings(sid)
+        compared.append({
+            "session": s,
+            "critical": sum(1 for f in findings if f.severity == "Critical"),
+            "high": sum(1 for f in findings if f.severity == "High"),
+        })
+    return render_template("compare.html", compared=compared)
+
+
+@dashboard_bp.route("/targets")
+@login_required
+def targets():
+    user_id = get_current_user_id()
+    q = (request.args.get("q") or "").strip().lower()
+    grouped = {}
+    for s in get_all_sessions(user_id):
+        key = (s.target_url or "").strip()
+        if not key:
+            continue
+        g = grouped.setdefault(key, {"target_url": key, "scans_run": 0,
+                                     "last_scan": None, "latest_score": 0,
+                                     "severity": "Low", "latest_session_id": None})
+        g["scans_run"] += 1
+        if g["last_scan"] is None or (s.scan_start_time and s.scan_start_time > g["last_scan"]):
+            g["last_scan"] = s.scan_start_time
+            g["latest_score"] = s.overall_risk_score or 0
+            g["severity"] = s.overall_severity or "Low"
+            g["latest_session_id"] = s.id
+    rows = sorted(grouped.values(), key=lambda r: r["last_scan"] or datetime.min, reverse=True)
+    if q:
+        rows = [r for r in rows if q in r["target_url"].lower()]
+    return render_template("targets.html", targets=rows, q=request.args.get("q") or "")
+
+
+@dashboard_bp.route("/reports")
+@login_required
+def reports():
+    user_id = get_current_user_id()
+    sessions = [s for s in get_all_sessions(user_id)
+                if (s.status or "complete") == "complete"]
+    q = (request.args.get("q") or "").strip().lower()
+    date = (request.args.get("date") or "").strip()
+    if q:
+        sessions = [s for s in sessions if q in (s.target_url or "").lower()]
+    if date in ("today", "week", "month"):
+        days = {"today": 1, "week": 7, "month": 30}[date]
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        sessions = [s for s in sessions
+                    if s.scan_start_time and s.scan_start_time >= cutoff]
+    return render_template("reports.html", sessions=sessions,
+                           q=request.args.get("q") or "", date=date)
+
+
+@dashboard_bp.route("/alerts")
+@login_required
+def alerts():
+    return render_template("alerts.html", alerts=_build_alerts(get_current_user_id()))
+
+
+@dashboard_bp.route("/settings", methods=["GET", "POST"])
+@login_required
+def settings():
+    notice = None
+    if request.method == "POST" and request.form.get("form") == "account":
+        name = (request.form.get("name") or "").strip()
+        if update_user_name(get_current_user_id(), name):
+            notice = "Account name saved."
+        else:
+            notice = "Could not save — please try again."
+    return render_template("settings.html", user=_current_user(), notice=notice)
+
+
+@dashboard_bp.route("/settings/export")
+@login_required
+def export_my_data():
+    """Download everything about the user's account as JSON (privacy)."""
+    user = _current_user()
+    sessions = get_all_sessions(get_current_user_id())
+    data = {
+        "user": {
+            "username": user.username if user else None,
+            "email": user.email if user else None,
+            "name": user.name if user else None,
+        },
+        "sessions": [{
+            "id": s.id,
+            "target_url": s.target_url,
+            "status": s.status,
+            "scan_start_time": s.scan_start_time.isoformat() if s.scan_start_time else None,
+            "scan_end_time": s.scan_end_time.isoformat() if s.scan_end_time else None,
+            "overall_risk_score": s.overall_risk_score,
+            "overall_severity": s.overall_severity,
+            "total_endpoints_found": s.total_endpoints_found,
+            "total_vulnerabilities_found": s.total_vulnerabilities_found,
+        } for s in sessions],
+    }
+    return jsonify(data), 200, {
+        "Content-Disposition": "attachment; filename=xploiter-my-data.json"}
+
+
+@dashboard_bp.route("/settings/delete-scans", methods=["POST"])
+@login_required
+def delete_my_scans():
+    for s in get_all_sessions(get_current_user_id()):
+        delete_session(s.id)
+    return redirect(url_for("dashboard.settings"))
+
+
+@dashboard_bp.route("/settings/delete-account", methods=["POST"])
+@login_required
+def delete_my_account():
+    user_id = get_current_user_id()
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            db.delete(user)  # sessions cascade via the relationship
+            db.commit()
+    finally:
+        db.close()
+    session.clear()
+    return redirect(url_for("dashboard.landing"))
+
+
+@dashboard_bp.route("/settings/cli-token/regenerate", methods=["POST"])
+@login_required
+def regenerate_cli_token_route():
+    token = regenerate_cli_token(get_current_user_id())
+    if not token:
+        return jsonify({"status": "error", "message": "Could not generate a token"}), 400
+    return jsonify({"status": "ok", "token": token})
+
+
+@dashboard_bp.route("/vuln-guide")
+@login_required
+def vuln_guide():
+    q = (request.args.get("q") or "").strip().lower()
+    checks = [c for c in GUIDE_CHECKS
+              if not q or q in c["title"].lower() or q in c["what"].lower()]
+    slug = request.args.get("check") or ""
+    active = get_check(slug) if slug else (checks[0] if checks else GUIDE_CHECKS[0])
+    return render_template("vuln_guide.html", checks=checks, active=active,
+                           q=request.args.get("q") or "")
+
+
+@dashboard_bp.route("/ai-assistant")
+@login_required
+def ai_assistant():
+    return render_template("ai_assistant.html",
+                           prefill=(request.args.get("q") or "").strip() or None,
+                           show_ai_fab=False)
+
+
+def _assistant_scan_context(user_id):
+    """Short, honest summary of the latest completed scan (or None)."""
+    sessions = [s for s in get_all_sessions(user_id)
+                if (s.status or "complete") == "complete"]
+    if not sessions:
+        return None
+    s = sessions[0]
+    findings = get_session_findings(s.id)
+    types = sorted({f.attack_type for f in findings})
+    return (
+        f"Latest scan: session {s.id}, target {s.target_url}, "
+        f"score {s.overall_risk_score}/100 ({s.overall_severity}), "
+        f"{s.total_vulnerabilities_found} findings across "
+        f"{s.total_endpoints_found} endpoints. "
+        f"Finding types: {', '.join(types) if types else 'none'}."
+    )
+
+
+@dashboard_bp.route("/api/assistant/ask", methods=["POST"])
+@login_required
+def assistant_ask():
+    data = request.get_json(silent=True) or {}
+    question = (data.get("question") or "").strip()
+    if not question:
+        return jsonify({"status": "error", "message": "Ask a question first."}), 400
+    language = (data.get("language") or "auto").strip().lower()
+    if language not in ("auto", "en", "ur", "ar", "es"):
+        language = "auto"
+    scan_context = None
+    if (data.get("context") or "latest") == "latest":
+        scan_context = _assistant_scan_context(get_current_user_id())
+    answer_html, actions = assistant_engine.answer(question, language, scan_context)
+    return jsonify({"status": "ok", "answer_html": answer_html, "actions": actions})
+
+
+@dashboard_bp.route("/download/cli")
+@login_required
+def download_cli():
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "tools", "xploiter_cli.py")
+    return send_file(path, as_attachment=True, download_name="xploiter_cli.py")
+
+
+# ---------------------------------------------------------
+# Public pages (no login required)
+# ---------------------------------------------------------
+
+@dashboard_bp.route("/landing")
+def landing():
+    return render_template("landing.html", active_page="landing")
+
+
+@dashboard_bp.route("/how-it-works")
+def how_it_works():
+    return render_template("how_it_works.html", active_page="how_it_works")
+
+
+@dashboard_bp.route("/docs")
+def docs():
+    return render_template("docs.html", active_page="docs")
+
+
+@dashboard_bp.route("/pricing")
+def pricing():
+    return render_template("pricing.html", active_page="pricing")
+
+
+@dashboard_bp.route("/about")
+def about():
+    return render_template("about.html", active_page="about")
+
+
+@dashboard_bp.route("/contact")
+def contact():
+    return render_template("contact.html", active_page="contact")
+
 
 # ---------------------------------------------------------
 # REST API Endpoints for Programmatic Client Access

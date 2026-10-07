@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Xploiter — API Security Scanner{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+    // Public pages stay light; respect a stored theme choice if one exists.
+    (function () {
+        try {
+            var stored = localStorage.getItem("xploiter-theme");
+            if (stored && stored !== "light") {
+                var theme = stored === "system"
+                    ? ((window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light")
+                    : stored;
+                document.documentElement.setAttribute("data-theme", theme);
+            }
+        } catch (e) { /* localStorage unavailable */ }
+    })();
+    </script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="public-nav">
+        <a class="wordmark" style="color: var(--text)" href="{{ url_for('dashboard.landing') }}"><span class="x-logo">X</span>XPLOITER</a>
+        <div class="links">
+            <a href="{{ url_for('dashboard.landing') }}#features" class="{% if active_page == 'landing' %}active{% endif %}">Features</a>
+            <a href="{{ url_for('dashboard.how_it_works') }}" class="{% if active_page == 'how_it_works' %}active{% endif %}">How it works</a>
+            <a href="{{ url_for('dashboard.docs') }}" class="{% if active_page == 'docs' %}active{% endif %}">Docs</a>
+            <a href="{{ url_for('dashboard.pricing') }}" class="{% if active_page == 'pricing' %}active{% endif %}">Pricing</a>
+            <a href="{{ url_for('dashboard.about') }}" class="{% if active_page == 'about' %}active{% endif %}">About</a>
+            <a href="{{ url_for('dashboard.contact') }}" class="{% if active_page == 'contact' %}active{% endif %}">Contact</a>
+        </div>
+        <div class="cta-row">
+            {% if is_authenticated %}
+            <a class="btn btn-primary" href="{{ url_for('dashboard.dashboard') }}">Open app</a>
+            {% else %}
+            <a class="login-link" href="{{ url_for('dashboard.login') }}">Log in</a>
+            <a class="btn btn-primary" href="{{ url_for('dashboard.signup') }}">Get Started</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <main class="public-main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="public-footer">
+        <p>&copy; 2026 Xploiter — API Security Scanner &nbsp;·&nbsp; <span style="font-family: monospace">build {{ app_version }}</span></p>
+    </footer>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

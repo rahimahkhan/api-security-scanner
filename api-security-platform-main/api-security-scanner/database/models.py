@@ -54,6 +54,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=True, index=True)
     name = Column(String(120), nullable=True)
     avatar_url = Column(String(500), nullable=True)
+    cli_token = Column(String(64), unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     sessions = relationship("ScanSession", back_populates="user", cascade="all, delete-orphan")

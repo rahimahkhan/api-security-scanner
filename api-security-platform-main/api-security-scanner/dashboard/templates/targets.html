@@ -1,0 +1,51 @@
+{% extends "base_app.html" %}
+
+{% block title %}Targets — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Targets</h1>
+</div>
+<p class="page-sub">Every API you have scanned, with its latest result.</p>
+
+<form class="history-tools" method="GET" action="{{ url_for('dashboard.targets') }}">
+    <input type="text" name="q" placeholder="Search targets" value="{{ q or '' }}">
+    <button type="submit" class="btn btn-outline">Search</button>
+</form>
+
+{% if targets %}
+<div class="card table-card">
+    <table class="data responsive-cards">
+        <thead>
+            <tr>
+                <th>Target URL</th>
+                <th>Scans run</th>
+                <th>Last scan</th>
+                <th>Latest score</th>
+                <th>Severity</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in targets %}
+            <tr>
+                <td data-label="Target"><code>{{ t.target_url }}</code></td>
+                <td data-label="Scans">{{ t.scans_run }}</td>
+                <td data-label="Last scan">{{ t.last_scan.strftime('%Y-%m-%d %H:%M') if t.last_scan else 'N/A' }}</td>
+                <td data-label="Score"><strong>{{ t.latest_score }}</strong></td>
+                <td data-label="Severity"><span class="badge {{ t.severity|lower }}">{{ t.severity }}</span></td>
+                <td class="no-label"><a class="btn-sm" href="{{ url_for('dashboard.results', session_id=t.latest_session_id) }}">View latest</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>No targets yet. Run your first scan.</p>
+        <a class="btn btn-primary" href="{{ url_for('dashboard.new_scan') }}">New Scan</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

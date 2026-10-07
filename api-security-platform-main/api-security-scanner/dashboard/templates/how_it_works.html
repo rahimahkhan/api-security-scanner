@@ -1,0 +1,45 @@
+{% extends "base_public.html" %}
+
+{% block title %}How it works — Xploiter{% endblock %}
+
+{% block content %}
+<div class="text-center" style="max-width:640px; margin:0 auto;">
+    <h1 style="font-size:2.4rem; font-weight:800; margin-bottom:0.6rem;">How Xploiter works</h1>
+    <p class="text-muted" style="font-size:1.05rem;">From target to a short, ranked fix list in four steps.</p>
+</div>
+
+<div class="steps-grid">
+    <div class="card">
+        <div class="step-num">1</div>
+        <h3>Add your target</h3>
+        <p class="text-muted" style="font-size:0.9rem;">Enter your API base URL and confirm you are authorized to test it.</p>
+        <div class="rp-chart" style="margin-top:1rem;">[Add target screen]</div>
+    </div>
+    <div class="card">
+        <div class="step-num">2</div>
+        <h3>Add auth and API spec</h3>
+        <p class="text-muted" style="font-size:0.9rem;">Optionally add a token or API key, and upload an OpenAPI file to find more endpoints.</p>
+        <div class="rp-chart" style="margin-top:1rem;">[Auth and spec screen]</div>
+    </div>
+    <div class="card">
+        <div class="step-num">3</div>
+        <h3>The scan runs</h3>
+        <p class="text-muted" style="font-size:0.9rem;">Active probes and passive checks run with an endpoint budget and bounded concurrency.</p>
+        <div class="rp-chart" style="margin-top:1rem;">[Live progress screen]</div>
+    </div>
+    <div class="card">
+        <div class="step-num">4</div>
+        <h3>Fix the top risks</h3>
+        <p class="text-muted" style="font-size:0.9rem;">Findings are merged per endpoint and ranked. Export as PDF, JSON, HTML, or SARIF.</p>
+        <div class="rp-chart" style="margin-top:1rem;">[Top risks screen]</div>
+    </div>
+</div>
+
+<div class="safe-banner">
+    <div>
+        <h3 style="margin-bottom:0.3rem;">Safe by design</h3>
+        <p class="text-muted" style="font-size:0.92rem;">Only scan APIs you own or are authorized to test. Ownership verification is required for external targets.</p>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('dashboard.signup') }}">Get Started</a>
+</div>
+{% endblock %}

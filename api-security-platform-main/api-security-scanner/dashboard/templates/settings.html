@@ -1,0 +1,148 @@
+{% extends "base_app.html" %}
+
+{% block title %}Settings — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+</div>
+
+{% if notice %}
+<div class="note-banner">{{ notice }}</div>
+{% endif %}
+
+<div class="settings-grid">
+    <div class="card" id="account">
+        <h3>Account</h3>
+        <form method="POST" action="{{ url_for('dashboard.settings') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="form" value="account">
+            <div class="form-group">
+                <label for="set-name">Name</label>
+                <input type="text" id="set-name" name="name" value="{{ user.name or '' }}" placeholder="Your name">
+            </div>
+            <div class="form-group">
+                <label for="set-email">Email</label>
+                <input type="email" id="set-email" value="{{ user.email or '' }}" disabled>
+                <p class="form-help">Email is managed by your sign-in provider and can't be changed here.</p>
+            </div>
+            <button type="submit" class="btn btn-outline">Save name</button>
+            <a class="btn btn-outline" href="{{ url_for('dashboard.forgot_password') }}" style="margin-left:0.5rem">Change password</a>
+        </form>
+    </div>
+
+    <div class="card">
+        <h3>Appearance</h3>
+        <label class="radio-row"><input type="radio" name="appearance" value="dark"> Dark</label>
+        <label class="radio-row"><input type="radio" name="appearance" value="light"> Light</label>
+        <label class="radio-row"><input type="radio" name="appearance" value="system"> Match system</label>
+        <p class="form-help">Saved on this device. Severity colors stay the same in both themes.</p>
+    </div>
+
+    <div class="card">
+        <h3>Language and limits</h3>
+        <div class="form-group">
+            <label for="set-language">Language</label>
+            <select id="set-language">
+                <option value="en" selected>English</option>
+                <option value="ur">Urdu</option>
+                <option value="ar">Arabic</option>
+                <option value="es">Spanish</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label for="set-budget">Endpoint budget</label>
+            <input type="number" id="set-budget" min="1" max="500" placeholder="e.g. 40">
+            <p class="form-help">Stored on this device as a reminder. The server applies its own safety budget per scan.</p>
+        </div>
+        <button class="btn btn-outline" id="save-lang-limits" type="button">Save</button>
+    </div>
+
+    <div class="card">
+        <h3>CLI token</h3>
+        <p class="form-help" style="margin-bottom:0.7rem">Use this token with the Xploiter CLI to run scans from your terminal.</p>
+        <div class="token-row">
+            <input type="text" id="cli-token" value="••••••••••••••••" readonly>
+            <button class="btn btn-outline" id="regen-token" type="button" data-csrf="{{ csrf_token() }}">Regenerate token</button>
+        </div>
+        <p class="form-help mt-1" id="cli-token-note"></p>
+    </div>
+
+    <div class="card">
+        <h3>Notifications</h3>
+        <label class="checkbox-row"><input type="checkbox" id="notif-done" checked> <span>Email when a scan finishes</span></label>
+        <label class="checkbox-row"><input type="checkbox" id="notif-critical"> <span>Alert on new critical findings</span></label>
+        <label class="checkbox-row"><input type="checkbox" id="notif-weekly"> <span>Weekly summary</span></label>
+        <p class="form-help">Preferences are saved on this device.</p>
+    </div>
+
+    <div class="card" id="privacy">
+        <h3>Privacy</h3>
+        <div class="stack">
+            <a class="btn btn-outline" href="{{ url_for('dashboard.export_my_data') }}">Export my data</a>
+            <form method="POST" action="{{ url_for('dashboard.delete_my_scans') }}" onsubmit="return confirm('Delete ALL of your scan sessions? This cannot be undone.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline">Delete my scans</button>
+            </form>
+            <form method="POST" action="{{ url_for('dashboard.delete_my_account') }}" onsubmit="return confirm('Delete your account and all its data? This cannot be undone.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-danger-outline">Delete my account</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    function lsGet(k, d) { try { var v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } }
+    function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+    // Language + endpoint budget (device-local)
+    var lang = document.getElementById("set-language");
+    var budget = document.getElementById("set-budget");
+    if (lang) lang.value = lsGet("xploiter-language", "en");
+    if (budget) budget.value = lsGet("xploiter-endpoint-budget", "");
+    var saveBtn = document.getElementById("save-lang-limits");
+    if (saveBtn) saveBtn.addEventListener("click", function () {
+        lsSet("xploiter-language", lang.value);
+        lsSet("xploiter-endpoint-budget", budget.value);
+        saveBtn.textContent = "Saved ✓";
+        setTimeout(function () { saveBtn.textContent = "Save"; }, 1500);
+    });
+
+    // Notification checkboxes (device-local)
+    [["notif-done", "1"], ["notif-critical", "0"], ["notif-weekly", "0"]].forEach(function (pair) {
+        var el = document.getElementById(pair[0]);
+        if (!el) return;
+        el.checked = lsGet("xploiter-" + pair[0], pair[1]) === "1";
+        el.addEventListener("change", function () { lsSet("xploiter-" + pair[0], el.checked ? "1" : "0"); });
+    });
+
+    // CLI token: fetch the real token once, keep it masked otherwise.
+    var tokenInput = document.getElementById("cli-token");
+    var tokenNote = document.getElementById("cli-token-note");
+    var shownToken = null;
+    tokenInput.addEventListener("focus", function () { if (shownToken) tokenInput.value = shownToken; });
+    tokenInput.addEventListener("blur", function () { tokenInput.value = "••••••••••••••••"; });
+    document.getElementById("regen-token").addEventListener("click", function () {
+        var btn = this;
+        fetch("{{ url_for('dashboard.regenerate_cli_token_route') }}", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": btn.getAttribute("data-csrf") || ""
+            }
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.status === "ok") {
+                shownToken = data.token;
+                tokenInput.value = shownToken;
+                tokenInput.select();
+                tokenNote.textContent = "Copy it now — it won't be shown again.";
+            } else {
+                tokenNote.textContent = "Could not generate a token. Please try again.";
+            }
+        }).catch(function () { tokenNote.textContent = "Could not reach the server."; });
+    });
+})();
+</script>
+{% endblock %}

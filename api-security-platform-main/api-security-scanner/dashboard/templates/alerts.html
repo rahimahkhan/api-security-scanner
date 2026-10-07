@@ -1,0 +1,36 @@
+{% extends "base_app.html" %}
+
+{% block title %}Alerts — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+    <h1>Alerts</h1>
+    <button class="btn btn-outline" id="mark-all-read" type="button">Mark all as read</button>
+</div>
+
+<div class="alert-tabs" role="tablist">
+    <button class="filter-tab active" data-filter="all" role="tab" type="button">All</button>
+    <button class="filter-tab" data-filter="unread" role="tab" type="button">Unread</button>
+</div>
+
+{% if alerts %}
+<div class="card" style="padding-top:0.4rem; padding-bottom:0.4rem;">
+    {% for a in alerts %}
+    <div class="alert-item" data-alert-id="{{ a.id }}">
+        <span class="alert-dot"></span>
+        <span class="badge {{ a.kind }}">{{ a.label }}</span>
+        <span class="msg">{{ a.message }}</span>
+        <time>{{ a.when }}</time>
+        <a class="btn-sm" href="{{ a.url }}">{{ a.action }}</a>
+    </div>
+    {% endfor %}
+</div>
+<p class="text-muted mt-2" style="font-size:0.88rem">Empty state: "You are all caught up." Notification choices live in Settings, under Notifications.</p>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>You are all caught up. Notification choices live in Settings, under Notifications.</p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

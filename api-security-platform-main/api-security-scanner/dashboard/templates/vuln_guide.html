@@ -1,0 +1,60 @@
+{% extends "base_app.html" %}
+
+{% block title %}Vulnerability guide — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Vulnerability guide</h1>
+</div>
+
+<div class="guide-layout">
+    <div class="card">
+        <form method="GET" action="{{ url_for('dashboard.vuln_guide') }}">
+            <div class="form-group" style="margin-bottom:0">
+                <input type="text" name="q" placeholder="Search checks" value="{{ q or '' }}" style="width:100%; padding:0.62rem 0.85rem; border:1.5px solid var(--border); border-radius:10px; font-family:inherit; background:var(--input-bg); color:var(--text);">
+            </div>
+        </form>
+        <nav class="guide-list">
+            {% for c in checks %}
+            <a href="{{ url_for('dashboard.vuln_guide', check=c.slug) }}" class="{% if c.slug == active.slug %}active{% endif %}">{{ c.title }}</a>
+            {% endfor %}
+        </nav>
+    </div>
+
+    <div class="card">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
+            <h2 style="font-size:1.35rem; font-weight:800;">{{ active.title }}</h2>
+            <span class="owasp-tag">OWASP category: {{ active.owasp }}</span>
+        </div>
+
+        <div class="guide-section">
+            <h4>What it is</h4>
+            <p>{{ active.what }}</p>
+        </div>
+
+        <div class="guide-section">
+            <h4>Example</h4>
+            <div class="code-block">{{ active.example }}</div>
+        </div>
+
+        <div class="guide-section">
+            <h4>How Xploiter detects it</h4>
+            <p>{{ active.detection }}</p>
+        </div>
+
+        <div class="guide-section">
+            <h4>How to fix it</h4>
+            <div class="code-tabs" role="tablist">
+                <button class="code-tab active" data-lang="python" role="tab" type="button">Python</button>
+                <button class="code-tab" data-lang="nodejs" role="tab" type="button">Node.js</button>
+                <button class="code-tab" data-lang="java" role="tab" type="button">Java</button>
+            </div>
+            <div class="code-block" data-lang="python">{{ active.fixes.python }}</div>
+            <div class="code-block" data-lang="nodejs" style="display:none">{{ active.fixes.nodejs }}</div>
+            <div class="code-block" data-lang="java" style="display:none">{{ active.fixes.java }}</div>
+        </div>
+
+        <a class="btn btn-outline" href="{{ url_for('dashboard.ai_assistant', q='Explain ' + active.title + ' and how to fix it') }}">Ask AI about this</a>
+    </div>
+</div>
+{% endblock %}

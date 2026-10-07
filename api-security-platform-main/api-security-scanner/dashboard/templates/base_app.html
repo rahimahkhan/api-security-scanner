@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Xploiter — API Security Scanner{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+    // Apply the saved theme before first paint (default: light).
+    (function () {
+        try {
+            var stored = localStorage.getItem("xploiter-theme") || "light";
+            var theme = stored;
+            if (stored === "system") {
+                theme = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+            }
+            document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) { /* localStorage unavailable */ }
+    })();
+    </script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app-shell">
+    <header class="app-topbar">
+        <div class="topbar-left">
+            {% block topbar_left %}
+            <button class="hamburger" id="nav-hamburger" aria-label="Open navigation">&#9776;</button>
+            <a class="wordmark" href="{{ url_for('dashboard.dashboard') }}"><span class="x-logo">X</span>XPLOITER</a>
+            {% endblock %}
+        </div>
+        <div class="topbar-right">
+            {% block topbar_extra %}{% endblock %}
+            <button class="theme-toggle" id="theme-toggle" type="button" title="Toggle dark / light theme">Theme:<span class="theme-long"> Dark / Light</span></button>
+            <a class="alerts-link" href="{{ url_for('dashboard.alerts') }}">Alerts<span class="alert-badge" id="alert-badge" {% if not alert_count %}hidden{% endif %}>{{ alert_count or 0 }}</span></a>
+            <div class="user-menu">
+                <button class="user-menu-btn" id="user-menu-btn" type="button" aria-haspopup="true">{{ current_username or 'user' }} &#9662;</button>
+                <div class="user-dropdown" id="user-dropdown">
+                    <a href="{{ url_for('dashboard.settings') }}#account">My Account</a>
+                    <a href="{{ url_for('dashboard.settings') }}#privacy">Privacy</a>
+                    <a href="{{ url_for('dashboard.settings') }}">Settings</a>
+                    <hr>
+                    <a href="{{ url_for('dashboard.logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="app-body">
+        <aside class="sidebar" id="sidebar">
+            <a href="{{ url_for('dashboard.dashboard') }}" class="{% if request.endpoint == 'dashboard.dashboard' %}active{% endif %}">Dashboard</a>
+            <a href="{{ url_for('dashboard.new_scan') }}" class="{% if request.endpoint in ('dashboard.new_scan', 'dashboard.index') %}active{% endif %}">New Scan</a>
+            <a href="{{ url_for('dashboard.history') }}" class="{% if request.endpoint in ('dashboard.history', 'dashboard.compare', 'dashboard.results', 'dashboard.finding_detail') %}active{% endif %}">Scan History</a>
+            <a href="{{ url_for('dashboard.reports') }}" class="{% if request.endpoint == 'dashboard.reports' %}active{% endif %}">Reports</a>
+            <a href="{{ url_for('dashboard.targets') }}" class="{% if request.endpoint == 'dashboard.targets' %}active{% endif %}">Targets</a>
+            <a href="{{ url_for('dashboard.vuln_guide') }}" class="{% if request.endpoint == 'dashboard.vuln_guide' %}active{% endif %}">Vulnerability Guide</a>
+            <a href="{{ url_for('dashboard.ai_assistant') }}" class="{% if request.endpoint == 'dashboard.ai_assistant' %}active{% endif %}">AI Assistant</a>
+            <a href="{{ url_for('dashboard.settings') }}" class="{% if request.endpoint == 'dashboard.settings' %}active{% endif %}">Settings</a>
+        </aside>
+        <div class="nav-scrim" id="nav-scrim"></div>
+
+        <main class="main-content">
+            {% block content %}{% endblock %}
+            <footer class="app-footer">
+                <p>&copy; 2026 Xploiter &nbsp;·&nbsp; <span class="ver" title="Running commit/version">build {{ app_version }}</span></p>
+            </footer>
+        </main>
+    </div>
+
+    {% if show_ai_fab|default(true) %}
+    <a class="ai-fab" href="{{ url_for('dashboard.ai_assistant') }}" title="Ask the AI Assistant">AI</a>
+    {% endif %}
+
+    <nav class="bottom-tabs" aria-label="Primary">
+        <a href="{{ url_for('dashboard.dashboard') }}" class="{% if request.endpoint == 'dashboard.dashboard' %}active{% endif %}"><span class="tab-ico">⌂</span>Home</a>
+        <a href="{{ url_for('dashboard.new_scan') }}" class="{% if request.endpoint in ('dashboard.new_scan', 'dashboard.index') %}active{% endif %}"><span class="tab-ico">◎</span>Scan</a>
+        <a href="{{ url_for('dashboard.history') }}" class="{% if request.endpoint in ('dashboard.history', 'dashboard.compare', 'dashboard.results', 'dashboard.finding_detail') %}active{% endif %}"><span class="tab-ico">🕘</span>History</a>
+        <a href="{{ url_for('dashboard.ai_assistant') }}" class="{% if request.endpoint == 'dashboard.ai_assistant' %}active{% endif %}"><span class="tab-ico">✦</span>AI</a>
+        <button type="button" id="more-tab"><span class="tab-ico">⋯</span>More</button>
+    </nav>
+
+    <div class="sheet-scrim" id="sheet-scrim"></div>
+    <div class="more-sheet" id="more-sheet" aria-label="More navigation">
+        <div class="grabber"></div>
+        <a href="{{ url_for('dashboard.reports') }}">Reports</a>
+        <a href="{{ url_for('dashboard.targets') }}">Targets</a>
+        <a href="{{ url_for('dashboard.vuln_guide') }}">Vulnerability Guide</a>
+        <a href="{{ url_for('dashboard.alerts') }}">Alerts</a>
+        <a href="{{ url_for('dashboard.settings') }}">Settings</a>
+        <a href="{{ url_for('dashboard.logout') }}">Logout</a>
+    </div>
+</div>
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

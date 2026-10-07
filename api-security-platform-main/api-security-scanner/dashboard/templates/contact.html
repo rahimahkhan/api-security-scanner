@@ -1,0 +1,68 @@
+{% extends "base_public.html" %}
+
+{% block title %}Contact — Xploiter{% endblock %}
+
+{% block content %}
+<h1 style="font-size:2.4rem; font-weight:800; margin-bottom:0.6rem;">Contact us</h1>
+<p class="text-muted mb-2" style="font-size:1.02rem;">Questions, feedback, or a security report? Send us a message.</p>
+
+<div class="contact-layout">
+    <div class="card">
+        <form id="contact-form">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div class="form-group">
+                    <label for="c-name">Name</label>
+                    <input type="text" id="c-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="c-email">Email</label>
+                    <input type="email" id="c-email" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="c-topic">Topic</label>
+                <select id="c-topic">
+                    <option>General question</option>
+                    <option>Feedback</option>
+                    <option>Security report</option>
+                    <option>Billing</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="c-message">Message</label>
+                <textarea id="c-message" rows="6" required></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Send message</button>
+            <p class="form-help mt-1">This opens your email app with the message pre-filled — nothing is sent automatically.</p>
+        </form>
+    </div>
+    <div class="card">
+        <h3>Other ways to reach us</h3>
+        <div class="stack">
+            <div class="rp-chart" style="width:100%;">[Support email address]</div>
+            <div class="rp-chart" style="width:100%;">[Expected response time]</div>
+            <div class="rp-chart" style="width:100%;">[Project repository link]</div>
+        </div>
+        <p class="text-muted mt-2" style="font-size:0.9rem;">Need help using the platform? The AI Assistant answers in your language, any time.</p>
+    </div>
+</div>
+
+<script>
+// The server cannot send email (no SMTP), so the contact form hands the
+// composed message to the visitor's own email app via mailto:.
+(function () {
+    var form = document.getElementById("contact-form");
+    if (!form) return;
+    form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var subject = encodeURIComponent("[Xploiter] " + document.getElementById("c-topic").value);
+        var body = encodeURIComponent(
+            "Name: " + document.getElementById("c-name").value + "\n" +
+            "Email: " + document.getElementById("c-email").value + "\n\n" +
+            document.getElementById("c-message").value
+        );
+        window.location.href = "mailto:support@example.com?subject=" + subject + "&body=" + body;
+    });
+})();
+</script>
+{% endblock %}

@@ -1,39 +1,49 @@
-{% extends "base.html" %}
+{% extends "base_app.html" %}
 
-{% block title %}Finding #{{ finding.id if finding else 'N/A' }} - API Security Platform{% endblock %}
+{% block title %}Finding #{{ finding.id if finding else 'N/A' }} — Xploiter{% endblock %}
 
 {% block content %}
 <div class="page-header">
-    <h1>Finding Detail #{{ finding.id if finding else 'N/A' }}</h1>
-    <p>Target Endpoint: <code>{{ finding.endpoint.url if finding and finding.endpoint else 'N/A' }}</code></p>
+    <h1>Finding #{{ finding.id if finding else 'N/A' }}</h1>
+    <p>Target endpoint: <code>{{ finding.endpoint.url if finding and finding.endpoint else 'N/A' }}</code></p>
 </div>
 
 {% if finding %}
-<div class="card detail-card">
-    <h2>Vulnerability Summary</h2>
-    <div class="detail-grid">
-        <div><strong>Attack Category:</strong> {{ finding.attack_type }}</div>
-        <div><strong>Severity:</strong> <span class="badge {{ finding.severity|lower }}">{{ finding.severity }}</span></div>
-        <div><strong>Risk Score:</strong> {{ finding.risk_score }} / 100</div>
-        <div><strong>Triggered Rule/Pattern:</strong> <code>{{ finding.signature_triggered or 'N/A' }}</code></div>
-    </div>
+<div class="card mb-2">
+    <h3>Vulnerability summary</h3>
+    <dl class="kv">
+        <dt>Attack category</dt><dd>{{ finding.attack_type }}</dd>
+        <dt>Severity</dt><dd><span class="badge {{ finding.severity|lower }}">{{ finding.severity }}</span></dd>
+        <dt>Status</dt><dd>{{ finding.finding_status }}</dd>
+        <dt>Risk score</dt><dd>{{ finding.risk_score }} / 100</dd>
+        <dt>Triggered rule</dt><dd><code>{{ finding.signature_triggered or 'N/A' }}</code></dd>
+    </dl>
+</div>
 
-    <!-- Detection Layer Point Contributions -->
-    <li><strong>Layer 1 (Signature Rules):</strong> {{ [(((finding.risk_score or 0.0) - (finding.ml_score or 0.0) - ((finding.lstm_score or 0.0) + (finding.autoencoder_score or 0.0))) | round(2)), 0.0] | max }} pts</li>
-    <li><strong>Layer 2 (ML Isolation Forest):</strong> {{ (finding.ml_score or 0.0) | round(2) }} pts</li>
-    <li><strong>Layer 3 (LSTM Sequence + Autoencoder):</strong> {{ ((finding.lstm_score or 0.0) + (finding.autoencoder_score or 0.0)) | round(2) }} pts</li>
-    
-    <h3>Remediation Recommendation</h3>
-    <p class="recommendation-box">{{ finding.recommendation }}</p>
+<div class="card mb-2">
+    <h3>Detection layers</h3>
+    <ul style="margin-left:1.2rem; font-size:0.92rem; color:var(--text-2);">
+        <li><strong>Signature rules:</strong> {{ [(((finding.risk_score or 0.0) - (finding.ml_score or 0.0) - ((finding.lstm_score or 0.0) + (finding.autoencoder_score or 0.0))) | round(2)), 0.0] | max }} pts</li>
+        <li><strong>ML anomaly model:</strong> {{ (finding.ml_score or 0.0) | round(2) }} pts</li>
+        <li><strong>Deep learning (LSTM + autoencoder):</strong> {{ ((finding.lstm_score or 0.0) + (finding.autoencoder_score or 0.0)) | round(2) }} pts</li>
+    </ul>
+</div>
 
-    <h3>Request & Response Telemetry</h3>
-    <div class="code-block">
-        <p><strong>Response Status:</strong> {{ finding.response_status }}</p>
-        <p><strong>Response Size:</strong> {{ finding.response_size }} bytes</p>
-        <p><strong>Response Time:</strong> {{ finding.response_time }}s</p>
-    </div>
+<div class="card mb-2">
+    <h3>How to fix it</h3>
+    <p style="font-size:0.92rem; color:var(--text-2);">{{ finding.recommendation }}</p>
+    <a class="btn btn-outline btn-sm mt-1" href="{{ url_for('dashboard.ai_assistant', q='Explain ' + finding.attack_type + ' and how to fix it') }}">Ask AI about this</a>
+</div>
+
+<div class="card">
+    <h3>Request &amp; response</h3>
+    <dl class="kv mb-1">
+        <dt>Response status</dt><dd>{{ finding.response_status }}</dd>
+        <dt>Response size</dt><dd>{{ finding.response_size }} bytes</dd>
+        <dt>Response time</dt><dd>{{ finding.response_time }}s</dd>
+    </dl>
 </div>
 {% else %}
-<p>Finding detail record not found.</p>
+<div class="card"><p>Finding detail record not found.</p></div>
 {% endif %}
 {% endblock %}

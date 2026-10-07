@@ -1,0 +1,39 @@
+{% extends "base_app.html" %}
+
+{% block title %}Compare scans — Xploiter{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Compare scans</h1>
+    <p>Side-by-side results for the selected scans.</p>
+</div>
+
+{% if compared %}
+<div class="compare-grid">
+    {% for c in compared %}
+    <div class="card">
+        <h3>Session #{{ c.session.id }}</h3>
+        <dl class="kv">
+            <dt>Target</dt><dd><code>{{ c.session.target_url }}</code></dd>
+            <dt>Date</dt><dd>{{ c.session.scan_start_time.strftime('%Y-%m-%d %H:%M') if c.session.scan_start_time else 'N/A' }}</dd>
+            <dt>Risk score</dt><dd><strong>{{ c.session.overall_risk_score }}</strong> / 100</dd>
+            <dt>Severity</dt><dd><span class="badge {{ c.session.overall_severity|lower }}">{{ c.session.overall_severity }}</span></dd>
+            <dt>Endpoints</dt><dd>{{ c.session.total_endpoints_found }}</dd>
+            <dt>Vulnerabilities</dt><dd>{{ c.session.total_vulnerabilities_found }}</dd>
+            <dt>Critical</dt><dd>{{ c.critical }}</dd>
+            <dt>High</dt><dd>{{ c.high }}</dd>
+            <dt>Status</dt><dd>{{ c.session.status or "complete" }}</dd>
+        </dl>
+        <a class="btn btn-outline btn-block mt-2" href="{{ url_for('dashboard.results', session_id=c.session.id) }}">View report</a>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <p>Select at least two scans from the history to compare them.</p>
+        <a class="btn btn-primary" href="{{ url_for('dashboard.history') }}">Back to history</a>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
