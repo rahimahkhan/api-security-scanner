@@ -25,7 +25,8 @@ class PDFReportGenerator:
         self.output_dir = Path(output_dir) if output_dir else Path(REPORTS_DIR)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def generate(self, session_data: Dict[str, Any], findings: List[Dict[str, Any]]) -> str:
+    def generate(self, session_data: Dict[str, Any], findings: List[Dict[str, Any]],
+                 top_risks: List[Dict[str, Any]] = None) -> str:
         session_id = session_data.get("id", 1)
         file_path = self.output_dir / f"scan_report_{session_id}.pdf"
 
@@ -103,8 +104,30 @@ class PDFReportGenerator:
         story.append(Paragraph(exec_summary_text, body_style))
         story.append(Spacer(1, 15))
 
-        # Findings Detail Table
-        story.append(Paragraph("Vulnerability & Anomaly Findings", h2_style))
+        # Top Risks (page 1) — grouped, deduplicated, highest score first
+        if top_risks:
+            from xml.sax.saxutils import escape as _xml_escape
+            story.append(Paragraph("Top Risks", h2_style))
+            for i, g in enumerate(top_risks, 1):
+                vuln_names = ", ".join(
+                    f"{v['attack_type']} ({v['severity']}"
+                    + (f", {v['evidence_count']} samples" if v.get("evidence_count", 1) > 1 else "")
+                    + ")"
+                    for v in g.get("vulns", []))
+                fix = g.get("fix_first") or ""
+                story.append(Paragraph(
+                    f"<b>{i}. {_xml_escape(str(g.get('method', '')))} "
+                    f"{_xml_escape(str(g.get('path', '')))}</b> "
+                    f"— {_xml_escape(str(g.get('severity', '')))} / "
+                    f"{_xml_escape(str(g.get('finding_status', '')))} "
+                    f"(score {round(g.get('score', 0), 1)})<br/>"
+                    f"Vulnerabilities: {_xml_escape(vuln_names)}<br/>"
+                    f"<i>Fix first: {_xml_escape(fix)}</i>",
+                    body_style))
+                story.append(Spacer(1, 8))
+
+        # Findings Detail Table (appendix)
+        story.append(Paragraph("Appendix: Full Findings Detail", h2_style))
         
         table_headers = ["Endpoint", "Attack Type", "Severity", "Score", "Recommendation"]
         table_rows = [[Paragraph(f"<b>{h}</b>", body_style) for h in table_headers]]

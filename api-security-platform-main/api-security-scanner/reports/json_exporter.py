@@ -19,7 +19,8 @@ class JSONReportExporter:
         self.output_dir = Path(output_dir) if output_dir else Path(REPORTS_DIR)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def export(self, session_data: Dict[str, Any], endpoints: List[Dict[str, Any]], findings: List[Dict[str, Any]]) -> str:
+    def export(self, session_data: Dict[str, Any], endpoints: List[Dict[str, Any]],
+               findings: List[Dict[str, Any]], top_risks: List[Dict[str, Any]] = None) -> str:
         session_id = session_data.get("id", 1)
         file_path = self.output_dir / f"scan_report_{session_id}.json"
 
@@ -36,6 +37,7 @@ class JSONReportExporter:
                 "total_vulnerabilities_found": session_data.get("total_vulnerabilities_found", 0)
             },
             "discovered_endpoints": endpoints,
+            "top_risks": top_risks or [],
             "findings_detail": findings
         }
 

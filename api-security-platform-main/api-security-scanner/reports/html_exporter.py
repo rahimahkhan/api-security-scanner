@@ -18,9 +18,33 @@ class HTMLReportExporter:
         self.output_dir = Path(output_dir) if output_dir else Path(REPORTS_DIR)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def export(self, session_data: Dict[str, Any], findings: List[Dict[str, Any]]) -> str:
+    def export(self, session_data: Dict[str, Any], findings: List[Dict[str, Any]],
+               top_risks: List[Dict[str, Any]] = None) -> str:
         session_id = session_data.get("id", 1)
         file_path = self.output_dir / f"scan_report_{session_id}.html"
+
+        import html as _html
+
+        top_risks_html = ""
+        for i, g in enumerate(top_risks or [], 1):
+            vulns = "".join(
+                f"<li><strong>{_html.escape(str(v.get('attack_type', '')))}</strong> "
+                f"<span class=\"badge {str(v.get('severity', 'low')).lower()}\">{_html.escape(str(v.get('severity', '')))}</span>"
+                + (f" <em>{v.get('evidence_count', 1)} evidence samples</em>" if v.get("evidence_count", 1) > 1 else "")
+                + "</li>"
+                for v in g.get("vulns", []))
+            top_risks_html += f"""
+            <div class="card" style="margin-bottom:1rem;">
+                <div><strong>{i}. {_html.escape(str(g.get('method', '')))} {_html.escape(str(g.get('path', '')))}</strong>
+                <span class="badge {str(g.get('severity', 'low')).lower()}">{_html.escape(str(g.get('severity', '')))}</span>
+                <span style="color:#94a3b8;font-size:0.85rem;">{_html.escape(str(g.get('finding_status', '')))} · score {round(g.get('score', 0), 1)}</span></div>
+                <ul>{vulns}</ul>
+                <div style="font-size:0.9rem;color:#cbd5e1;"><strong>Fix first:</strong> {_html.escape(str(g.get('fix_first', '')))}</div>
+            </div>
+            """
+        top_risks_section = ""
+        if top_risks_html:
+            top_risks_section = f"<h2>Top Risks</h2>{top_risks_html}"
 
         findings_rows_html = ""
         for f in findings:
@@ -88,7 +112,9 @@ class HTMLReportExporter:
             </div>
         </div>
 
-        <h2>Inspection Findings</h2>
+        {top_risks_section}
+
+        <h2>Appendix: All Findings</h2>
         <table>
             <thead>
                 <tr>
