@@ -7,18 +7,33 @@ from sqlalchemy.orm import sessionmaker, joinedload
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import DATABASE_URL, IS_POSTGRES
+from config.settings import DATABASE_URL, IS_MYSQL, IS_REMOTE_DB
 from config.logging_config import logger
 from database.models import Base, ScanSession, Endpoint, Finding, Report, User
 
-if not IS_POSTGRES:
+if not IS_REMOTE_DB:
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if os.path.dirname(db_path):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
+_connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    _connect_args = {"check_same_thread": False}
+elif IS_MYSQL:
+    # Cloud MySQL (e.g. TiDB Cloud Serverless) requires TLS. Local MySQL
+    # usually has none, so only enable it for non-local hosts.
+    _host = DATABASE_URL.split("@")[-1].split("/")[0].split(":")[0]
+    if _host not in ("localhost", "127.0.0.1"):
+        import certifi
+        _connect_args = {"ssl": {"ca": certifi.where()}}
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    connect_args=_connect_args,
+    # Free-tier databases sleep when idle; verify pooled connections so the
+    # app doesn't serve "server closed the connection" errors after waking.
+    pool_pre_ping=IS_REMOTE_DB,
+    pool_recycle=1800 if IS_REMOTE_DB else -1,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -26,10 +41,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 def init_db():
     """Creates all database tables on initial startup and applies migrations."""
     Base.metadata.create_all(bind=engine)
-    if IS_POSTGRES:
-        # Fresh Postgres gets the full schema from create_all; the PRAGMA-based
-        # migrations below are SQLite-only.
-        logger.info("Database tables initialized successfully (Postgres).")
+    if IS_REMOTE_DB:
+        # A fresh remote DB gets the full schema from create_all; the
+        # PRAGMA-based migrations below are SQLite-only.
+        logger.info("Database tables initialized successfully (remote DB).")
         return
     # Ensure finding_status column exists for existing SQLite database
     with engine.connect() as conn:

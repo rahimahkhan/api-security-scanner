@@ -34,7 +34,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'database.db'}"
 # Render's Postgres URLs start with postgres:// - SQLAlchemy needs postgresql://.
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = "postgresql://" + DATABASE_URL[len("postgres://"):]
+# Plain mysql:// URLs need an explicit driver for SQLAlchemy.
+if DATABASE_URL.startswith("mysql://"):
+    DATABASE_URL = "mysql+pymysql://" + DATABASE_URL[len("mysql://"):]
 IS_POSTGRES = DATABASE_URL.startswith("postgresql://")
+IS_MYSQL = DATABASE_URL.startswith("mysql+pymysql://")
+IS_REMOTE_DB = IS_POSTGRES or IS_MYSQL
 
 # Dashboard Auth & Security
 # Auth is ON by default: every dashboard page/API needs a user account, and
