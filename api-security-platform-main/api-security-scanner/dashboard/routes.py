@@ -1062,7 +1062,8 @@ def settings():
         else:
             notice = "Could not save — please try again."
     return render_template("settings.html", user=_current_user(), notice=notice,
-                           ai_live=(assistant_engine.engine_mode() == "live"))
+                           ai_live=(assistant_engine.engine_mode() == "live"),
+                           ai_error=assistant_engine.last_llm_error())
 
 
 @dashboard_bp.route("/settings/export")

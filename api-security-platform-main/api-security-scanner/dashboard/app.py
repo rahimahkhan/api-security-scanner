@@ -39,9 +39,10 @@ def create_app():
     # Styled error pages (JSON for /api/*, app design for browsers).
     @app.errorhandler(404)
     def not_found(error):
-        from flask import request, jsonify, render_template
+        from flask import request, jsonify, render_template, session
         if request.path.startswith("/api/"):
             return jsonify({"status": "error", "message": "Not found"}), 404
-        return render_template("404.html"), 404
+        base = "base_app.html" if session.get("user_id") else "base_public.html"
+        return render_template("404.html", base_template=base), 404
 
     return app

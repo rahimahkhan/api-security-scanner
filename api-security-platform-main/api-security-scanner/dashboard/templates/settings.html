@@ -63,6 +63,7 @@
         <p class="form-help" style="margin-bottom:0.7rem">
             Status: <strong>{{ "Live AI connected" if ai_live else "Offline mode (built-in guide)" }}</strong>.
             {% if not ai_live %}For full AI answers, add a <code>GOOGLE_AI_API_KEY</code> (free at aistudio.google.com) or <code>OPENAI_API_KEY</code> environment variable on Render and redeploy.{% endif %}
+            {% if ai_live and ai_error %}<br><span style="color:var(--danger);">Last AI request failed: {{ ai_error }}. Check the key's restrictions in Google AI Studio (no application restrictions) and that the Generative Language API is enabled, then ask again.</span>{% endif %}
         </p>
     </div>
 

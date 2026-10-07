@@ -261,6 +261,30 @@ def engine_mode() -> str:
     return "offline"
 
 
+_last_llm_error = None  # sanitized, never contains a key
+_last_engine = "knowledge"
+
+
+def _sanitize(msg: str) -> str:
+    """Strip any API key material before the message is logged or shown."""
+    for secret in (GOOGLE_AI_API_KEY, OPENAI_API_KEY):
+        if secret and len(secret) > 4:
+            msg = msg.replace(secret, "***")
+            # also mask it inside URLs (?key=... / Bearer ...)
+            msg = msg.replace(secret[:8], "***")
+    return msg
+
+
+def last_llm_error():
+    """Sanitized reason the last live-AI attempt failed (None if it worked)."""
+    return _last_llm_error
+
+
+def last_engine():
+    """Which engine produced the last answer: gemini | openai | knowledge."""
+    return _last_engine
+
+
 def _openai_answer(question: str, language: str, scan_context: Optional[str]):
     """Ask the OpenAI chat API. Raises on any failure (caller falls back)."""
     lang_name = {"en": "English", "ur": "Urdu", "ar": "Arabic", "es": "Spanish"}.get(language, "the user's language")
@@ -297,14 +321,22 @@ def answer(question: str, language: str = "auto", scan_context: Optional[str] = 
     lang = language if language in ("en", "ur", "ar", "es") else detect_language(question)
     topic = _match_topic(question)
     actions = topic.get("actions", []) if topic else []
+    global _last_llm_error, _last_engine
     if GOOGLE_AI_API_KEY:
         try:
-            return _gemini_answer(question, lang, scan_context), actions
-        except Exception:
-            pass  # fall through to the next engine
+            out = _gemini_answer(question, lang, scan_context), actions
+            _last_llm_error = None
+            _last_engine = "gemini"
+            return out
+        except Exception as exc:
+            _last_llm_error = "Gemini: " + _sanitize(str(exc))[:300]
     if OPENAI_API_KEY:
         try:
-            return _openai_answer(question, lang, scan_context), actions
-        except Exception:
-            pass  # fall through to the offline knowledge base
+            out = _openai_answer(question, lang, scan_context), actions
+            _last_llm_error = None
+            _last_engine = "openai"
+            return out
+        except Exception as exc:
+            _last_llm_error = "OpenAI: " + _sanitize(str(exc))[:300]
+    _last_engine = "knowledge"
     return knowledge_answer(question, language)
