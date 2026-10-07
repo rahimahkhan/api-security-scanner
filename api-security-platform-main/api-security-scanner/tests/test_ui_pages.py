@@ -84,22 +84,42 @@ def test_public_pages_need_no_login():
 
 
 # ------------------------------------------------- app shell auth gating ---
-APP_PAGES = ["/dashboard", "/new-scan", "/history", "/targets",
-             "/reports", "/alerts", "/settings", "/vuln-guide", "/ai-assistant"]
-# NOTE: "/" is intentionally public — visitors see the landing page,
-# signed-in users are redirected to /dashboard.
+# Login is optional: visitors can browse every page without an account.
+# Only personal/destructive areas still require login.
+PUBLIC_PAGES = ["/dashboard", "/new-scan", "/history", "/targets",
+                "/reports", "/alerts", "/vuln-guide", "/ai-assistant", "/"]
+LOGIN_REQUIRED_PAGES = ["/settings"]
 
 
-def test_app_pages_redirect_to_login_when_logged_out():
+def test_app_pages_are_public_when_logged_out():
     client = _app(auth=True).test_client()
-    for path in APP_PAGES:
+    for path in PUBLIC_PAGES:
+        res = client.get(path)
+        assert res.status_code == 200, path
+    # ...but the front door still renders the landing page.
+    res = client.get("/")
+    assert b"Find API vulnerabilities before attackers do" in res.data
+    # Guest banner shows on the dashboard for logged-out visitors.
+    res = client.get("/dashboard")
+    assert b"browsing as a guest" in res.data
+
+
+def test_protected_pages_redirect_to_login_when_logged_out():
+    client = _app(auth=True).test_client()
+    for path in LOGIN_REQUIRED_PAGES:
         res = client.get(path)
         assert res.status_code == 302, path
         assert "/login" in res.headers["Location"], path
-    # The front door stays public for visitors...
-    res = client.get("/")
+
+
+def test_logged_out_visitors_see_no_scans():
+    # Per-user isolation for anonymous visitors: never leak other users' data.
+    client = _app(auth=True).test_client()
+    user = _make_user()
+    save_scan_session(target_url="http://private.test", user_id=user.id)
+    res = client.get("/history")
     assert res.status_code == 200
-    assert b"Find API vulnerabilities before attackers do" in res.data
+    assert b"private.test" not in res.data
 
 
 def test_app_pages_render_for_users():
@@ -315,8 +335,10 @@ def test_settings_privacy_actions():
         res = client.post("/settings/delete-account")
         assert res.status_code == 302
         assert "/landing" in res.headers["Location"]
-        # Logged out now: app pages redirect to login.
+        # Logged out now: dashboard is public (guest view), settings still needs login.
         res = client.get("/dashboard")
+        assert res.status_code == 200
+        res = client.get("/settings")
         assert res.status_code == 302
     finally:
         _cleanup_user(user)

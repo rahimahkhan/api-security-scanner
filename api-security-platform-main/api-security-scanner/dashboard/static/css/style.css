@@ -714,3 +714,32 @@ pre.evidence { background: var(--navy); color: #dbe4f5; border-radius: 10px; pad
     .chat-msg { max-width: 94%; }
     .page-header h1 { font-size: 1.35rem; }
 }
+
+/* ---------- Topbar login link (logged-out visitors) ---------- */
+.app-topbar .login-link {
+    color: #fff; font-weight: 600; font-size: 0.85rem;
+    padding: 0.45rem 1rem; border-radius: 8px; white-space: nowrap;
+    background: var(--blue);
+}
+.app-topbar .login-link:hover { background: var(--blue-dark); text-decoration: none; }
+
+/* ---------- Desktop scale-up: roomier text and wider content ---------- */
+@media (min-width: 1400px) {
+    html { font-size: 17.5px; }
+    .main-content { max-width: 1360px; }
+    .public-main { max-width: 1280px; }
+}
+@media (min-width: 1800px) {
+    html { font-size: 18.5px; }
+    .main-content { max-width: 1520px; }
+    .public-main { max-width: 1400px; }
+}
+
+/* ---------- Guest notice bar ---------- */
+.notice-bar {
+    background: var(--blue-soft); border: 1px solid var(--border);
+    border-left: 4px solid var(--blue); border-radius: 10px;
+    padding: 0.7rem 1rem; margin-bottom: 1.25rem;
+    font-size: 0.92rem; color: var(--text-2);
+}
+.notice-bar a { font-weight: 600; }

@@ -6,6 +6,9 @@
 <div class="page-header">
     <h1>New scan</h1>
 </div>
+{% if not is_authenticated %}
+<div class="notice-bar">No account needed to try a scan — <a href="{{ url_for('dashboard.signup') }}">sign up</a> to keep it in your history.</div>
+{% endif %}
 
 <div class="scan-layout">
     <div class="card">

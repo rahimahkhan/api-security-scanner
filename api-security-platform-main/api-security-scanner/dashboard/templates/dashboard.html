@@ -6,6 +6,9 @@
 <div class="page-header">
     <h1>Dashboard</h1>
 </div>
+{% if not is_authenticated %}
+<div class="notice-bar">You're browsing as a guest — <a href="{{ url_for('dashboard.login') }}">log in</a> or <a href="{{ url_for('dashboard.signup') }}">create an account</a> to save scans to your history.</div>
+{% endif %}
 
 <div class="stat-grid">
     <div class="stat-card">

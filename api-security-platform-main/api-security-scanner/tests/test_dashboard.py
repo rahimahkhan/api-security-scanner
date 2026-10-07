@@ -156,8 +156,11 @@ def test_dashboard_auth_workflow():
     assert res_session.status_code == 200
     assert res_session.get_json()["status"] == "ok"
     res_auth = client.get("/")
-    assert res_auth.status_code == 302
-    assert "/dashboard" in res_auth.headers["Location"]
+    assert res_auth.status_code == 200
+    assert b"Find API vulnerabilities before attackers do" in res_auth.data
+    # Logged-in users reach their dashboard directly.
+    res_dash = client.get("/dashboard")
+    assert res_dash.status_code == 200
 
     # Logout clears authentication
     res_logout = client.get("/logout")

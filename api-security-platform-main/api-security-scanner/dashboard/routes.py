@@ -177,6 +177,19 @@ def get_current_user_id():
     return session.get("user_id")
 
 
+def _visible_sessions():
+    """Sessions the current visitor is allowed to see.
+
+    Logged in -> own sessions. Logged out (auth on) -> none: never leak
+    other users' scans to anonymous visitors. Auth disabled -> everything
+    (legacy single-user mode).
+    """
+    user_id = get_current_user_id()
+    if user_id is None and is_auth_enabled():
+        return []
+    return get_all_sessions(user_id)
+
+
 def is_csrf_enabled() -> bool:
     if current_app.config.get("TESTING") and "CSRF_ENABLED" not in current_app.config:
         return False
@@ -227,6 +240,8 @@ def _build_alerts(user_id):
     Pure presentation over existing session rows — no new state.
     """
     alerts = []
+    if user_id is None and is_auth_enabled():
+        return []
     sessions = get_all_sessions(user_id)[:10]
     for s in sessions:
         when = s.scan_start_time.strftime("%Y-%m-%d %H:%M") if s.scan_start_time else ""
@@ -425,15 +440,12 @@ def logout():
 
 @dashboard_bp.route("/")
 def index():
-    # Public front door: visitors see the landing page; signed-in users
-    # go straight to their dashboard.
-    if session.get("user_id"):
-        return redirect(url_for("dashboard.dashboard"))
+    # Public front door: the landing page for visitors and signed-in users
+    # alike (the sidebar "Home" link points here).
     return render_template("landing.html", active_page="landing")
 
 
 @dashboard_bp.route("/new-scan")
-@login_required
 def new_scan():
     return _render_new_scan()
 
@@ -469,7 +481,6 @@ def _auth_headers_from_form():
 
 
 @dashboard_bp.route("/scan", methods=["POST"])
-@login_required
 def start_scan():
     target_url = request.form.get("target_url")
     if not target_url:
@@ -495,7 +506,6 @@ def start_scan():
 
 
 @dashboard_bp.route("/scan/<session_id>/cancel", methods=["POST"])
-@login_required
 def cancel_scan(session_id):
     """Cancel a running scan: mark it failed so polling stops.
 
@@ -509,7 +519,6 @@ def cancel_scan(session_id):
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 @dashboard_bp.route("/results/<session_id>")
-@login_required
 def results(session_id):
     user_id = get_current_user_id()
     session_data = get_session_for_user(session_id, user_id)
@@ -567,10 +576,9 @@ def results(session_id):
     )
 
 @dashboard_bp.route("/history")
-@login_required
 def history():
     user_id = get_current_user_id()
-    sessions = get_all_sessions(user_id)
+    sessions = _visible_sessions()
     q = (request.args.get("q") or "").strip().lower()
     severity = (request.args.get("severity") or "").strip()
     date = (request.args.get("date") or "").strip()
@@ -596,7 +604,6 @@ def history():
                            severity=severity, date=date)
 
 @dashboard_bp.route("/finding/<finding_id>")
-@login_required
 def finding_detail(finding_id):
     finding = get_finding_by_id(finding_id)
     user_id = get_current_user_id()
@@ -614,7 +621,6 @@ def finding_detail(finding_id):
     return render_template("report.html", finding=finding)
 
 @dashboard_bp.route("/export/<session_id>")
-@login_required
 def export_report(session_id):
     fmt = request.args.get("format", "pdf").lower()
     user_id = get_current_user_id()
@@ -723,10 +729,9 @@ def _current_user():
 
 
 @dashboard_bp.route("/dashboard")
-@login_required
 def dashboard():
     user_id = get_current_user_id()
-    sessions = get_all_sessions(user_id)
+    sessions = _visible_sessions()
 
     scans_run = len(sessions)
     scored = [s for s in sessions if s.overall_risk_score is not None]
@@ -770,7 +775,6 @@ def dashboard():
 
 
 @dashboard_bp.route("/compare")
-@login_required
 def compare():
     user_id = get_current_user_id()
     ids = []
@@ -796,12 +800,11 @@ def compare():
 
 
 @dashboard_bp.route("/targets")
-@login_required
 def targets():
     user_id = get_current_user_id()
     q = (request.args.get("q") or "").strip().lower()
     grouped = {}
-    for s in get_all_sessions(user_id):
+    for s in _visible_sessions():
         key = (s.target_url or "").strip()
         if not key:
             continue
@@ -821,10 +824,9 @@ def targets():
 
 
 @dashboard_bp.route("/reports")
-@login_required
 def reports():
     user_id = get_current_user_id()
-    sessions = [s for s in get_all_sessions(user_id)
+    sessions = [s for s in _visible_sessions()
                 if (s.status or "complete") == "complete"]
     q = (request.args.get("q") or "").strip().lower()
     date = (request.args.get("date") or "").strip()
@@ -840,7 +842,6 @@ def reports():
 
 
 @dashboard_bp.route("/alerts")
-@login_required
 def alerts():
     return render_template("alerts.html", alerts=_build_alerts(get_current_user_id()))
 
@@ -906,7 +907,6 @@ def delete_my_account():
 
 
 @dashboard_bp.route("/vuln-guide")
-@login_required
 def vuln_guide():
     q = (request.args.get("q") or "").strip().lower()
     checks = [c for c in GUIDE_CHECKS
@@ -918,7 +918,6 @@ def vuln_guide():
 
 
 @dashboard_bp.route("/ai-assistant")
-@login_required
 def ai_assistant():
     return render_template("ai_assistant.html",
                            prefill=(request.args.get("q") or "").strip() or None,
@@ -926,9 +925,10 @@ def ai_assistant():
                            show_ai_fab=False)
 
 
-def _assistant_scan_context(user_id):
+def _assistant_scan_context():
     """Short, honest summary of the latest completed scan (or None)."""
-    sessions = [s for s in get_all_sessions(user_id)
+    visible = _visible_sessions()
+    sessions = [s for s in visible
                 if (s.status or "complete") == "complete"]
     if not sessions:
         return None
@@ -945,7 +945,6 @@ def _assistant_scan_context(user_id):
 
 
 @dashboard_bp.route("/api/assistant/ask", methods=["POST"])
-@login_required
 def assistant_ask():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
@@ -956,7 +955,7 @@ def assistant_ask():
         language = "auto"
     scan_context = None
     if (data.get("context") or "latest") == "latest":
-        scan_context = _assistant_scan_context(get_current_user_id())
+        scan_context = _assistant_scan_context()
     answer_html, actions = assistant_engine.answer(question, language, scan_context)
     return jsonify({"status": "ok", "answer_html": answer_html, "actions": actions})
 
@@ -1000,9 +999,8 @@ def contact():
 # ---------------------------------------------------------
 
 @dashboard_bp.route("/api/sessions", methods=["GET"])
-@login_required
 def api_list_sessions():
-    sessions = get_all_sessions(get_current_user_id())
+    sessions = _visible_sessions()
     sessions_data = []
     for s in sessions:
         sessions_data.append({
@@ -1019,7 +1017,6 @@ def api_list_sessions():
 
 
 @dashboard_bp.route("/api/sessions/<session_id>", methods=["GET"])
-@login_required
 def api_get_session(session_id):
     user_id = get_current_user_id()
     session_obj = get_session_for_user(session_id, user_id)
@@ -1085,7 +1082,6 @@ def api_delete_session(session_id):
 
 
 @dashboard_bp.route("/api/scan", methods=["POST"])
-@login_required
 def api_trigger_scan():
     req_json = request.get_json(silent=True) or {}
     target_url = req_json.get("target_url") or request.form.get("target_url")
