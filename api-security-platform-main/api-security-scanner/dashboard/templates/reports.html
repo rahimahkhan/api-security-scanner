@@ -36,7 +36,7 @@
             <tr>
                 <td data-label="Report">Scan report #{{ sess.id }}</td>
                 <td data-label="Target"><code>{{ sess.target_url }}</code></td>
-                <td data-label="Date">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') if sess.scan_start_time else 'N/A' }}</td>
+                <td data-label="Date">{% if sess.scan_start_time %}<span class="local-dt" data-utc="{{ sess.scan_start_time.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') }} UTC</span>{% else %}N/A{% endif %}</td>
                 <td data-label="Score"><strong>{{ sess.overall_risk_score }}</strong></td>
                 <td data-label="Download" class="no-label">
                     <a class="btn-sm" href="{{ url_for('dashboard.export_report', session_id=sess.id, format='pdf') }}">PDF</a>

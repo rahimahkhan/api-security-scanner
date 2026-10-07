@@ -7,6 +7,19 @@
         else document.addEventListener("DOMContentLoaded", fn);
     }
 
+    // Timestamps are stored in UTC; render them in the viewer's local timezone.
+    onReady(function () {
+        document.querySelectorAll(".local-dt[data-utc]").forEach(function (el) {
+            var d = new Date(el.getAttribute("data-utc"));
+            if (isNaN(d.getTime())) return;
+            el.textContent = d.toLocaleString(undefined, {
+                year: "numeric", month: "short", day: "numeric",
+                hour: "2-digit", minute: "2-digit"
+            });
+            el.title = "Server time (UTC): " + el.getAttribute("data-utc");
+        });
+    });
+
     /* ---------- Theme ---------- */
     function applyThemeChoice(choice) {
         var theme = choice;

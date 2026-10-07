@@ -118,6 +118,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-si
     background: #ef4444; color: #fff; font-size: 0.68rem; font-weight: 700;
     margin-left: 0.3rem; vertical-align: 2px;
 }
+.alert-badge[hidden] { display: none; }
 .user-menu { position: relative; }
 .user-menu-btn {
     background: none; border: none; color: #dbe4f5; cursor: pointer;

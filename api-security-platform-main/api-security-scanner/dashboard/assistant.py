@@ -25,8 +25,8 @@ SYSTEM_PROMPT = """You are the Xploiter AI Assistant. Xploiter is an API securit
 
 Facts you may use (do not invent anything else):
 - Users run scans from "New Scan": enter the API base URL, optionally add auth
-  (Bearer token, API key, or cookie), optionally upload an OpenAPI/Postman file,
-  tick "I am authorized to test this target", then Start scan. Every scan runs
+  (Bearer token, API key, or cookie), tick "I am authorized to test this target",
+  then Start scan. Every scan runs
   the complete pipeline: active probes, passive checks, and safety limits.
 - Checks: SQL injection, reflected XSS, BOLA/IDOR, broken authentication, CORS
   policy, command injection, local file inclusion, open redirect, XXE, and
@@ -38,8 +38,7 @@ Facts you may use (do not invent anything else):
   unproven; Informational = a note, not a vulnerability.
 - Exports: PDF, JSON, HTML, SARIF 2.1.0 — every report starts with the top risks.
 - Pages: Dashboard, New Scan, Scan History (search/filter/compare), Reports,
-  Targets, Vulnerability Guide, AI Assistant, Settings. The CLI (xploiter_cli.py)
-  talks to the JSON API with a token from Settings > CLI token.
+  Targets, Vulnerability Guide, AI Assistant, Settings.
 - Safety: only scan APIs you own or are authorized to test; scans use an endpoint
   budget and bounded concurrency.
 
@@ -65,7 +64,7 @@ TOPICS = [
         "id": "run_scan",
         "keywords": ["run a scan", "start a scan", "new scan", "how do i scan", "scan my api", "first scan"],
         "text": _t(
-            "To run a scan:\n1. Open **New Scan** from the sidebar.\n2. Enter your API base URL (e.g. https://api.example.com).\n3. Add authentication if your API needs it (Bearer token, API key, or cookie).\n4. Optionally upload an OpenAPI/Postman file to discover more endpoints.\n5. Tick **I am authorized to test this target**.\n6. Press **Start scan** — live progress shows the current module, endpoints scanned, and findings so far.",
+            "To run a scan:\n1. Open **New Scan** from the sidebar.\n2. Enter your API base URL (e.g. https://api.example.com).\n3. Add authentication if your API needs it (Bearer token, API key, or cookie).\n4. Tick **I am authorized to test this target**.\n5. Press **Start scan** — live progress shows the current module, endpoints scanned, and findings so far.",
             ur="اسکین چلانے کے لیے:\n1. سائڈبار سے **New Scan** کھولیں۔\n2. اپنی API کا بیس URL درج کریں (مثلاً https://api.example.com)۔\n3. اگر ضرورت ہو تو authentication شامل کریں۔\n4. **I am authorized to test this target** پر ٹک کریں۔\n5. **Start scan** دبائیں۔",
             ar="لتشغيل الفحص:\n1. افتح **New Scan** من الشريط الجانبي.\n2. أدخل رابط الـ API الأساسي.\n3. أضف المصادقة إن لزم الأمر.\n4. حدّد **I am authorized to test this target**.\n5. اضغط **Start scan**.",
             es="Para ejecutar un análisis:\n1. Abre **New Scan** en la barra lateral.\n2. Ingresa la URL base de tu API.\n3. Agrega autenticación si es necesario.\n4. Marca **I am authorized to test this target**.\n5. Pulsa **Start scan**.",
@@ -101,14 +100,6 @@ TOPICS = [
             "Every finished scan can be downloaded as **PDF**, **JSON**, **HTML**, or **SARIF** 2.1.0 — use the Export button on the results page, or the Reports page for all scans. Every report starts with the top risks, followed by the full endpoint list.",
         ),
         "actions": [{"label": "Open this screen", "href": "/reports"}],
-    },
-    {
-        "id": "cli",
-        "keywords": ["cli", "terminal", "command line", "command-line"],
-        "text": _t(
-            "Download the CLI from the landing page, then generate a token in **Settings → CLI token**. Run:\n`python xploiter_cli.py scan https://api.example.com --token <token>`\nOther commands: `status <id>` and `results <id>`.",
-        ),
-        "actions": [{"label": "Open this screen", "href": "/settings"}],
     },
     {
         "id": "login",
@@ -147,10 +138,10 @@ TOPICS = [
         "id": "default",
         "keywords": [],
         "text": _t(
-            "I can help with: **running a scan**, **reading results**, **what to fix first**, **exports**, the **CLI**, **login help**, and what each **vulnerability check** means. What would you like to know?",
-            ur="میں مدد کر سکتا ہوں: **اسکین چلانا**، **نتائج پڑھنا**، **پہلے کیا ٹھیک کریں**، **رپورٹس**، **CLI**، **لاگ اِن**، اور ہر **چیک** کا مطلب۔ آپ کیا جاننا چاہیں گے؟",
-            ar="يمكنني المساعدة في: **تشغيل الفحص**، **قراءة النتائج**، **ما يجب إصلاحه أولاً**، **التقارير**، **CLI**، **تسجيل الدخول**، ومعنى كل **فحص**. ما الذي تريد معرفته؟",
-            es="Puedo ayudar con: **ejecutar un análisis**, **leer resultados**, **qué corregir primero**, **exportaciones**, la **CLI**, **inicio de sesión** y el significado de cada **comprobación**. ¿Qué quieres saber?",
+            "I can help with: **running a scan**, **reading results**, **what to fix first**, **exports**, **login help**, and what each **vulnerability check** means. What would you like to know?",
+            ur="میں مدد کر سکتا ہوں: **اسکین چلانا**، **نتائج پڑھنا**، **پہلے کیا ٹھیک کریں**، **رپورٹس**، **لاگ اِن**، اور ہر **چیک** کا مطلب۔ آپ کیا جاننا چاہیں گے؟",
+            ar="يمكنني المساعدة في: **تشغيل الفحص**، **قراءة النتائج**، **ما يجب إصلاحه أولاً**، **التقارير**، **تسجيل الدخول**، ومعنى كل **فحص**. ما الذي تريد معرفته؟",
+            es="Puedo ayudar con: **ejecutar un análisis**, **leer resultados**, **qué corregir primero**, **exportaciones**, **inicio de sesión** y el significado de cada **comprobación**. ¿Qué quieres saber?",
         ),
     },
 ]

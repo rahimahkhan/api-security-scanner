@@ -32,14 +32,6 @@
                 </div>
             </div>
 
-            <div class="form-group" id="spec">
-                <label>API specification <span class="text-muted" style="font-weight:400">(optional)</span></label>
-                <label class="dropzone" for="spec_file">
-                    <span id="spec-file-label">Optional: upload OpenAPI / Postman file to discover endpoints</span>
-                    <input type="file" id="spec_file" name="spec_file" accept=".json,.yaml,.yml">
-                </label>
-            </div>
-
             <label class="checkbox-row">
                 <input type="checkbox" name="authorized" value="yes" required>
                 <span>I am authorized to test this target</span>
@@ -58,7 +50,7 @@
         <p class="progress-meta">Findings so far: <strong id="np-findings">{{ running_scan.total_vulnerabilities_found or 0 }}</strong></p>
         <form action="{{ url_for('dashboard.cancel_scan', session_id=running_scan.id) }}" method="POST" class="mt-2">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="btn btn-outline btn-block" onclick="return confirm('Cancel this scan?')">Cancel scan</button>
+            <button type="submit" class="btn btn-danger-outline btn-block" onclick="return confirm('Stop this scan? It cannot be resumed.')">⏹ Stop scan</button>
         </form>
         <script>
         (function () {

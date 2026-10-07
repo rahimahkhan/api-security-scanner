@@ -46,10 +46,6 @@
     </span>
 </div>
 
-{% if spec_note %}
-<div class="note-banner">{{ spec_note }}</div>
-{% endif %}
-
 {% if session_data.status == "running" %}
 <div class="card scan-progress-banner" id="scan-progress">
     <h3>Scan in progress&hellip;</h3>
@@ -57,7 +53,7 @@
     <div class="progress-bar"><div class="progress-fill{% if session_data.progress_total and session_data.progress_done %} determinate{% endif %}" id="scan-progress-fill"{% if session_data.progress_total and session_data.progress_done %} style="width: {{ (100 * session_data.progress_done / session_data.progress_total)|round(1) }}%"{% endif %}></div></div>
     <form action="{{ url_for('dashboard.cancel_scan', session_id=session_data.id) }}" method="POST" class="mt-2">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button type="submit" class="btn btn-outline" onclick="return confirm('Cancel this scan?')">Cancel scan</button>
+        <button type="submit" class="btn btn-danger-outline" onclick="return confirm('Stop this scan? It cannot be resumed.')">⏹ Stop scan</button>
     </form>
 </div>
 <script>

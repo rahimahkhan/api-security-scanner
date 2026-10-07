@@ -15,7 +15,6 @@ from database.db import (
     delete_session,
     get_or_create_firebase_user,
     get_session_for_user,
-    get_user_by_cli_token,
     save_scan_session,
 )
 from database.models import User
@@ -85,8 +84,10 @@ def test_public_pages_need_no_login():
 
 
 # ------------------------------------------------- app shell auth gating ---
-APP_PAGES = ["/dashboard", "/new-scan", "/", "/history", "/targets",
+APP_PAGES = ["/dashboard", "/new-scan", "/history", "/targets",
              "/reports", "/alerts", "/settings", "/vuln-guide", "/ai-assistant"]
+# NOTE: "/" is intentionally public — visitors see the landing page,
+# signed-in users are redirected to /dashboard.
 
 
 def test_app_pages_redirect_to_login_when_logged_out():
@@ -95,6 +96,10 @@ def test_app_pages_redirect_to_login_when_logged_out():
         res = client.get(path)
         assert res.status_code == 302, path
         assert "/login" in res.headers["Location"], path
+    # The front door stays public for visitors...
+    res = client.get("/")
+    assert res.status_code == 200
+    assert b"Find API vulnerabilities before attackers do" in res.data
 
 
 def test_app_pages_render_for_users():
@@ -102,12 +107,12 @@ def test_app_pages_render_for_users():
     markers = {
         "/dashboard": b"Top 5 risky endpoints",
         "/new-scan": b"https://api.example.com",
-        "/": b"I am authorized to test this target",
+        "/": b"Find API vulnerabilities before attackers do",
         "/history": b"Scan history",
         "/targets": b"Every API you have scanned",
         "/reports": b"Download the report for any finished scan",
         "/alerts": b"Mark all as read",
-        "/settings": b"CLI token",
+        "/settings": b"Notifications",
         "/vuln-guide": b"Vulnerability guide",
         "/ai-assistant": b"AI Assistant",
     }
@@ -200,13 +205,12 @@ def test_new_scan_form_fields():
     res = client.get("/new-scan")
     assert b'name="auth_type"' in res.data
     assert b"Bearer token" in res.data
-    assert b'name="spec_file"' in res.data
     assert b'name="authorized"' in res.data
     assert b"Cancel scan" in res.data or b"live-progress" in res.data or b"Live progress" in res.data
 
 
-def test_start_scan_with_auth_and_spec(monkeypatch):
-    """Auth headers are threaded through; the spec upload only adds a note."""
+def test_start_scan_with_auth(monkeypatch):
+    """Auth headers are threaded through to the background scan."""
     app = _app()
     client = app.test_client()
     s = save_scan_session(target_url="http://example.test", total_endpoints=1)
@@ -217,25 +221,16 @@ def test_start_scan_with_auth_and_spec(monkeypatch):
         return s.id
 
     monkeypatch.setattr("dashboard.routes._launch_background_scan", fake_launch)
-    spec = (io.BytesIO(b'{"openapi": "3.0.0", "paths": {"/a": {"get": {}}, "/b": {"post": {}}}}'), "api.json")
     res = client.post("/scan", data={
         "target_url": "http://example.test",
         "auth_type": "bearer",
         "auth_value": "sekret",
         "authorized": "yes",
-        "spec_file": spec,
-    }, content_type="multipart/form-data")
+    })
     try:
         assert res.status_code == 302
         assert seen["extra_headers"] == {"Authorization": "Bearer sekret"}
         assert res.headers["Location"].endswith(f"/results/{s.id}")
-        # The spec note is shown once on the results page...
-        res2 = client.get(f"/results/{s.id}")
-        assert res2.status_code == 200
-        assert b"Uploaded spec" in res2.data
-        # ...and then consumed.
-        res3 = client.get(f"/results/{s.id}")
-        assert b"Uploaded spec" not in res3.data
     finally:
         delete_session(s.id)
 
@@ -248,13 +243,9 @@ def test_run_pipeline_accepts_extra_headers():
 
 
 # ------------------------------------------------------------------- misc ---
-def test_cli_download():
+def test_cli_download_removed():
     client = _app().test_client()
-    res = client.get("/download/cli")
-    assert res.status_code == 200
-    assert "xploiter_cli.py" in res.headers.get("Content-Disposition", "")
-    assert b"Xploiter CLI" in res.data
-    assert b"argparse" in res.data
+    assert client.get("/download/cli").status_code == 404
 
 
 def test_vuln_guide_checks():
@@ -299,36 +290,6 @@ def test_assistant_never_invents_scan_data():
     assert res.status_code == 200
     # Knowledge base has no finding-specific answer; it must not hallucinate one.
     assert "session" not in res.get_json()["answer_html"].lower() or True
-
-
-# ------------------------------------------------------------- cli tokens ---
-def test_cli_token_regenerate_and_bearer_auth():
-    app = _app(auth=True)
-    client = app.test_client()
-    user = _make_user()
-    try:
-        _login(client, user)
-        res = client.post("/settings/cli-token/regenerate")
-        assert res.status_code == 200
-        token = res.get_json()["token"]
-        assert len(token) >= 32
-        assert get_user_by_cli_token(token).id == user.id
-
-        # Bearer token grants /api/* access without a session cookie.
-        _logout(client)
-        res = client.get("/api/sessions")
-        assert res.status_code == 401
-        res = client.get("/api/sessions",
-                         headers={"Authorization": f"Bearer {token}"})
-        assert res.status_code == 200
-        assert res.get_json()["status"] == "success"
-
-        # Bogus token -> 401, not a redirect.
-        res = client.get("/api/sessions",
-                         headers={"Authorization": "Bearer nope"})
-        assert res.status_code == 401
-    finally:
-        _cleanup_user(user)
 
 
 def test_settings_privacy_actions():
@@ -409,3 +370,69 @@ def test_reports_page_lists_finished_scans():
         assert b"top risks" in res.data
     finally:
         delete_session(s.id)
+
+
+def test_history_has_delete_button():
+    client = _app().test_client()
+    s = save_scan_session(target_url="http://del.test", status="complete")
+    try:
+        res = client.get("/history")
+        assert res.status_code == 200
+        assert b"Delete" in res.data
+        assert f"/delete_scan/{s.id}".encode() in res.data
+    finally:
+        delete_session(s.id)
+
+
+def test_running_scan_results_show_stop_button():
+    client = _app().test_client()
+    s = save_scan_session(target_url="http://stop.test", status="running")
+    try:
+        res = client.get(f"/results/{s.id}")
+        assert res.status_code == 200
+        assert b"Stop scan" in res.data
+        assert f"/scan/{s.id}/cancel".encode() in res.data
+    finally:
+        delete_session(s.id)
+
+
+def test_timestamps_render_as_local_dt():
+    client = _app().test_client()
+    s = save_scan_session(target_url="http://time.test", status="complete")
+    try:
+        for path in ("/history", "/reports", "/targets"):
+            res = client.get(path)
+            assert res.status_code == 200, path
+            assert b'class="local-dt"' in res.data, path
+            assert b"data-utc=" in res.data, path
+    finally:
+        delete_session(s.id)
+
+
+def test_alert_badge_hidden_when_no_notifications():
+    app = _app(auth=True)
+    client = app.test_client()
+    user = _make_user()
+    try:
+        _login(client, user)  # fresh user: no sessions -> no notifications
+        res = client.get("/dashboard")
+        assert res.status_code == 200
+        assert b'<span class="alert-badge" id="alert-badge" hidden>' in res.data
+    finally:
+        _cleanup_user(user)
+
+
+def test_alert_badge_shows_count_with_notifications():
+    app = _app(auth=True)
+    client = app.test_client()
+    user = _make_user()
+    s = save_scan_session(target_url="http://alerts.test", status="complete",
+                          user_id=user.id)
+    try:
+        _login(client, user)
+        res = client.get("/dashboard")
+        assert res.status_code == 200
+        assert b'<span class="alert-badge" id="alert-badge" >' in res.data
+    finally:
+        delete_session(s.id)
+        _cleanup_user(user)

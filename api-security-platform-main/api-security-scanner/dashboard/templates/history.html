@@ -47,12 +47,16 @@
                 <td class="no-label"><input type="checkbox" class="scan-checkbox" name="ids" value="{{ sess.id }}" form="compare-form"></td>
                 <td data-label="Session">#{{ sess.id }}</td>
                 <td data-label="Target"><code>{{ sess.target_url }}</code></td>
-                <td data-label="Date">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') if sess.scan_start_time else 'N/A' }}</td>
+                <td data-label="Date">{% if sess.scan_start_time %}<span class="local-dt" data-utc="{{ sess.scan_start_time.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ sess.scan_start_time.strftime('%Y-%m-%d %H:%M') }} UTC</span>{% else %}N/A{% endif %}</td>
                 <td data-label="Score"><strong>{{ sess.overall_risk_score }}</strong></td>
                 <td data-label="Severity"><span class="badge {{ sess.overall_severity|lower }}">{{ sess.overall_severity }}</span></td>
                 <td data-label="Findings">{{ sess.total_vulnerabilities_found }}</td>
                 <td class="no-label">
                     <a href="{{ url_for('dashboard.results', session_id=sess.id) }}" class="btn-sm">View report</a>
+                    <form action="{{ url_for('dashboard.delete_scan', session_id=sess.id) }}" method="POST" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn-sm btn-danger" onclick="return confirm('Delete this scan record?')">Delete</button>
+                    </form>
                 </td>
             </tr>
             {% endfor %}

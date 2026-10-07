@@ -252,36 +252,6 @@ def get_user_by_username(username: str) -> Optional[User]:
         db.close()
 
 
-def get_user_by_cli_token(token: str) -> Optional[User]:
-    """Look up a user by their CLI API token (for Bearer auth on /api/*)."""
-    if not token:
-        return None
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.cli_token == token).first()
-        if user:
-            db.expunge(user)
-        return user
-    finally:
-        db.close()
-
-
-def regenerate_cli_token(user_id: int) -> Optional[str]:
-    """Create a fresh CLI API token for the user; returns the plain token."""
-    import secrets as _secrets
-    token = _secrets.token_urlsafe(32)
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            return None
-        user.cli_token = token
-        db.commit()
-        return token
-    finally:
-        db.close()
-
-
 def update_user_name(user_id: int, name: Optional[str]) -> bool:
     db = SessionLocal()
     try:

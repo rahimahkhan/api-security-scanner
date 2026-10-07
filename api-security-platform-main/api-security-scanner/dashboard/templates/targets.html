@@ -31,7 +31,7 @@
             <tr>
                 <td data-label="Target"><code>{{ t.target_url }}</code></td>
                 <td data-label="Scans">{{ t.scans_run }}</td>
-                <td data-label="Last scan">{{ t.last_scan.strftime('%Y-%m-%d %H:%M') if t.last_scan else 'N/A' }}</td>
+                <td data-label="Last scan">{% if t.last_scan %}<span class="local-dt" data-utc="{{ t.last_scan.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ t.last_scan.strftime('%Y-%m-%d %H:%M') }} UTC</span>{% else %}N/A{% endif %}</td>
                 <td data-label="Score"><strong>{{ t.latest_score }}</strong></td>
                 <td data-label="Severity"><span class="badge {{ t.severity|lower }}">{{ t.severity }}</span></td>
                 <td class="no-label"><a class="btn-sm" href="{{ url_for('dashboard.results', session_id=t.latest_session_id) }}">View latest</a></td>

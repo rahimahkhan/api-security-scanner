@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timedelta
 from functools import wraps
 from typing import Optional
-from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app, g, send_file
+from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session, abort, current_app
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,8 +26,7 @@ from database.db import (
     get_all_sessions, get_session_for_user, get_session_findings,
     get_finding_by_id, delete_session, SessionLocal,
     get_user_by_username, get_user_by_firebase_uid,
-    get_or_create_firebase_user, get_user_by_cli_token,
-    regenerate_cli_token, update_user_name,
+    get_or_create_firebase_user, update_user_name,
     create_reset_otp, get_latest_valid_reset_otp, increment_otp_attempts,
     mark_otp_verified, mark_otp_used, count_recent_otps,
 )
@@ -173,24 +172,9 @@ def is_auth_enabled() -> bool:
 
 def get_current_user_id():
     """Logged-in user's id, or None when auth is disabled / not logged in."""
-    cli_user_id = getattr(g, "cli_user_id", None)
-    if cli_user_id is not None:
-        return cli_user_id
     if not is_auth_enabled():
         return None
     return session.get("user_id")
-
-
-def _api_token_user_id():
-    """User id from a valid `Authorization: Bearer <CLI token>` header."""
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    token = auth[7:].strip()
-    if not token:
-        return None
-    user = get_user_by_cli_token(token)
-    return user.id if user else False  # False = token present but invalid
 
 
 def is_csrf_enabled() -> bool:
@@ -204,17 +188,7 @@ def login_required(f):
     def decorated_function(*args, **kwargs):
         if is_auth_enabled():
             user_id = session.get("user_id")
-            if user_id is None and request.path.startswith("/api/"):
-                # Programmatic access: the Xploiter CLI authenticates with a
-                # Bearer token from Settings > CLI token (CSRF-exempt, like
-                # all /api/* routes).
-                token_user = _api_token_user_id()
-                if token_user is False:
-                    return jsonify({"status": "error", "message": "Invalid API token"}), 401
-                if token_user:
-                    g.cli_user_id = token_user
-                    return f(*args, **kwargs)
-            if not session.get("user_id") and getattr(g, "cli_user_id", None) is None:
+            if not session.get("user_id"):
                 if request.path.startswith("/api/"):
                     return jsonify({"status": "error", "message": "Authentication required"}), 401
                 return redirect(url_for("dashboard.login", next=request.path))
@@ -234,7 +208,7 @@ def inject_globals():
             alert_count = len(_build_alerts(user_id))
         except Exception:
             alert_count = 0
-    authed = bool(session.get("user_id")) or getattr(g, "cli_user_id", None) is not None or not is_auth_enabled()
+    authed = bool(session.get("user_id")) or not is_auth_enabled()
     return dict(
         recent_sessions=recent,
         csrf_token=get_or_create_csrf_token,
@@ -621,10 +595,12 @@ def logout():
 
 
 @dashboard_bp.route("/")
-@login_required
 def index():
-    # Legacy landing route: renders the New Scan page (kept working).
-    return _render_new_scan()
+    # Public front door: visitors see the landing page; signed-in users
+    # go straight to their dashboard.
+    if session.get("user_id"):
+        return redirect(url_for("dashboard.dashboard"))
+    return render_template("landing.html", active_page="landing")
 
 
 @dashboard_bp.route("/new-scan")
@@ -663,68 +639,6 @@ def _auth_headers_from_form():
     return None
 
 
-def _handle_spec_upload():
-    """Save an uploaded OpenAPI/Postman file and count its endpoints.
-
-    Discovery is intentionally untouched: the file is stored under
-    scan_reports/ and only a note (with the parsed endpoint count) is
-    surfaced on the results page.
-    """
-    upload = request.files.get("spec_file")
-    if upload is None or not (upload.filename or "").strip():
-        return None
-    filename = re.sub(r"[^A-Za-z0-9_.-]", "_", upload.filename.strip())[:80]
-    reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scan_reports")
-    os.makedirs(reports_dir, exist_ok=True)
-    dest = os.path.join(reports_dir, f"spec_{int(datetime.utcnow().timestamp())}_{filename}")
-    try:
-        upload.save(dest)
-    except Exception as exc:
-        logger.warning(f"Could not save uploaded spec file: {exc}")
-        return None
-    count = _count_spec_endpoints(dest)
-    if count is None:
-        return f"Saved {filename} for reference (couldn't parse its endpoints — discovery ran as usual)."
-    return (f"Uploaded spec '{filename}' lists ~{count} endpoints. "
-            f"Discovery ran as usual and may find more or fewer.")
-
-
-def _count_spec_endpoints(path):
-    """Best-effort endpoint count from an OpenAPI/Postman file."""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            raw = fh.read()
-        try:
-            spec = json.loads(raw)
-        except Exception:
-            spec = None
-        if isinstance(spec, dict):
-            paths = spec.get("paths")
-            if isinstance(paths, dict):
-                methods = {"get", "post", "put", "delete", "patch", "head", "options", "trace"}
-                return sum(1 for p, ops in paths.items()
-                           if isinstance(ops, dict) for m in ops if m in methods) or len(paths)
-            items = spec.get("item")  # Postman collection
-            if isinstance(items, list):
-                return _count_postman_items(items)
-            return None
-        # YAML-ish fallback: count indented path lines like "  /users:".
-        found = re.findall(r"(?m)^\s{2,6}(/[^:\s]*)(\s*:\s*)$", raw)
-        return len(set(found)) or None
-    except Exception:
-        return None
-
-
-def _count_postman_items(items):
-    n = 0
-    for item in items or []:
-        if isinstance(item, dict) and "item" in item:
-            n += _count_postman_items(item["item"])
-        else:
-            n += 1
-    return n
-
-
 @dashboard_bp.route("/scan", methods=["POST"])
 @login_required
 def start_scan():
@@ -740,7 +654,6 @@ def start_scan():
     # (and older form posts) never had it, so the server stays lenient and
     # the checkbox is enforced in the browser.
     extra_headers = _auth_headers_from_form()
-    spec_note = _handle_spec_upload()
 
     # Scans run in the background; the results page polls until completion.
     # extra_headers is only passed when set, so the monkeypatched launcher in
@@ -749,10 +662,6 @@ def start_scan():
     if extra_headers:
         launch_kwargs["extra_headers"] = extra_headers
     session_id = _launch_background_scan(normalized_or_reason, user_id=get_current_user_id(), **launch_kwargs)
-    if spec_note:
-        notes = session.get("spec_notes") or {}
-        notes[str(session_id)] = spec_note
-        session["spec_notes"] = dict(list(notes.items())[-5:])  # keep last few
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 
@@ -817,11 +726,6 @@ def results(session_id):
             att = f.attack_type
             attack_counts[att] = attack_counts.get(att, 0) + 1
 
-        # One-time note about an uploaded API spec file for this scan.
-        spec_notes = dict(session.get("spec_notes") or {})
-        spec_note = spec_notes.pop(str(session_id), None)
-        session["spec_notes"] = spec_notes
-
         return render_template(
             "results.html",
             session_data=session_data,
@@ -834,7 +738,6 @@ def results(session_id):
             group_summary=grouped["summary"],
             total_endpoints=total_endpoints,
             passed_count=passed_count,
-            spec_note=spec_note,
         )
     finally:
         db.close()
@@ -1192,15 +1095,6 @@ def delete_my_account():
     return redirect(url_for("dashboard.landing"))
 
 
-@dashboard_bp.route("/settings/cli-token/regenerate", methods=["POST"])
-@login_required
-def regenerate_cli_token_route():
-    token = regenerate_cli_token(get_current_user_id())
-    if not token:
-        return jsonify({"status": "error", "message": "Could not generate a token"}), 400
-    return jsonify({"status": "ok", "token": token})
-
-
 @dashboard_bp.route("/vuln-guide")
 @login_required
 def vuln_guide():
@@ -1254,14 +1148,6 @@ def assistant_ask():
         scan_context = _assistant_scan_context(get_current_user_id())
     answer_html, actions = assistant_engine.answer(question, language, scan_context)
     return jsonify({"status": "ok", "answer_html": answer_html, "actions": actions})
-
-
-@dashboard_bp.route("/download/cli")
-@login_required
-def download_cli():
-    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "tools", "xploiter_cli.py")
-    return send_file(path, as_attachment=True, download_name="xploiter_cli.py")
 
 
 # ---------------------------------------------------------

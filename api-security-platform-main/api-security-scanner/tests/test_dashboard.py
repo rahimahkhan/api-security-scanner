@@ -9,7 +9,11 @@ def test_dashboard_routes():
 
     response_index = client.get("/")
     assert response_index.status_code == 200
-    assert b"New scan" in response_index.data
+    assert b"Find API vulnerabilities before attackers do" in response_index.data
+
+    response_new_scan = client.get("/new-scan")
+    assert response_new_scan.status_code == 200
+    assert b"New scan" in response_new_scan.data
 
     response_history = client.get("/history")
     assert response_history.status_code == 200
@@ -20,7 +24,7 @@ def test_dashboard_complete_pipeline_ui():
     app.config["TESTING"] = True
     client = app.test_client()
 
-    response = client.get("/")
+    response = client.get("/new-scan")
     assert response.status_code == 200
     assert b"New scan" in response.data
     assert b"https://api.example.com" in response.data
@@ -140,10 +144,10 @@ def test_dashboard_auth_workflow():
     uid = f"fb-{_uuid.uuid4().hex[:8]}"
     claims = {"uid": uid, "email": f"{username}@gmail.com", "name": "Auth Wf"}
 
-    # Unauthenticated access redirects to /login
+    # Unauthenticated visitors see the public landing page at /
     res = client.get("/")
-    assert res.status_code == 302
-    assert "/login" in res.headers["Location"]
+    assert res.status_code == 200
+    assert b"Find API vulnerabilities before attackers do" in res.data
 
     # Session exchange (mocked Firebase token) logs the user in
     with patch("dashboard.routes.verify_firebase_token", return_value=claims):
@@ -152,14 +156,15 @@ def test_dashboard_auth_workflow():
     assert res_session.status_code == 200
     assert res_session.get_json()["status"] == "ok"
     res_auth = client.get("/")
-    assert res_auth.status_code == 200
+    assert res_auth.status_code == 302
+    assert "/dashboard" in res_auth.headers["Location"]
 
     # Logout clears authentication
     res_logout = client.get("/logout")
     assert res_logout.status_code == 302
     res_after = client.get("/")
-    assert res_after.status_code == 302
-    assert "/login" in res_after.headers["Location"]
+    assert res_after.status_code == 200
+    assert b"Find API vulnerabilities before attackers do" in res_after.data
 
     # cleanup
     db = SessionLocal()

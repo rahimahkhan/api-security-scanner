@@ -94,8 +94,10 @@ def test_session_exchange_creates_user_and_logs_in(authed_app):
         user = get_user_by_firebase_uid(uid)
         assert user is not None and user.username == username
         assert user.email == email
-        # server session is set: protected pages now load
-        assert client.get("/").status_code == 200
+        # server session is set: signed-in users go from / to their dashboard
+        r = client.get("/")
+        assert r.status_code == 302 and "/dashboard" in r.headers["Location"]
+        assert client.get("/dashboard").status_code == 200
     finally:
         _cleanup_user(get_user_by_firebase_uid(uid))
 
@@ -214,7 +216,8 @@ def test_auth_pages_show_setup_message_without_config(authed_app, monkeypatch):
 def test_unauthenticated_redirects(authed_app):
     client = authed_app.test_client()
     r = client.get("/")
-    assert r.status_code == 302 and "/login" in r.headers["Location"]
+    assert r.status_code == 200  # public landing page for visitors
+    assert b"Find API vulnerabilities before attackers do" in r.data
     r = client.get("/history")
     assert r.status_code == 302
     r = client.get("/api/sessions")
@@ -224,10 +227,11 @@ def test_unauthenticated_redirects(authed_app):
 
 def test_logout(authed_app, user_a):
     client, _ = user_a
-    assert client.get("/").status_code == 200
+    r = client.get("/")
+    assert r.status_code == 302 and "/dashboard" in r.headers["Location"]
     client.get("/logout")
     r = client.get("/")
-    assert r.status_code == 302 and "/login" in r.headers["Location"]
+    assert r.status_code == 200  # back to the public landing page
 
 
 def test_scan_isolation_between_users(authed_app, user_a, user_b):

@@ -59,16 +59,6 @@
     </div>
 
     <div class="card">
-        <h3>CLI token</h3>
-        <p class="form-help" style="margin-bottom:0.7rem">Use this token with the Xploiter CLI to run scans from your terminal.</p>
-        <div class="token-row">
-            <input type="text" id="cli-token" value="••••••••••••••••" readonly>
-            <button class="btn btn-outline" id="regen-token" type="button" data-csrf="{{ csrf_token() }}">Regenerate token</button>
-        </div>
-        <p class="form-help mt-1" id="cli-token-note"></p>
-    </div>
-
-    <div class="card">
         <h3>Notifications</h3>
         <label class="checkbox-row"><input type="checkbox" id="notif-done" checked> <span>Email when a scan finishes</span></label>
         <label class="checkbox-row"><input type="checkbox" id="notif-critical"> <span>Alert on new critical findings</span></label>
@@ -117,32 +107,7 @@
         el.checked = lsGet("xploiter-" + pair[0], pair[1]) === "1";
         el.addEventListener("change", function () { lsSet("xploiter-" + pair[0], el.checked ? "1" : "0"); });
     });
-
-    // CLI token: fetch the real token once, keep it masked otherwise.
-    var tokenInput = document.getElementById("cli-token");
-    var tokenNote = document.getElementById("cli-token-note");
-    var shownToken = null;
-    tokenInput.addEventListener("focus", function () { if (shownToken) tokenInput.value = shownToken; });
-    tokenInput.addEventListener("blur", function () { tokenInput.value = "••••••••••••••••"; });
-    document.getElementById("regen-token").addEventListener("click", function () {
-        var btn = this;
-        fetch("{{ url_for('dashboard.regenerate_cli_token_route') }}", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": btn.getAttribute("data-csrf") || ""
-            }
-        }).then(function (r) { return r.json(); }).then(function (data) {
-            if (data.status === "ok") {
-                shownToken = data.token;
-                tokenInput.value = shownToken;
-                tokenInput.select();
-                tokenNote.textContent = "Copy it now — it won't be shown again.";
-            } else {
-                tokenNote.textContent = "Could not generate a token. Please try again.";
-            }
-        }).catch(function () { tokenNote.textContent = "Could not reach the server."; });
-    });
+});
 })();
 </script>
 {% endblock %}
