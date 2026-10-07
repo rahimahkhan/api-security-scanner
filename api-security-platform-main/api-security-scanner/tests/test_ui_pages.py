@@ -159,9 +159,11 @@ def test_auth_pages_restyled():
 
     res = client.get("/forgot-password")
     assert res.status_code == 200
-    assert b"one-time code" in res.data
+    assert b"one-time code" not in res.data
+    assert b"password reset link" in res.data
     forgot_src = (tpl / "forgot_password.html").read_text()
     assert "sendPasswordResetEmail" in forgot_src
+    assert "otp-btn" not in forgot_src
 
 
 # ------------------------------------------------------------------ scans ---
