@@ -322,9 +322,13 @@ def login():
     next_url = request.args.get("next") or url_for("dashboard.dashboard")
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.dashboard")
+    demo_email = os.environ.get("DEMO_EMAIL", "").strip()
+    demo_password = os.environ.get("DEMO_PASSWORD", "")
     return render_template("login.html", next_url=next_url,
                            firebase_config=firebase_web_config(),
-                           firebase_configured=firebase_configured())
+                           firebase_configured=firebase_configured(),
+                           demo_configured=bool(demo_email and demo_password),
+                           demo_email=demo_email, demo_password=demo_password)
 
 
 @dashboard_bp.route("/signup", methods=["GET"])

@@ -69,6 +69,11 @@
 
         <button type="submit" class="btn-primary" id="login-btn">Log In</button>
     </form>
+    {% if demo_configured %}
+    <div class="divider">or</div>
+    <button class="btn btn-outline btn-block" id="demo-btn" type="button">Try the demo account</button>
+    <p class="form-help" style="text-align:center">One click — explore Xploiter with a shared demo login.</p>
+    {% endif %}
     <script>
     document.getElementById("show-pw").addEventListener("change", function () {
         document.getElementById("password").type = this.checked ? "text" : "password";
@@ -105,6 +110,8 @@ function showError(msg) {
 function setBusy(busy) {
     document.getElementById("login-btn").disabled = busy;
     document.getElementById("google-btn").disabled = busy;
+    var demoBtn = document.getElementById("demo-btn");
+    if (demoBtn) demoBtn.disabled = busy;
     document.getElementById("login-btn").textContent = busy ? "Logging in…" : "Log in";
 }
 
@@ -170,6 +177,17 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
         .then(function (cred) { return finishSignIn(cred.user); })
         .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
 });
+
+{% if demo_configured %}
+var DEMO_EMAIL = {{ demo_email | tojson }};
+var DEMO_PASSWORD = {{ demo_password | tojson }};
+document.getElementById("demo-btn").addEventListener("click", function () {
+    setBusy(true);
+    auth.signInWithEmailAndPassword(DEMO_EMAIL, DEMO_PASSWORD)
+        .then(function (cred) { return finishSignIn(cred.user); })
+        .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
+});
+{% endif %}
 
 document.getElementById("google-btn").addEventListener("click", function () {
     setBusy(true);
