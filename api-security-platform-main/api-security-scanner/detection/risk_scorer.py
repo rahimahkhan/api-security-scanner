@@ -20,6 +20,11 @@ class RiskScorer:
     MAX_AE_POINTS = 20.0
     MAX_SUPERVISED_POINTS = 10.0
     MAX_TOTAL_POINTS = 100.0
+    # Bonus added to the raw total when exploit proof is verified. A lone
+    # confirmed signature scores 40; with this bonus it reaches 70 (CRITICAL),
+    # which is the documented meaning of "CRITICAL is reserved for findings
+    # with verified exploit proof". Suspected findings are still capped at HIGH.
+    PROOF_BONUS_POINTS = 30.0
 
     SEVERITY_RECOMMENDATIONS = {
         "Low": "Baseline telemetry parameters normal. Maintain routine security monitoring and header hardening.",
@@ -119,8 +124,10 @@ class RiskScorer:
                 "recommendation": self.SEVERITY_RECOMMENDATIONS["Low"]
             }
 
-        # Status 403, 404, 429, 502, 503, 504 -> BLOCKED_OR_NOT_FOUND
-        if resp_status in [403, 404, 429, 502, 503, 504] or (resp_status == 202 and resp_size == 0):
+        # Status 403, 404, 405, 429, 502, 503, 504 -> BLOCKED_OR_NOT_FOUND
+        # (A 202 Accepted with an empty body is a legitimate async response,
+        # not a block — it flows through normal analysis.)
+        if resp_status in [403, 404, 405, 429, 502, 503, 504]:
             timestamp = datetime.utcnow().isoformat() + "Z"
             status_desc = "Resource Not Found" if resp_status == 404 else "WAF / Edge Block"
             return {
@@ -166,12 +173,19 @@ class RiskScorer:
         # vulnerability. Keeping these concepts separate prevents suspected
         # payload matches from being reported as confirmed findings.
         signature_triggered = bool(signature_result.get("matched", False) or signature_result.get("is_vulnerable", False))
-        has_proof = bool(signature_result.get("has_proof", False) or signature_result.get("is_vulnerable", False))
+        # has_proof must come from the proof verifiers alone. (Previously a
+        # caller-supplied is_vulnerable=True also counted as proof, which let
+        # unproven input bypass the proof requirement.)
+        has_proof = bool(signature_result.get("has_proof", False))
         sig_points_raw = float(signature_result.get("points", 0.0))
         sig_points = min(sig_points_raw, self.MAX_SIG_POINTS) if signature_triggered else 0.0
 
         ml_is_anomaly = bool(ml_result.get("is_anomaly", False) or ml_points >= 10.0)
-        dl_is_suspicious = bool(dl_result.get("is_anomaly", False) or (lstm_points + ae_points) >= 10.0 or dl_result.get("lstm_probability", 0.0) > 0.5)
+        # dl_is_suspicious uses the autoencoder only. The LSTM's
+        # lstm_probability classifies our own payload text, not the target, so
+        # it must not count as target-suspicion (it would be "suspicious" on
+        # every probe, since we always send attack payloads).
+        dl_is_suspicious = bool(dl_result.get("is_anomaly", False) or ae_points >= 10.0)
 
         # Deterministic proof is stronger evidence than statistical consensus.
         # Keep hybrid confidence for anomaly-only findings, but never discount
@@ -188,6 +202,13 @@ class RiskScorer:
 
         # Calculate combined total score with confidence weighting
         raw_total = sig_points + ml_points + lstm_points + ae_points + supervised_points
+        if has_proof:
+            # Verified exploit proof is the strongest possible signal. A lone
+            # confirmed signature (40 pts) could otherwise never reach CRITICAL
+            # (70+), contradicting the rule that CRITICAL is reserved for
+            # findings with verified proof. The bonus is added before the
+            # confidence multiplier so proof is never discounted.
+            raw_total += self.PROOF_BONUS_POINTS
         final_risk_score = round(max(0.0, min(self.MAX_TOTAL_POINTS, raw_total * confidence)), 2)
         severity = self.classify_severity(final_risk_score)
 
@@ -201,6 +222,14 @@ class RiskScorer:
         # A high anomaly score is useful for triage, but it is not exploit
         # proof. Only a verified response indicator is a vulnerability.
         is_vulnerable = has_proof
+        # No observable effect, no proof, no finding: if the probe's response
+        # is byte-identical to the baseline (and error-free), a syntax-only
+        # "Suspected" is noise. Downgrade it to Informational instead of
+        # reporting a vulnerability that had zero measurable impact.
+        payload_had_effect = kwargs.get("payload_had_effect", True)
+        if not payload_had_effect and not has_proof:
+            final_risk_score = 0.0
+            severity = "NONE"
         if has_proof:
             finding_status = "Confirmed"
         elif final_risk_score > 0.0:

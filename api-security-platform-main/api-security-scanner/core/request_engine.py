@@ -1,5 +1,7 @@
+import re
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
+from urllib.parse import urlparse, parse_qsl
 import httpx
 import sys
 import os
@@ -7,6 +9,101 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.logging_config import logger
 from core.http_client import build_client as _build_client, client_kwargs
+
+# Maximum response body handed to detectors. Probe responses are streamed and
+# truncated past this point so a huge body (e.g. an LFI probe hitting a large
+# file) cannot OOM the scan worker. Telemetry carries truncated=True when cut.
+MAX_RESPONSE_BODY_BYTES = 2 * 1024 * 1024  # 2 MiB
+
+_CHARSET_RE = re.compile(r"charset\s*=\s*([\w\-]+)", re.IGNORECASE)
+
+# Ordered fallback parameter names for GET/DELETE probes when the endpoint has
+# no known fields. Only the first applicable name is ever used: one request
+# per probe, never one per candidate.
+_COMMON_PARAM_NAMES = ("q", "query", "search", "id", "keyword")
+
+
+def _decode_body(raw: bytes, content_type: str) -> str:
+    """Decode response bytes, preferring the declared charset; never raise."""
+    match = _CHARSET_RE.search(content_type or "")
+    encoding = match.group(1) if match else "utf-8"
+    try:
+        return raw.decode(encoding, errors="replace")
+    except (LookupError, ValueError):
+        return raw.decode("utf-8", errors="replace")
+
+
+def _read_capped(response) -> Tuple[bytes, bool]:
+    """Read at most MAX_RESPONSE_BODY_BYTES from a streamed httpx response.
+
+    Returns (body_bytes, truncated).
+    """
+    chunks = []
+    kept = 0
+    truncated = False
+    for chunk in response.iter_bytes(chunk_size=65536):
+        if not chunk:
+            continue
+        room = MAX_RESPONSE_BODY_BYTES - kept
+        if room <= 0:
+            truncated = True
+            break
+        if len(chunk) > room:
+            chunks.append(chunk[:room])
+            kept += room
+            truncated = True
+            break
+        chunks.append(chunk)
+        kept += len(chunk)
+    return b"".join(chunks), truncated
+
+
+async def _aread_capped(response) -> Tuple[bytes, bool]:
+    """Async variant of _read_capped."""
+    chunks = []
+    kept = 0
+    truncated = False
+    async for chunk in response.aiter_bytes(chunk_size=65536):
+        if not chunk:
+            continue
+        room = MAX_RESPONSE_BODY_BYTES - kept
+        if room <= 0:
+            truncated = True
+            break
+        if len(chunk) > room:
+            chunks.append(chunk[:room])
+            kept += room
+            truncated = True
+            break
+        chunks.append(chunk)
+        kept += len(chunk)
+    return b"".join(chunks), truncated
+
+
+def _wire_size(response, bytes_read: int) -> int:
+    """Best-effort on-wire response size for differential size comparisons."""
+    try:
+        declared = response.headers.get("content-length")
+        if declared is not None and int(declared) >= 0:
+            return int(declared)
+    except (TypeError, ValueError):
+        pass
+    return bytes_read
+
+
+def _fallback_query_params(url: str, payload: str) -> Dict[str, str]:
+    """Choose one query parameter to carry a GET/DELETE probe payload.
+
+    Prefers a parameter name the target URL already uses (more likely to reach
+    application logic than an invented name); otherwise falls back to the first
+    common search-style name. Always a single parameter: one request per probe.
+    """
+    try:
+        existing = [name for name, _ in parse_qsl(urlparse(url).query, keep_blank_values=True) if name]
+    except Exception:
+        existing = []
+    name = existing[0] if existing else _COMMON_PARAM_NAMES[0]
+    return {name: payload}
 
 
 class RequestEngine:
@@ -60,7 +157,7 @@ class RequestEngine:
             if query_params is not None:
                 params = query_params
             elif payload_str:
-                params = {"q": payload_str}
+                params = _fallback_query_params(url, payload_str)
         elif method_upper in ["POST", "PUT", "PATCH"]:
             if form_data is not None:
                 data = form_data
@@ -80,34 +177,38 @@ class RequestEngine:
 
         try:
             with _build_client(httpx.Client, **self._client_kwargs(follow_redirects)) as client:
-                response = client.request(
+                with client.stream(
                     method=method_upper,
                     url=url,
                     params=params,
                     data=data,
                     json=json_data,
                     headers=req_headers
-                )
+                ) as response:
+                    elapsed_time = time.time() - start_time
+                    # Streamed and capped at 2 MiB: a huge body (e.g. an LFI
+                    # probe hitting a large file) is truncated instead of
+                    # loading unbounded bytes into worker memory.
+                    raw_body, truncated = _read_capped(response)
+                    response_body = _decode_body(raw_body, response.headers.get("content-type", ""))
+                    response_bytes = _wire_size(response, len(raw_body))
 
-                elapsed_time = time.time() - start_time
-                response_body = response.text
-                response_bytes = len(response.content)
+                    result = {
+                        "method": method_upper,
+                        "url": str(response.url),
+                        "payload": payload_str,
+                        "status_code": response.status_code,
+                        "response_body": response_body,
+                        "response_time": elapsed_time,
+                        "response_size": response_bytes,
+                        "request_headers": req_headers,
+                        "response_headers": dict(response.headers),
+                        "truncated": truncated,
+                        "error": None
+                    }
 
-                result = {
-                    "method": method_upper,
-                    "url": str(response.url),
-                    "payload": payload_str,
-                    "status_code": response.status_code,
-                    "response_body": response_body,
-                    "response_time": elapsed_time,
-                    "response_size": response_bytes,
-                    "request_headers": req_headers,
-                    "response_headers": dict(response.headers),
-                    "error": None
-                }
-
-                logger.info(f"Request [{method_upper}] {url} -> {response.status_code} ({elapsed_time:.3f}s)")
-                return result
+                    logger.info(f"Request [{method_upper}] {url} -> {response.status_code} ({elapsed_time:.3f}s)")
+                    return result
 
         except httpx.TimeoutException as exc:
             elapsed_time = time.time() - start_time
@@ -122,6 +223,7 @@ class RequestEngine:
                 "response_size": 0,
                 "request_headers": req_headers,
                 "response_headers": {},
+                "truncated": False,
                 "error": f"TimeoutException: {str(exc)}"
             }
         except Exception as exc:
@@ -137,6 +239,7 @@ class RequestEngine:
                 "response_size": 0,
                 "request_headers": req_headers,
                 "response_headers": {},
+                "truncated": False,
                 "error": f"ConnectionError: {str(exc)}"
             }
 
@@ -168,7 +271,7 @@ class RequestEngine:
             if query_params is not None:
                 params = query_params
             elif payload_str:
-                params = {"q": payload_str}
+                params = _fallback_query_params(url, payload_str)
         elif method_upper in ["POST", "PUT", "PATCH"]:
             if form_data is not None:
                 data = form_data
@@ -188,35 +291,55 @@ class RequestEngine:
 
         try:
             async with _build_client(httpx.AsyncClient, **self._client_kwargs(follow_redirects)) as client:
-                response = await client.request(
+                async with client.stream(
                     method=method_upper,
                     url=url,
                     params=params,
                     data=data,
                     json=json_data,
                     headers=req_headers
-                )
+                ) as response:
+                    elapsed_time = time.time() - start_time
+                    raw_body, truncated = await _aread_capped(response)
+                    response_body = _decode_body(raw_body, response.headers.get("content-type", ""))
+                    response_bytes = _wire_size(response, len(raw_body))
 
-                elapsed_time = time.time() - start_time
-                response_body = response.text
-                response_bytes = len(response.content)
+                    result = {
+                        "method": method_upper,
+                        "url": str(response.url),
+                        "payload": payload_str,
+                        "status_code": response.status_code,
+                        "response_body": response_body,
+                        "response_time": elapsed_time,
+                        "response_size": response_bytes,
+                        "request_headers": req_headers,
+                        "response_headers": dict(response.headers),
+                        "truncated": truncated,
+                        "error": None
+                    }
 
-                result = {
-                    "method": method_upper,
-                    "url": str(response.url),
-                    "payload": payload_str,
-                    "status_code": response.status_code,
-                    "response_body": response_body,
-                    "response_time": elapsed_time,
-                    "response_size": response_bytes,
-                    "request_headers": req_headers,
-                    "response_headers": dict(response.headers),
-                    "error": None
-                }
+                    logger.info(f"Async Request [{method_upper}] {url} -> {response.status_code} ({elapsed_time:.3f}s)")
+                    return result
 
-                logger.info(f"Async Request [{method_upper}] {url} -> {response.status_code} ({elapsed_time:.3f}s)")
-                return result
-
+        except httpx.TimeoutException as exc:
+            # Mirror the sync path: a timeout is synthetic 408, which the
+            # signature layer treats as a suspected request-impact signal when
+            # the baseline was healthy (not a silent status 0).
+            elapsed_time = time.time() - start_time
+            logger.warning(f"Async request timeout for [{method_upper}] {url}")
+            return {
+                "method": method_upper,
+                "url": url,
+                "payload": payload_str,
+                "status_code": 408,
+                "response_body": "",
+                "response_time": elapsed_time,
+                "response_size": 0,
+                "request_headers": req_headers,
+                "response_headers": {},
+                "truncated": False,
+                "error": f"AsyncTimeoutException: {str(exc)}"
+            }
         except Exception as exc:
             elapsed_time = time.time() - start_time
             logger.error(f"Async request error for [{method_upper}] {url}: {exc}")
@@ -230,6 +353,7 @@ class RequestEngine:
                 "response_size": 0,
                 "request_headers": req_headers,
                 "response_headers": {},
+                "truncated": False,
                 "error": f"AsyncError: {str(exc)}"
             }
 

@@ -80,33 +80,66 @@ def _is_safe_read_only_endpoint(ep_info: Dict[str, Any]) -> bool:
     return not any(token in path for token in excluded_tokens)
 
 
-def _bind_payload_to_endpoint(ep_info: Dict[str, Any], method: str, payload: str):
+# Upper bound on how many distinct fields of one endpoint get the payload.
+# Previously only fields[0] was ever probed, so 2nd/3rd parameters were never
+# tested. Bounded to keep scan time sane; concurrency absorbs the extra probes.
+MAX_PROBE_FIELDS = 3
+
+
+def _probe_targets(ep_info: Dict[str, Any], method: str, has_fixed_json: bool) -> List[str]:
+    """Field names to inject the payload into, in priority order, bounded.
+
+    Returns [] when the probe carries its own fixed JSON body (nothing to vary).
+    """
+    if has_fixed_json:
+        return []
+    fields = [field for field in (ep_info.get("form_fields") or []) if field]
+    query_fields = [field for field in (ep_info.get("query_fields") or []) if field]
+    json_fields = [field for field in (ep_info.get("json_fields") or []) if field]
+    if method.upper() in ("POST", "PUT", "PATCH") and json_fields:
+        return json_fields[:MAX_PROBE_FIELDS]
+    if fields:
+        return fields[:MAX_PROBE_FIELDS]
+    if method.upper() in ("GET", "DELETE") and query_fields:
+        return query_fields[:MAX_PROBE_FIELDS]
+    return []
+
+
+def _bind_payload_to_endpoint(ep_info: Dict[str, Any], method: str, payload: str, target_field: str = None):
     """Return named query/form data for endpoints discovered from HTML forms."""
     fields = [field for field in (ep_info.get("form_fields") or []) if field]
     query_fields = [field for field in (ep_info.get("query_fields") or []) if field]
+    # JSON targets belong to _bind_json_payload_to_endpoint; don't cross-bind.
+    if target_field is not None and target_field not in fields and target_field not in query_fields:
+        return None, None
     defaults = dict(ep_info.get("form_defaults") or {})
+    target = target_field or (fields[0] if fields else None)
     if fields and method.upper() in ["GET", "DELETE"]:
         values = {field: defaults.get(field, "") for field in fields}
-        values[fields[0]] = payload
+        values[target] = payload
         return values, None
     if fields and method.upper() in ["POST", "PUT", "PATCH"]:
         values = {key: value for key, value in defaults.items()}
         for field in fields:
             values.setdefault(field, "")
-        values[fields[0]] = payload
+        values[target] = payload
         return None, values
     if query_fields and method.upper() in ["GET", "DELETE"]:
+        target = target_field or query_fields[0]
         values = {field: "" for field in query_fields}
-        values[query_fields[0]] = payload
+        values[target] = payload
         return values, None
     return None, None
 
 
-def _bind_json_payload_to_endpoint(ep_info: Dict[str, Any], method: str, payload: str):
+def _bind_json_payload_to_endpoint(ep_info: Dict[str, Any], method: str, payload: str, target_field: str = None):
     fields = [field for field in (ep_info.get("json_fields") or []) if field]
+    if target_field is not None and target_field not in fields:
+        return None
     if fields and method.upper() in {"POST", "PUT", "PATCH"}:
+        target = target_field or fields[0]
         values = {field: "" for field in fields}
-        values[fields[0]] = payload
+        values[target] = payload
         return values
     return None
 
@@ -166,7 +199,16 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
     elif "brute" in path or "login" in path or "auth" in path:
         selected = [by_type["Broken_Authentication"]]
     else:
+        # Default queue for real-world endpoints (no path-keyword hints).
+        # Previously only 3 probe types ran here; time-based SQLi and LFI are
+        # included so genuine APIs get meaningful coverage, not just demo-app
+        # paths. The time-based probe costs nothing on clean targets (only a
+        # vulnerable target actually sleeps).
         selected = [by_type["SQL_Injection_GET"], by_type["Cross_Site_Scripting"], by_type["Command_Injection"]]
+        if "Local_File_Inclusion" in by_type:
+            selected.append(by_type["Local_File_Inclusion"])
+        if "SQL_Injection_Time" in by_type:
+            selected.append(by_type["SQL_Injection_Time"])
 
     if "Baseline_Inspection" not in {item["type"] for item in selected}:
         selected.append(by_type["Baseline_Inspection"])
@@ -235,6 +277,42 @@ _HOSTNAME_RE = re.compile(
 _IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 
 
+def _host_resolves_to_public_ip(host: str) -> bool:
+    """SSRF guard: reject targets pointing at private/internal networks.
+
+    Scans run server-side, so a target like http://169.254.169.254/ (cloud
+    instance metadata) or http://localhost/ would turn the scanner into a
+    proxy into the host's private network. Literal IPs are checked directly;
+    hostnames are resolved and every resolved address must be public.
+    A DNS failure is not treated as private (the request itself will fail
+    naturally); only positively-private addresses are rejected.
+    """
+    import ipaddress
+    import socket
+
+    def _is_private_ip(ip_str: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            return False
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+
+    # Literal IP literal (brackets already stripped by urlparse's hostname).
+    try:
+        ipaddress.ip_address(host)
+        return not _is_private_ip(host)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError):
+        return True
+    addresses = {info[4][0] for info in infos}
+    if not addresses:
+        return True
+    return not any(_is_private_ip(addr) for addr in addresses)
+
+
 def validate_target_url(target_url: Any) -> "tuple[bool, str]":
     """Validate a scan target. Returns (True, normalized_url) or (False, reason).
 
@@ -264,6 +342,11 @@ def validate_target_url(target_url: Any) -> "tuple[bool, str]":
         return False, "target URL host name looks invalid"
     if _IPV4_RE.match(host) and not all(0 <= int(o) <= 255 for o in host.split(".")):
         return False, "target URL IPv4 address is invalid"
+    # Env override for local lab testing (e.g. scanning a localhost target
+    # from the CLI). Never set this on the deployed service.
+    if os.getenv("ALLOW_PRIVATE_SCAN_TARGETS", "0").lower() not in {"1", "true", "yes", "on"}:
+        if not _host_resolves_to_public_ip(host):
+            return False, "target URL resolves to a private or internal address; only public targets can be scanned"
     return True, candidate
 
 
@@ -452,7 +535,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 json_payload=canary_creds,
                 custom_headers={"Content-Type": "application/json"}
             )
-            def run_direct_probe(test_type, method, path_suffix, headers, json_payload, marker_key):
+            def run_direct_probe(test_type, method, path_suffix, headers, json_payload, marker_key, verify_fn=None):
                 url = target_url.rstrip("/") + path_suffix
                 req_data = request_engine.send_request(
                     method,
@@ -462,6 +545,21 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 )
                 req_data["attack_category"] = test_type
                 req_data[marker_key] = True
+                # Canary verification: a 2xx on the attack request is not proof.
+                # The verify_fn performs a follow-up check (e.g. logging in as
+                # the victim with the changed password); only a passing canary
+                # lets the signature layer report Confirmed.
+                if verify_fn is not None:
+                    try:
+                        verified = bool(verify_fn())
+                    except Exception as exc:
+                        logger.warning("Canary verification for %s failed: %s", test_type, exc)
+                        verified = False
+                    if marker_key == "cross_identity_probe":
+                        req_data["canary_verified"] = verified
+                    elif marker_key == "mass_assignment_probe":
+                        req_data["privilege_verified"] = verified
+                    logger.info("Canary verification for %s: %s", test_type, "PASSED" if verified else "FAILED")
                 req_data["payload_had_effect"] = True
                 payload_str = json.dumps(json_payload) if json_payload else ""
                 features = response_parser.extract_features(req_data)
@@ -510,13 +608,25 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             )
             attacker_token = _safe_extract_auth_token(attacker_login)
             if attacker_token:
+                def _verify_bola_canary():
+                    # The attack changed the victim's password to
+                    # "hijacked_by_attacker_qa". If we can now log in AS the
+                    # victim with that password, the mutation really happened.
+                    victim_login = request_engine.send_request(
+                        "POST",
+                        target_url.rstrip("/") + "/users/v1/login",
+                        json_payload={"username": victim_creds["username"], "password": "hijacked_by_attacker_qa"},
+                        custom_headers={"Content-Type": "application/json"}
+                    )
+                    return _safe_extract_auth_token(victim_login) != ""
                 run_direct_probe(
                     "BOLA_IDOR",
                     "PUT",
                     f"/users/v1/{victim_creds['username']}/password",
                     {"Authorization": f"Bearer {attacker_token}", "Content-Type": "application/json"},
                     {"password": "hijacked_by_attacker_qa"},
-                    "cross_identity_probe"
+                    "cross_identity_probe",
+                    verify_fn=_verify_bola_canary
                 )
             else:
                 logger.info("Skipping BOLA_IDOR probe: attacker login yielded no auth token")
@@ -529,13 +639,25 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             )
             mass_assign_token = _safe_extract_auth_token(mass_login)
             if mass_assign_token:
+                def _verify_mass_assignment_canary():
+                    # The account was registered with "admin": true. Read the
+                    # stored account back: if the server persisted the elevated
+                    # flag, privilege escalation is proven.
+                    profile = request_engine.send_request(
+                        "GET",
+                        target_url.rstrip("/") + f"/users/v1/{mass_assign_creds['username']}",
+                        custom_headers={"Authorization": f"Bearer {mass_assign_token}", "Content-Type": "application/json"}
+                    )
+                    body = (profile or {}).get("response_body") or ""
+                    return bool(re.search(r'(?i)"admin"\s*:\s*true', body))
                 run_direct_probe(
                     "Mass_Assignment",
                     "DELETE",
                     f"/users/v1/{canary_creds['username']}",
                     {"Authorization": f"Bearer {mass_assign_token}"},
                     None,
-                    "mass_assignment_probe"
+                    "mass_assignment_probe",
+                    verify_fn=_verify_mass_assignment_canary
                 )
             else:
                 logger.info("Skipping Mass_Assignment probe: login yielded no auth token")
@@ -561,8 +683,21 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
             print(f"\n[{idx}/{len(discovered_endpoints)}] Testing Endpoint: [{default_method}] {base_ep_url}")
 
-            # Baseline request
+            # Baseline request. Time-based proofs (SLEEP payloads) compare the
+            # probe's response time against this baseline, so a single slow
+            # baseline sample can fabricate a "Confirmed" via normal jitter.
+            # When a time-based probe is queued, take a second baseline and
+            # use the faster of the two: a real delay must beat BOTH samples.
             baseline_req = request_engine.send_request(default_method, base_ep_url)
+            _prelim_queue = _select_test_queue(ep_info, active_test_queue)
+            needs_time_baseline = any(item.get("type") == "SQL_Injection_Time" for item in _prelim_queue)
+            if needs_time_baseline:
+                second_baseline = request_engine.send_request(default_method, base_ep_url)
+                try:
+                    if float(second_baseline.get("response_time", 0.0)) < float(baseline_req.get("response_time", 0.0)):
+                        baseline_req = second_baseline
+                except (TypeError, ValueError):
+                    pass
             baseline_telemetry = {
                 "status_code": baseline_req.get("status_code", 200),
                 "response_size": baseline_req.get("response_size", 0),
@@ -614,11 +749,20 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 test_method = _resolve_test_method(ep_info, test_item, default_method)
                 payload_str = test_item.get("payload", "")
                 custom_headers = test_item.get("headers", None)
-                query_params, form_data = _bind_payload_to_endpoint(ep_info, test_method, payload_str)
-                json_payload = test_item.get("json_payload") if test_item.get("json_payload") is not None else _bind_json_payload_to_endpoint(ep_info, test_method, payload_str)
-                if json_payload is not None and custom_headers is None:
-                    custom_headers = {"Content-Type": "application/json"}
-                prepared_requests.append((test_item, test_url, test_method, payload_str, custom_headers, query_params, form_data, json_payload))
+                fixed_json = test_item.get("json_payload")
+                # Probe every injectable field (bounded), not just the first:
+                # vulnerabilities often hide in the 2nd or 3rd parameter.
+                targets = _probe_targets(ep_info, test_method, fixed_json is not None) or [None]
+                for target_field in targets:
+                    query_params, form_data = _bind_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
+                    if fixed_json is not None:
+                        json_payload = fixed_json
+                    else:
+                        json_payload = _bind_json_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
+                    headers = dict(custom_headers) if custom_headers else None
+                    if json_payload is not None and headers is None:
+                        headers = {"Content-Type": "application/json"}
+                    prepared_requests.append((test_item, test_url, test_method, payload_str, headers, query_params, form_data, json_payload))
 
             def dispatch(prepared):
                 test_item, test_url, test_method, payload_str, custom_headers, query_params, form_data, json_payload = prepared
@@ -658,7 +802,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 ]
                 has_error = any(ind in response_body.lower() for ind in error_indicators)
 
-                if (current_size == baseline_telemetry.get("response_size", 0)
+                if (response_body == baseline_telemetry.get("response_body", "")
                     and current_status == baseline_telemetry.get("status_code", 200)
                     and current_size > 0
                     and not has_error
@@ -673,7 +817,10 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 req_data["attack_category"] = test_item.get("type")
                 req_data["cross_identity_probe"] = test_item.get("cross_identity_probe", False)
                 req_data["mass_assignment_probe"] = test_item.get("mass_assignment_probe", False)
-                features = response_parser.extract_features(req_data)
+                # Pass the baseline so the ML layer can use response-differential
+                # features (how the probe's response deviates from baseline),
+                # not just absolute response features.
+                features = response_parser.extract_features(req_data, baseline_telemetry=baseline_telemetry)
 
                 # Layer 1 - Signature Detection & Proof Verification
                 sig_res = signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)

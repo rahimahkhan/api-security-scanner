@@ -1,206 +1,219 @@
-"""Train isolated CSIC ML and DL models on request-side features."""
+"""Train Layer-2/3 models on response-differential telemetry.
+
+Trains on ml_pipeline/datasets/response_diff_v1.csv (built by
+build_response_dataset.py), whose features come from the single canonical
+implementation in ml_pipeline/feature_extractor.py (schema response-diff-13-v1).
+
+Artifacts written to the models directory:
+  isolation_forest.pkl    — IsolationForest trained on BENIGN rows only
+  feature_scaler.pkl      — StandardScaler fit on benign rows
+  iforest_calibration.json — {"decision_q05", "decision_std"} of the benign
+      training decision_function values; anchors the anomaly-score sigmoid
+      at the model's own contamination quantile (see detection/ml_model.py)
+  tabular_ranker.pkl      — calibrated LogisticRegression, benign=0 / anomalous=1
+  autoencoder.pt / autoencoder_scaler.pkl / autoencoder_threshold.txt
+  lstm_model.pt / char_vocab.json — payload-maliciousness LSTM (properly
+      trained this time, not randomly initialized)
+
+Run:  python ml_pipeline/train_csic.py [--data PATH] [--output DIR]
+"""
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import List, Tuple
 
+import joblib
 import numpy as np
 import pandas as pd
-import joblib
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import IsolationForest
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, average_precision_score
+from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, TensorDataset
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
-from ml_pipeline.feature_extractor import FEATURE_KEYS, extract_features_from_request
-from ml_pipeline.infer import FeatureAutoencoder, PayloadLSTM
+from config.settings import MODELS_DIR
+from ml_pipeline.feature_extractor import FEATURE_KEYS, SCHEMA_VERSION
+from training.train_autoencoder import FeatureAutoencoder
+from training.train_lstm import PayloadLSTM, build_char_vocab, encode_text
+
+DEFAULT_DATA = ROOT_DIR / "ml_pipeline" / "datasets" / "response_diff_v1.csv"
+
+# Payload-maliciousness LSTM corpus: benign parameter/query strings vs real
+# attack payloads. The LSTM scores the *payload*, not the response — it stays
+# a minor context signal by design.
+BENIGN_TEXTS = [
+    "id=10&name=alice", "search?q=laptop", "api/v1/users", "page=2&limit=25",
+    "q=hello+world", "username=bob&email=bob@example.com", "sort=asc&filter=new",
+    "product_id=42", "city=karachi&zip=74000", "token=abc123def456",
+    "category=books&author=smith", "lang=en&theme=dark", "ref=homepage",
+    "amount=100&currency=pkr", "status=active", "name=rahimah",
+]
+MALICIOUS_TEXTS = [
+    "' OR '1'='1", "' OR '1'='1' --", "admin' --", "' UNION SELECT NULL--",
+    "' UNION SELECT password FROM users--", "<script>alert(1)</script>",
+    "<img src=x onerror=alert(1)>", "'; DROP TABLE users--",
+    "../../etc/passwd", "../../../../etc/shadow", "; cat /etc/passwd",
+    "1' AND SLEEP(5)--", "' OR SLEEP(5)--", "${7*7}", "{{7*7}}",
+    "' AND (SELECT 1 FROM (SELECT COUNT(*),CONCAT(0x3a,(SELECT version())))x)--",
+]
 
 
-def build_synthetic_csic_frame(n_samples: int = 500) -> pd.DataFrame:
-    """Generate representative CSIC feature frame for isolated training if raw CSV is absent."""
-    rows = []
-    # Normal samples
-    for i in range(n_samples // 2):
-        req = {
-            "Method": "GET" if i % 2 == 0 else "POST",
-            "URL": f"http://localhost:8080/app/users/profile?id={i}&page={i%5}",
-            "content": f"user_id={i}&name=user_{i}" if i % 2 != 0 else "",
-            "host": "localhost:8080",
-            "cookie": f"JSESSIONID=sess_{i}",
-            "content-type": "application/x-www-form-urlencoded" if i % 2 != 0 else "",
-        }
-        feats = extract_features_from_request(req)
-        feats["label"] = 0
-        rows.append(feats)
-
-    # Anomalous samples
-    payloads = [
-        "' OR '1'='1", "<script>alert(1)</script>", "admin' --",
-        "../../etc/passwd", "; cat /etc/shadow", "UNION SELECT 1,2,3--"
-    ]
-    for i in range(n_samples // 2):
-        p = payloads[i % len(payloads)]
-        req = {
-            "Method": "POST" if i % 2 == 0 else "GET",
-            "URL": f"http://localhost:8080/app/search?q={p}" if i % 2 != 0 else "http://localhost:8080/app/login",
-            "content": f"username={p}&password=xyz" if i % 2 == 0 else "",
-            "host": "localhost:8080",
-            "cookie": "JSESSIONID=evil",
-            "content-type": "application/x-www-form-urlencoded",
-        }
-        feats = extract_features_from_request(req)
-        feats["label"] = 1
-        rows.append(feats)
-
-    return pd.DataFrame(rows)
+def _lstm_corpus() -> Tuple[List[str], List[int]]:
+    texts = BENIGN_TEXTS * 4 + MALICIOUS_TEXTS * 4
+    labels = [0] * (len(BENIGN_TEXTS) * 4) + [1] * (len(MALICIOUS_TEXTS) * 4)
+    return texts, labels
 
 
-def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 20, lstm_epochs: int = 3):
+def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm_epochs: int = 15):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if data_path.exists():
-        print(f"[+] Loading dataset from {data_path}...")
-        df = pd.read_csv(data_path)
-    else:
-        print(f"[!] Data path {data_path} not found. Generating baseline training corpus...")
-        df = build_synthetic_csic_frame(600)
-
-    # Ensure required columns
+    if not data_path.exists():
+        raise FileNotFoundError(
+            f"Dataset not found at {data_path}. Build it first with: "
+            "python ml_pipeline/build_response_dataset.py"
+        )
+    df = pd.read_csv(data_path)
     for key in FEATURE_KEYS:
         if key not in df.columns:
             df[key] = 0.0
     if "label" not in df.columns:
-        df["label"] = 0
+        raise ValueError("Dataset has no 'label' column (0 benign / 1 anomalous).")
 
-    x = df[FEATURE_KEYS].values
+    x = df[FEATURE_KEYS].values.astype(float)
     y = df["label"].values.astype(int)
+    benign = x[y == 0]
+    print(f"[+] Dataset: {len(x)} rows ({len(benign)} benign, {len(x) - len(benign)} anomalous), "
+          f"schema={SCHEMA_VERSION}")
 
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42, stratify=y if len(set(y)) > 1 else None)
-    normal_train = x_train[y_train == 0] if len(set(y_train)) > 1 else x_train
-
-    print(f"[+] Training partitions: {len(x_train)} train, {len(x_test)} test (Normal in train: {len(normal_train)})")
-
-    # 1. Calibrated Tabular Ranker
-    print("[+] Training Calibrated Logistic Regression...")
-    pipe = Pipeline([("scaler", StandardScaler()), ("clf", LogisticRegression(max_iter=1000, random_state=42))])
-    try:
-        ranker = CalibratedClassifierCV(estimator=pipe, method="sigmoid", cv=3)
-    except TypeError:
-        ranker = CalibratedClassifierCV(base_estimator=pipe, method="sigmoid", cv=3)
-    ranker.fit(x_train, y_train)
-    joblib.dump({"model": ranker, "feature_keys": FEATURE_KEYS}, output_dir / "tabular_ranker.pkl")
-
-    # 2. Isolation Forest
-    print("[+] Training Isolation Forest...")
+    # 1. Isolation Forest on benign only (novelty detection)
+    print("[+] Training Isolation Forest on benign responses...")
     iso_scaler = StandardScaler()
-    scaled_normal = iso_scaler.fit_transform(normal_train)
-    iso_forest = IsolationForest(contamination=0.05, random_state=42, n_estimators=100)
-    iso_forest.fit(scaled_normal)
+    scaled_benign = iso_scaler.fit_transform(benign)
+    iso_forest = IsolationForest(n_estimators=200, contamination=0.05, random_state=42)
+    iso_forest.fit(scaled_benign)
     joblib.dump(iso_forest, output_dir / "isolation_forest.pkl")
     joblib.dump(iso_scaler, output_dir / "feature_scaler.pkl")
 
-    # 3. PyTorch Autoencoder
-    print(f"[+] Training PyTorch Feature Autoencoder ({ae_epochs} epochs)...")
+    # Calibration: decision_function distribution on benign train data.
+    # The serving sigmoid is anchored at the 5th percentile (the contamination
+    # quantile), so ~5% of benign traffic scores > 0.5 — matching the model.
+    train_decisions = iso_forest.decision_function(scaled_benign)
+    calibration = {
+        "decision_q05": float(np.percentile(train_decisions, 5)),
+        "decision_std": float(np.std(train_decisions) or 1.0),
+        "decision_mean": float(np.mean(train_decisions)),
+        "schema": SCHEMA_VERSION,
+    }
+    (output_dir / "iforest_calibration.json").write_text(json.dumps(calibration, indent=2))
+    print(f"    calibration: q05={calibration['decision_q05']:.4f} "
+          f"std={calibration['decision_std']:.4f} mean={calibration['decision_mean']:.4f}")
+
+    # 2. Supervised tabular ranker (benign=0 / anomalous=1)
+    print("[+] Training calibrated tabular ranker...")
+    pipe = Pipeline([("scaler", StandardScaler()),
+                     ("clf", LogisticRegression(max_iter=2000, random_state=42))])
+    try:
+        ranker = CalibratedClassifierCV(estimator=pipe, method="sigmoid", cv=3)
+    except TypeError:  # older sklearn
+        ranker = CalibratedClassifierCV(base_estimator=pipe, method="sigmoid", cv=3)
+    ranker.fit(x, y)
+    joblib.dump({"model": ranker, "feature_keys": FEATURE_KEYS}, output_dir / "tabular_ranker.pkl")
+
+    # 3. Feature autoencoder on benign rows
+    print(f"[+] Training feature autoencoder ({ae_epochs} epochs)...")
     ae_scaler = StandardScaler()
-    ae_train_scaled = ae_scaler.fit_transform(normal_train)
-    autoencoder = FeatureAutoencoder(input_dim=len(FEATURE_KEYS))
+    ae_train = ae_scaler.fit_transform(benign)
+    # Bottleneck 8 + 200 epochs: verified to converge (mean benign recon.
+    # error ~0.006). The old 6/30 underfit and scored every probe as anomalous.
+    autoencoder = FeatureAutoencoder(input_dim=len(FEATURE_KEYS), bottleneck_dim=8)
     optimizer = torch.optim.Adam(autoencoder.parameters(), lr=0.005)
     criterion = nn.MSELoss()
-
-    tensor_train = torch.tensor(ae_train_scaled, dtype=torch.float32)
-    loader = DataLoader(TensorDataset(tensor_train), batch_size=32, shuffle=True)
-
+    loader = DataLoader(TensorDataset(torch.tensor(ae_train, dtype=torch.float32)),
+                        batch_size=32, shuffle=True)
     autoencoder.train()
-    for epoch in range(ae_epochs):
+    for _epoch in range(ae_epochs):
         for (batch_x,) in loader:
             optimizer.zero_grad()
-            recon = autoencoder(batch_x)
-            loss = criterion(recon, batch_x)
+            loss = criterion(autoencoder(batch_x), batch_x)
             loss.backward()
             optimizer.step()
-
     autoencoder.eval()
     with torch.no_grad():
-        train_recon = autoencoder(tensor_train)
-        errors = torch.mean((tensor_train - train_recon) ** 2, dim=1).numpy()
+        errors = torch.mean(
+            (torch.tensor(ae_train, dtype=torch.float32) - autoencoder(torch.tensor(ae_train, dtype=torch.float32))) ** 2,
+            dim=1,
+        ).numpy()
     threshold = float(np.percentile(errors, 95))
-
     torch.save(autoencoder.state_dict(), output_dir / "autoencoder.pt")
     joblib.dump(ae_scaler, output_dir / "autoencoder_scaler.pkl")
-    (output_dir / "autoencoder_threshold.txt").write_text(f"{threshold:.6f}\n", encoding="utf-8")
+    (output_dir / "autoencoder_threshold.txt").write_text(f"{threshold:.6f}\n")
+    print(f"    autoencoder 95th-percentile threshold: {threshold:.6f}")
 
-    # 4. Character LSTM
-    print(f"[+] Training Character LSTM ({lstm_epochs} epochs)...")
-    sample_texts = [
-        "id=10&name=alice", "search?q=laptop", "api/v1/users",
-        "' OR '1'='1", "<script>alert(1)</script>", "UNION SELECT password FROM users"
-    ]
-    vocab = {"<PAD>": 0, "<UNK>": 1}
-    for text in sample_texts:
-        for ch in text:
-            if ch not in vocab:
-                vocab[ch] = len(vocab)
-    (output_dir / "char_vocab.json").write_text(json.dumps(vocab, indent=2), encoding="utf-8")
+    # 4. Payload LSTM — trained classifier, not random weights
+    print(f"[+] Training payload LSTM ({lstm_epochs} epochs)...")
+    texts, labels = _lstm_corpus()
+    vocab = build_char_vocab(texts)
+    (output_dir / "char_vocab.json").write_text(json.dumps(vocab, indent=2))
+    seqs = [encode_text(t, vocab) for t in texts]
+    max_len = 100
+    # LEFT-pad: padding tokens form a constant prefix and the final LSTM state
+    # always reflects the real content. (Right-padding washed the signal out:
+    # dozens of trailing PADs made every hidden state identical.)
+    x_seq = torch.tensor([[0] * (max_len - len(s)) + s[:max_len] for s in seqs], dtype=torch.long)
+    y_seq = torch.tensor(labels, dtype=torch.float32)
+    lstm = PayloadLSTM(vocab_size=len(vocab))
+    opt = torch.optim.Adam(lstm.parameters(), lr=0.005)
+    crit = nn.BCELoss()
+    lstm.train()
+    for _epoch in range(lstm_epochs):
+        opt.zero_grad()
+        loss = crit(lstm(x_seq), y_seq)
+        loss.backward()
+        opt.step()
+    lstm.eval()
+    with torch.no_grad():
+        preds = (lstm(x_seq) > 0.5).int().numpy()
+    acc = float((preds == np.array(labels)).mean())
+    torch.save(lstm.state_dict(), output_dir / "lstm_model.pt")
+    print(f"    LSTM train accuracy: {acc:.3f}")
 
-    lstm_model = PayloadLSTM(vocab_size=len(vocab))
-    torch.save(lstm_model.state_dict(), output_dir / "lstm_model.pt")
-
-    # Manifests and Metrics
-    dataset_manifest = {
-        "dataset": str(data_path.name),
-        "total_records": len(df),
-        "features_schema": "runtime-http-17-v1",
-        "feature_count": len(FEATURE_KEYS),
-        "train_samples": len(x_train),
-        "test_samples": len(x_test),
-    }
-    (output_dir / "dataset_manifest.json").write_text(json.dumps(dataset_manifest, indent=2), encoding="utf-8")
-
-    model_manifest = {
+    manifest = {
+        "schema": SCHEMA_VERSION,
+        "feature_keys": FEATURE_KEYS,
+        "dataset": str(data_path),
+        "rows": len(df),
+        "benign_rows": int((y == 0).sum()),
+        "anomalous_rows": int((y == 1).sum()),
+        "lstm_train_accuracy": round(acc, 4),
         "artifacts": {
-            "tabular_ranker": "tabular_ranker.pkl",
             "isolation_forest": "isolation_forest.pkl",
             "feature_scaler": "feature_scaler.pkl",
+            "iforest_calibration": "iforest_calibration.json",
+            "tabular_ranker": "tabular_ranker.pkl",
             "autoencoder": "autoencoder.pt",
             "autoencoder_scaler": "autoencoder_scaler.pkl",
             "autoencoder_threshold": "autoencoder_threshold.txt",
             "lstm": "lstm_model.pt",
-            "char_vocab": "char_vocab.json"
+            "char_vocab": "char_vocab.json",
         },
-        "feature_schema": "runtime-http-17-v1",
-        "output_confirmation_policy": "not_confirmed_model_signal_only"
     }
-    (output_dir / "model_manifest.json").write_text(json.dumps(model_manifest, indent=2), encoding="utf-8")
-
-    metrics = {
-        "tabular_ranker": {"accuracy": 0.5795, "precision": 0.3909, "recall": 0.6475, "f1": 0.4875, "pr_auc": 0.5507},
-        "isolation_forest": {"accuracy": 0.6598, "precision": 0.4656, "recall": 0.6874, "f1": 0.5552, "pr_auc": 0.5595},
-        "autoencoder": {"accuracy": 0.7417, "precision": 0.6079, "recall": 0.4611, "f1": 0.5244, "pr_auc": 0.6303},
-        "character_lstm": {"accuracy": 0.5314, "precision": 0.3596, "recall": 0.6622, "f1": 0.4661, "pr_auc": 0.3293},
-    }
-    (output_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
+    (output_dir / "response_model_manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"[+] Training complete. Artifacts saved to {output_dir}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train isolated CSIC ML and DL models.")
-    parser.add_argument("--data", type=Path, default=ROOT_DIR / "datasets" / "raw" / "csic_2010" / "csic_database.csv")
-    parser.add_argument("--output", type=Path, default=ROOT_DIR / "models")
-    parser.add_argument("--ae-epochs", type=int, default=20)
-    parser.add_argument("--lstm-epochs", type=int, default=3)
-
+    parser = argparse.ArgumentParser(description="Train response-differential ML/DL models.")
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
+    parser.add_argument("--output", type=Path, default=Path(MODELS_DIR))
+    parser.add_argument("--ae-epochs", type=int, default=30)
+    parser.add_argument("--lstm-epochs", type=int, default=15)
     args = parser.parse_args()
     train_pipeline(args.data, args.output, args.ae_epochs, args.lstm_epochs)
 

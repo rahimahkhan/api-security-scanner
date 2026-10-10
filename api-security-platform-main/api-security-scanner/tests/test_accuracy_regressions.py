@@ -38,6 +38,8 @@ def test_empty_json_object_is_transmitted():
 
 
 def test_blank_query_parameter_is_counted():
+    # The response-differential schema no longer counts query params; it
+    # measures the response. A clean 200 probe must score as non-anomalous.
     features = ResponseParser().extract_features(
         {
             "method": "GET",
@@ -45,10 +47,12 @@ def test_blank_query_parameter_is_counted():
             "payload": "",
             "status_code": 200,
             "response_size": 0,
+            "response_body": "",
             "request_headers": {},
         }
     )
-    assert features["query_param_count"] == 2
+    assert features["status_class"] == 2
+    assert features["error_keyword_count"] == 0
 
 
 def test_numeric_object_url_without_sensitive_data_is_not_confirmed_bola():
@@ -232,8 +236,12 @@ def test_discovery_normalizes_dot_segment_query_route_without_losing_origin():
         "https://pentest-ground.com:4280/vulnerabilities/fi/.?page=include.php",
         timeout=1,
     )
-    assert discovery.base_url == "https://pentest-ground.com:4280/vulnerabilities/fi/?page=include.php"
-    assert discovery.normalize_url("https://pentest-ground.com:4280/vulnerabilities/fi/.?page=include.php") == discovery.base_url
+    # The crawl seed keeps the exact user-supplied URL (query included)...
+    assert discovery.seed_url == "https://pentest-ground.com:4280/vulnerabilities/fi/?page=include.php"
+    # ...while relative paths join against a clean base so the query string
+    # cannot corrupt joined URLs (".../search?q=x/api").
+    assert discovery.base_url == "https://pentest-ground.com:4280/vulnerabilities/fi"
+    assert discovery.normalize_url("https://pentest-ground.com:4280/vulnerabilities/fi/.?page=include.php") == discovery.seed_url
 
 
 def test_endpoint_dedup_merges_form_metadata(monkeypatch):
@@ -301,7 +309,10 @@ def test_form_binding_preserves_submit_defaults():
     assert form_data == {"Submit": "Submit", "ip": "; cat /etc/passwd"}
 
 
-def test_endpoint_dedup_prefers_real_form_method_over_link_method():
+def test_endpoint_dedup_keeps_every_http_method():
+    # The same path exposed over several methods must keep one entry per
+    # method: GET /exec and POST /exec are both scanned (previously the POST
+    # was silently merged away and never tested).
     from core.discovery import EndpointDiscovery
 
     discovery = EndpointDiscovery("http://example.test", timeout=1)
@@ -313,14 +324,16 @@ def test_endpoint_dedup_prefers_real_form_method_over_link_method():
         {"url": "http://example.test/vulnerabilities/exec/", "method": "POST", "form_method": "POST", "form_fields": ["ip"], "form_defaults": {"Submit": "Submit"}},
     ]
     endpoints = discovery.discover()
-    assert endpoints == [{
-        "url": "http://example.test/vulnerabilities/exec/",
-        "method": "POST",
-        "query_fields": [],
-        "form_method": "POST",
-        "form_fields": ["ip"],
-        "form_defaults": {"Submit": "Submit"},
-    }]
+    assert endpoints == [
+        {"url": "http://example.test/vulnerabilities/exec/", "method": "GET", "query_fields": []},
+        {
+            "url": "http://example.test/vulnerabilities/exec/",
+            "method": "POST",
+            "form_method": "POST",
+            "form_fields": ["ip"],
+            "form_defaults": {"Submit": "Submit"},
+        },
+    ]
 
 
 def test_generic_linux_server_information_is_not_command_execution_proof():

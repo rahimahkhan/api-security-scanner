@@ -1,0 +1,36 @@
+{
+  "schema": "response-diff-14-v1",
+  "feature_keys": [
+    "status_changed",
+    "size_delta_ratio",
+    "time_delta_ratio",
+    "body_diff_ratio",
+    "content_type_changed",
+    "error_keyword_delta",
+    "payload_reflected",
+    "unsafe_reflection",
+    "status_class",
+    "response_size_log",
+    "response_time_s",
+    "error_keyword_count",
+    "sensitive_field_count",
+    "payload_length_log",
+    "encoded_method"
+  ],
+  "dataset": "/home/hatch/workspace/api-security-scanner/api-security-platform-main/api-security-scanner/ml_pipeline/datasets/response_diff_v1.csv",
+  "rows": 686,
+  "benign_rows": 434,
+  "anomalous_rows": 252,
+  "lstm_train_accuracy": 1.0,
+  "artifacts": {
+    "isolation_forest": "isolation_forest.pkl",
+    "feature_scaler": "feature_scaler.pkl",
+    "iforest_calibration": "iforest_calibration.json",
+    "tabular_ranker": "tabular_ranker.pkl",
+    "autoencoder": "autoencoder.pt",
+    "autoencoder_scaler": "autoencoder_scaler.pkl",
+    "autoencoder_threshold": "autoencoder_threshold.txt",
+    "lstm": "lstm_model.pt",
+    "char_vocab": "char_vocab.json"
+  }
+}

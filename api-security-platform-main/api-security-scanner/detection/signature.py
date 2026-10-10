@@ -256,7 +256,9 @@ class SignatureDetector:
             }
 
         # Hard Response Gate 2: WAF Block / Edge Block / 404 Not Found
-        if resp_status in [403, 404, 405, 429, 502, 503, 504] or (resp_status == 202 and resp_size == 0):
+        # (A 202 Accepted with an empty body is a legitimate async response,
+        # not a block — it flows through normal analysis.)
+        if resp_status in [403, 404, 405, 429, 502, 503, 504]:
             status_desc = "Resource Not Found" if resp_status == 404 else "WAF / Edge Block"
             return {
                 "matched": False,
@@ -288,7 +290,12 @@ class SignatureDetector:
             if expected_category == "SQL_Injection_Credential":
                 expected_category = "SQL_Injection"
             categories = [expected_category] if expected_category in self.REGEX_RULES else []
-            categories += [category for category in ["SQL_Injection", "XSS", "Command_Injection", "Local_File_Inclusion", "XXE", "GraphQL_Introspection", "Open_Redirect", "Auth_Weakness", "BOLA_IDOR"] if category != expected_category]
+            # BOLA_IDOR is intentionally excluded from keyword auto-categorization:
+            # merely scanning a URL like /users/123 must not label the probe as a
+            # BOLA test. BOLA is only categorized via the cross_identity_probe
+            # marker (set by the dedicated proof probe), or via the response-based
+            # fallback check below (sensitive data returned without auth).
+            categories += [category for category in ["SQL_Injection", "XSS", "Command_Injection", "Local_File_Inclusion", "XXE", "GraphQL_Introspection", "Open_Redirect", "Auth_Weakness"] if category != expected_category]
             for category in categories:
                 rules = self.REGEX_RULES.get(category, [])
                 for rule in rules:
@@ -320,6 +327,40 @@ class SignatureDetector:
         status_changed = resp_status != baseline_status
         differential_signal = bool(baseline_telemetry) and (status_changed or abs(size_delta) >= 64 or body_difference_ratio >= 0.25)
 
+        # Cross-category response-evidence sweep (M2 fix): the server's response
+        # is stronger evidence than the payload's syntax guess. If the body
+        # proves a DIFFERENT vulnerability class than the payload category
+        # suggests (e.g. an XSS payload triggered a SQL error), the response
+        # evidence wins and the finding is attributed correctly.
+        response_evidence_category = None
+        response_evidence_detail = ""
+        if payload:
+            _sql_err = next((err for err in self.SQL_ERROR_PATTERNS if re.search(err, resp_body)), None)
+            _cmd_out = next((pat for pat in self.CMD_OUTPUT_PATTERNS if re.search(pat, resp_body)), None)
+            _lfi_sig = next((sig for sig in self.LFI_OUTPUT_PATTERNS if re.search(sig, resp_body)), None)
+            if _sql_err:
+                response_evidence_category, response_evidence_detail = "SQL_Injection", f"SQL Error signature matched: {_sql_err}"
+            elif _cmd_out:
+                response_evidence_category, response_evidence_detail = "Command_Injection", f"Command execution signature matched: {_cmd_out}"
+            elif _lfi_sig and resp_size > 0:
+                response_evidence_category, response_evidence_detail = "Local_File_Inclusion", f"Local file content signature matched: {_lfi_sig}"
+            if response_evidence_category and response_evidence_category != candidate_category:
+                # Don't steal the finding when the payload's own category also
+                # has response evidence (e.g. /etc/passwd content matches both
+                # the LFI and command-output pattern lists) — the payload
+                # context disambiguates. Only re-attribute when the payload's
+                # category has no response evidence of its own.
+                _candidate_has_evidence = (
+                    (candidate_category == "SQL_Injection" and _sql_err is not None)
+                    or (candidate_category == "Command_Injection" and _cmd_out is not None)
+                    or (candidate_category == "Local_File_Inclusion" and _lfi_sig is not None)
+                    or (candidate_category == "XXE" and _lfi_sig is not None)
+                )
+                if not _candidate_has_evidence:
+                    candidate_category = response_evidence_category
+                    candidate_rule = response_evidence_detail
+                    attack_type = candidate_category
+
         # Strict Proof Verifiers Criteria (Section 3)
         if candidate_category:
             attack_type = candidate_category
@@ -328,7 +369,7 @@ class SignatureDetector:
             if candidate_category == "XSS":
                 # Verbatim unescaped Reflection check in text/html or application/xml
                 is_html_xml = any(ct in content_type for ct in ["text/html", "application/xml"])
-                if payload and payload in resp_body and is_html_xml and resp_size > 0 and resp_status == 200:
+                if payload and payload in resp_body and is_html_xml and resp_size > 0 and 200 <= resp_status < 300:
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -420,7 +461,7 @@ class SignatureDetector:
             elif candidate_category == "XXE":
                 matched_xxe_sig = next((pattern for pattern in self.XXE_OUTPUT_PATTERNS if re.search(pattern, resp_body)), None)
                 is_xml_probe = bool(re.search(r"(?is)<!DOCTYPE[^>]+(?:<!ENTITY|SYSTEM)", payload)) and "xml" in content_type
-                if matched_xxe_sig and is_xml_probe and resp_status == 200 and resp_size > 0:
+                if matched_xxe_sig and is_xml_probe and 200 <= resp_status < 300 and resp_size > 0:
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -437,7 +478,7 @@ class SignatureDetector:
 
             elif candidate_category == "Local_File_Inclusion":
                 matched_lfi_sig = next((pattern for pattern in self.LFI_OUTPUT_PATTERNS if re.search(pattern, resp_body)), None)
-                if matched_lfi_sig and resp_status == 200 and resp_size > 0:
+                if matched_lfi_sig and 200 <= resp_status < 300 and resp_size > 0:
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -462,13 +503,22 @@ class SignatureDetector:
                     confidence = "High"
                     points = 40
                     proof_of_concept = f"Command execution signature matched: {matched_cmd_sig}"
-                elif time_delta > 3.0:
+                elif time_delta > 3.0 and re.search(r"(?i)\bsleep\b", payload):
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
                     confidence = "High"
                     points = 40
-                    proof_of_concept = f"Time-based Command Injection delay detected: {time_delta:.2f}s > 3.00s"
+                    proof_of_concept = f"Time-based Command Injection delay detected for an explicit delay payload: {time_delta:.2f}s > 3.00s"
+                elif time_delta > 3.0:
+                    # Slowness alone is not proof: the shipped payloads contain
+                    # no delay function, so a slow response is only a lead.
+                    matched = True
+                    has_proof = False
+                    finding_status = "Suspected"
+                    confidence = "Low"
+                    points = 10
+                    proof_of_concept = f"Response was slow ({time_delta:.2f}s > 3.00s) but the payload contains no delay function; execution not proven"
                 else:
                     matched = True
                     has_proof = False
@@ -498,12 +548,20 @@ class SignatureDetector:
 
             elif candidate_category == "BOLA_IDOR":
                 if telemetry_data.get("cross_identity_probe") and resp_status in [200, 204]:
-                    matched = True
-                    has_proof = True
-                    finding_status = "Confirmed"
-                    confidence = "High"
-                    points = 45
-                    proof_of_concept = "Authenticated as one user, successfully mutated a different user's object via path parameter - object ownership was never checked"
+                    if telemetry_data.get("canary_verified"):
+                        matched = True
+                        has_proof = True
+                        finding_status = "Confirmed"
+                        confidence = "High"
+                        points = 45
+                        proof_of_concept = "Authenticated as one user, mutated a different user's object via path parameter, then verified the mutation by authenticating as the victim: object ownership was never checked"
+                    else:
+                        matched = True
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Low"
+                        points = 15
+                        proof_of_concept = "Cross-identity mutation returned 2xx but the mutation was not verified against the victim account; exploit proof not established"
                 else:
                     auth_header = telemetry_data.get("request_headers", {}).get("Authorization", "")
                     has_sensitive_data = any(re.search(pat, resp_body, re.I) for pat in [r"\"email\":", r"\"ssn\":", r"\"password\":", r"\"role\":", r"\"token\":", r"\"username\":"])
@@ -524,16 +582,24 @@ class SignatureDetector:
 
             elif candidate_category == "Mass_Assignment":
                 if telemetry_data.get("mass_assignment_probe") and resp_status in [200, 204]:
-                    matched = True
-                    has_proof = True
-                    finding_status = "Confirmed"
-                    confidence = "High"
-                    points = 45
-                    proof_of_concept = (
-                        "Registered a new account with an unexpected 'admin' field in the request body; "
-                        "the server accepted it, and the resulting account was later able to perform an "
-                        "admin-only action, proving unauthorized privilege escalation"
-                    )
+                    if telemetry_data.get("privilege_verified"):
+                        matched = True
+                        has_proof = True
+                        finding_status = "Confirmed"
+                        confidence = "High"
+                        points = 45
+                        proof_of_concept = (
+                            "Registered a new account with an unexpected 'admin' field in the request body; "
+                            "the server stored the elevated privilege (verified by reading the account back), "
+                            "proving unauthorized privilege escalation"
+                        )
+                    else:
+                        matched = True
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Low"
+                        points = 15
+                        proof_of_concept = "Extra 'admin' field accepted at registration but the stored privilege was not verified; exploit proof not established"
                 else:
                     matched = True
                     has_proof = False

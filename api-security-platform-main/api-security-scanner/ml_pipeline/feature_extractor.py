@@ -1,27 +1,78 @@
+"""Canonical response-differential feature definitions (schema: response-diff-13-v1).
+
+This module is the SINGLE source of truth for Layer-2/3 feature extraction.
+Every other component imports from here:
+
+  - core/response_parser.py  (serving time — ResponseParser.extract_features delegates here)
+  - ml_pipeline/train_csic.py (training time — dataset builder + trainer use this)
+  - detection/ml_model.py     (imports FEATURE_KEYS)
+  - detection/deep_learning.py (imports FEATURE_KEYS)
+
+Design
+------
+The ML layer is a *response* anomaly detector. Features describe the probe's
+HTTP response and — when a baseline response is supplied — how that response
+*deviates* from the baseline. A benign probe returns a response that looks
+like the baseline (same status, similar size, fast, no error text); an
+exploited probe does not (SQL error page, reflected payload, 5xx, delay).
+
+Request-side measurements are deliberately limited to two minor context
+features (payload_length_log, encoded_method). They can never dominate the
+signal the way the old 17-feature request-side schema did.
+
+When no baseline is available the differential features degrade to 0 and the
+absolute response features (status_class, response_size_log, response_time_s,
+error_keyword_count, sensitive_field_count) still carry signal.
+"""
+
+import difflib
 import math
 import re
-from typing import Dict, Any
-from urllib.parse import urlparse, parse_qs
+from typing import Any, Dict, List, Optional
 
+# ---------------------------------------------------------------------------
+# Feature schema (documented here — the one place)
+# ---------------------------------------------------------------------------
+# Differential vs baseline (0 when no baseline supplied):
+#   status_changed        0/1  — probe status code differs from baseline status
+#   size_delta_ratio      signed (probe-base)/max(base,1), clipped to [-2, 2]
+#   time_delta_ratio      signed (probe-base)/max(base,0.05), clipped to [-2, 10]
+#   body_diff_ratio       1 - difflib similarity between baseline and probe bodies, 0..1
+#                       (0 = identical, higher = more different)
+#   content_type_changed  0/1  — response content-type class differs
+#   error_keyword_delta   max(0, probe_err - base_err), clipped to [0, 10]
+#   payload_reflected     0/1  — payload verbatim in probe body but not baseline
+#   unsafe_reflection     0/1  — payload reflected where it can execute: verbatim
+#                       in an HTML/XML response (not JSON/data). A safe JSON echo
+#                       sets payload_reflected=1 but unsafe_reflection=0.
+# Absolute response features:
+#   status_class          0 (none), 2, 3, 4, 5
+#   response_size_log     log10(1 + response_size)
+#   response_time_s       response time in seconds, clipped to [0, 30]
+#   error_keyword_count   error-indicator keywords in probe body, clipped [0, 10]
+#   sensitive_field_count sensitive patterns in probe body, clipped to [0, 8]
+# Minor request context:
+#   payload_length_log    log10(1 + len(payload))
+#   encoded_method        GET=1, POST=2, PUT=3, DELETE=4, PATCH=5, OPTIONS=6, HEAD=7
 FEATURE_KEYS = [
+    "status_changed",
+    "size_delta_ratio",
+    "time_delta_ratio",
+    "body_diff_ratio",
+    "content_type_changed",
+    "error_keyword_delta",
+    "payload_reflected",
+    "unsafe_reflection",
+    "status_class",
+    "response_size_log",
+    "response_time_s",
+    "error_keyword_count",
+    "sensitive_field_count",
+    "payload_length_log",
     "encoded_method",
-    "path_depth",
-    "url_length",
-    "query_param_count",
-    "query_string_length",
-    "payload_length",
-    "payload_entropy",
-    "special_char_count",
-    "header_count",
-    "auth_header_present",
-    "status_code",
-    "response_size",
-    "keyword_risk_score",
-    "param_name_risk",
-    "url_encoded_ratio",
-    "payload_digit_ratio",
-    "has_sql_structure",
 ]
+
+SCHEMA_VERSION = "response-diff-14-v1"
 
 METHOD_ENCODING = {
     "GET": 1,
@@ -33,179 +84,209 @@ METHOD_ENCODING = {
     "HEAD": 7,
 }
 
+# Error indicators that appear in application error pages (SQL errors,
+# tracebacks, driver messages). Counted in the *response body*.
+ERROR_KEYWORDS = [
+    "sql", "syntax", "exception", "traceback", "mysql", "ora-",
+    "pg::", "sqlite", "odbc", "jdbc", "stack trace", "fatal error",
+    "warning:", "notice:", "query failed", "database error",
+]
 
-def calculate_shannon_entropy(data: str) -> float:
-    if not data:
-        return 0.0
-    entropy = 0.0
-    length = len(data)
-    freq: Dict[str, int] = {}
-    for char in data:
-        freq[char] = freq.get(char, 0) + 1
-    for count in freq.values():
-        p = count / length
-        entropy -= p * math.log2(p)
-    return round(entropy, 4)
+SENSITIVE_FIELD_PATTERNS = [
+    r"password",
+    r"passwd",
+    r"secret",
+    r"token",
+    r"api[_-]?key",
+    r"auth[_-]?token",
+    r"access[_-]?token",
+    r"card[_-]?number",
+    r"credit[_-]?card",
+    r"ssn",
+    r"private[_-]?key",
+]
+
+# Cap body sizes before diffing so a multi-MB dump can't stall extraction.
+_MAX_DIFF_CHARS = 20000
 
 
-def count_special_characters(text: str) -> int:
-    if not text:
+def _safe_status_code(telemetry: Dict[str, Any]) -> int:
+    """Extract status code, mapping None/missing/garbage to 0 (never raises)."""
+    raw = telemetry.get("status_code", 0)
+    if raw is None:
         return 0
-    return len(re.findall(r"[^\w\s]", text))
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
 
 
-def extract_features_from_request(req_data: Dict[str, Any]) -> Dict[str, Any]:
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return default
+    if math.isnan(result) or math.isinf(result):
+        return default
+    return result
+
+
+def _content_type_class(headers: Dict[str, Any]) -> str:
+    if not headers:
+        return ""
+    for key, value in headers.items():
+        if str(key).lower() == "content-type":
+            return str(value).split(";")[0].strip().lower()
+    return ""
+
+
+def _count_error_keywords(body: str) -> int:
+    if not body:
+        return 0
+    lowered = body.lower()
+    return sum(1 for kw in ERROR_KEYWORDS if kw in lowered)
+
+
+def _count_sensitive_fields(body: str) -> int:
+    if not body:
+        return 0
+    return sum(1 for pattern in SENSITIVE_FIELD_PATTERNS if re.search(pattern, body, re.IGNORECASE))
+
+
+def _clip(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def extract_response_features(
+    telemetry: Dict[str, Any],
+    baseline: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Extract the canonical response-differential feature dict.
+
+    Args:
+        telemetry: probe telemetry with keys like the scanner's req_data —
+            status_code, response_size, response_time, response_body,
+            response_headers, payload, method.
+        baseline: optional baseline telemetry (same keys) for the same
+            endpoint without the attack payload. When omitted, differential
+            features are 0.
+
+    Returns:
+        dict with one entry per FEATURE_KEYS plus "feature_vector"
+        (ordered list matching FEATURE_KEYS).
     """
-    Extracts the 17-feature schema (runtime-http-17-v1) from a request dictionary.
-    Supports standard scanner format and CSIC 2010 request-side formats.
-    """
-    method_str = str(req_data.get("Method") or req_data.get("method") or "GET").strip().upper()
-    encoded_method = METHOD_ENCODING.get(method_str, 1)
+    telemetry = telemetry or {}
+    baseline = baseline or {}
+    has_baseline = bool(baseline)
 
-    raw_url = str(req_data.get("URL") or req_data.get("url") or "")
-    url_clean = raw_url.split(" HTTP")[0].strip()
-    parsed_url = urlparse(url_clean)
+    # --- Probe response attributes (absolute) ---
+    status_code = _safe_status_code(telemetry)
+    status_class = status_code // 100 if status_code >= 100 else 0
+    response_size = max(0, int(_safe_float(telemetry.get("response_size", 0))))
+    response_time = _clip(_safe_float(telemetry.get("response_time", 0.0)), 0.0, 30.0)
+    probe_body = str(telemetry.get("response_body") or "")
+    probe_headers = telemetry.get("response_headers") or {}
+    if not isinstance(probe_headers, dict):
+        probe_headers = {}
 
-    path_segments = [seg for seg in parsed_url.path.split("/") if seg]
-    path_depth = len(path_segments)
-    url_length = len(url_clean)
+    error_keyword_count = _clip(_count_error_keywords(probe_body), 0, 10)
+    sensitive_field_count = _clip(_count_sensitive_fields(probe_body), 0, 8)
 
-    query_string = parsed_url.query
-    query_params = parse_qs(query_string, keep_blank_values=True)
-    query_param_count = len(query_params)
-    query_string_length = len(query_string)
+    # --- Minor request context (never the main signal) ---
+    payload = str(telemetry.get("payload") or "")
+    payload_length_log = round(math.log10(1 + len(payload)), 4)
+    method_str = str(telemetry.get("method", "GET")).upper()
+    encoded_method = METHOD_ENCODING.get(method_str, 0)
 
-    payload = str(req_data.get("content") if req_data.get("content") is not None else (req_data.get("payload") or ""))
-    payload_length = len(payload)
-    payload_entropy = calculate_shannon_entropy(payload)
-    # Match training (prepare_dataset.py): special chars counted over payload + URL
-    # with the same explicit character set.
-    _TRAIN_SPECIAL = set("'\";<>(){}[]&|`!@#$%^*\\=+")
-    special_char_count = sum(1 for c in (payload + url_clean) if c in _TRAIN_SPECIAL)
+    # --- Differential vs baseline ---
+    status_changed = 0
+    size_delta_ratio = 0.0
+    time_delta_ratio = 0.0
+    body_diff_ratio = 0.0
+    content_type_changed = 0
+    error_keyword_delta = 0
+    payload_reflected = 0
 
-    # Header analysis. For CSIC-2010-format dicts, replicate the training count:
-    # number of non-empty values among the 10 recorded header columns.
-    # For scanner-format dicts, count the request_headers mapping instead.
-    _CSIC_HEADER_COLS = (
-        "User-Agent", "Pragma", "Cache-Control", "Accept", "Accept-encoding",
-        "Accept-charset", "language", "cookie", "content-type", "connection",
+    if has_baseline:
+        base_status = _safe_status_code(baseline)
+        if status_code != base_status:
+            status_changed = 1
+
+        base_size = max(0, int(_safe_float(baseline.get("response_size", 0))))
+        size_delta_ratio = round(_clip((response_size - base_size) / max(base_size, 1), -2.0, 2.0), 4)
+
+        base_time = max(0.0, _safe_float(baseline.get("response_time", 0.0)))
+        time_delta_ratio = round(_clip((response_time - base_time) / max(base_time, 0.05), -2.0, 10.0), 4)
+
+        base_body = str(baseline.get("response_body") or "")
+        if base_body or probe_body:
+            similarity = difflib.SequenceMatcher(
+                None,
+                base_body[:_MAX_DIFF_CHARS],
+                probe_body[:_MAX_DIFF_CHARS],
+            ).ratio()
+            body_diff_ratio = round(1.0 - similarity, 4)
+
+        base_ct = _content_type_class(baseline.get("response_headers") or {})
+        probe_ct = _content_type_class(probe_headers)
+        if base_ct and probe_ct and base_ct != probe_ct:
+            content_type_changed = 1
+
+        base_err = _count_error_keywords(base_body)
+        error_keyword_delta = int(_clip(max(0, _count_error_keywords(probe_body) - base_err), 0, 10))
+
+        if len(payload) >= 4 and payload in probe_body and payload not in base_body:
+            payload_reflected = 1
+
+    # unsafe_reflection: the payload is reflected where it can execute.
+    # Verbatim reflection inside an HTML/XML document is dangerous (XSS);
+    # the same bytes inside a JSON string (or any non-HTML content) are inert
+    # data. This is the feature that lets the model tell a safe echo apart
+    # from a vulnerable reflection.
+    unsafe_reflection = 0
+    if payload_reflected:
+        ct = str((probe_headers or {}).get("content-type", "") or "").lower()
+        # Also sniff the body: some apps serve HTML without a proper header.
+        looks_like_html = ("text/html" in ct or "application/xml" in ct
+                           or probe_body.lstrip()[:1] == "<")
+        if looks_like_html:
+            unsafe_reflection = 1
+
+    feature_vector = [
+        status_changed,
+        size_delta_ratio,
+        time_delta_ratio,
+        body_diff_ratio,
+        content_type_changed,
+        error_keyword_delta,
+        payload_reflected,
+        unsafe_reflection,
+        status_class,
+        round(math.log10(1 + response_size), 4),
+        round(response_time, 4),
+        error_keyword_count,
+        sensitive_field_count,
+        payload_length_log,
+        encoded_method,
+    ]
+
+    feature_dict = dict(zip(FEATURE_KEYS, feature_vector))
+    feature_dict["feature_vector"] = feature_vector
+    feature_dict["schema_version"] = SCHEMA_VERSION
+    return feature_dict
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compatibility shim for serving-time callers that only have the
+# old request-side extractor name. Deprecated: use extract_response_features.
+# ---------------------------------------------------------------------------
+def extract_features_from_request(req_data: Dict[str, Any]) -> Dict[str, Any]:  # noqa: D103
+    import warnings
+
+    warnings.warn(
+        "extract_features_from_request is deprecated: it measured the scanner's own "
+        "request, not the target's response. Use extract_response_features instead.",
+        DeprecationWarning,
+        stacklevel=2,
     )
-    if any(col in req_data for col in _CSIC_HEADER_COLS):
-        header_count = sum(
-            1 for col in _CSIC_HEADER_COLS
-            if str(req_data.get(col, "")).strip() not in ("", "nan")
-        )
-    else:
-        headers = req_data.get("request_headers") or {}
-        if not isinstance(headers, dict):
-            headers = {}
-        header_count = len(headers)
-        if "host" in req_data and req_data["host"]:
-            header_count += 1
-        if "cookie" in req_data and req_data["cookie"]:
-            header_count += 1
-        if "content-type" in req_data and req_data["content-type"]:
-            header_count += 1
-        header_count = max(header_count, 1)
-
-    # Auth header check (match training: any auth material or a session cookie)
-    auth_header_present = 0
-    cookie_str = str(req_data.get("cookie") or "").lower()
-    if "session" in cookie_str or "auth" in cookie_str or "token" in cookie_str or "jwt" in cookie_str:
-        auth_header_present = 1
-    elif cookie_str.strip():
-        # Training marks any present cookie as auth material.
-        auth_header_present = 1
-    headers = req_data.get("request_headers") or {}
-    if isinstance(headers, dict):
-        for h, hv in headers.items():
-            h_l = str(h).lower()
-            if h_l in ["authorization", "x-api-key", "x-access-token"]:
-                auth_header_present = 1
-                break
-            if isinstance(hv, str) and hv.strip().lower().startswith("bearer "):
-                auth_header_present = 1
-                break
-    for h, hv in headers.items():
-        h_l = str(h).lower()
-        if h_l in ["authorization", "x-api-key", "x-access-token"]:
-            auth_header_present = 1
-            break
-        if isinstance(hv, str) and hv.strip().lower().startswith("bearer "):
-            auth_header_present = 1
-            break
-
-    # Request-only CSIC dataset records have no response telemetry.
-    # prepare_dataset.py trains with status_code=200 and response_size=min(payload_len*2, 5000),
-    # so the defaults here must match the training assumption; otherwise the
-    # standardized features explode (e.g. status_code 0 -> z-score -200).
-    status_code = int(req_data.get("status_code") or 200)
-    response_size = int(req_data.get("response_size") or min(payload_length * 2, 5000))
-
-    risk_keywords = [
-        "select", "union", "insert", "drop",
-        "delete", "update", "exec", "script",
-        "alert", "onerror", "onload", "eval",
-        "base64", "passwd", "shadow", "whoami",
-        "null", "none", "true", "admin", "root"
-    ]
-    combined_text = (payload + " " + url_clean).lower()
-    words = re.findall(r"\w+", combined_text)
-    total_words = max(len(words), 1)
-    keyword_matches = sum(1 for kw in risk_keywords if kw in combined_text)
-    keyword_risk_score = round(min(keyword_matches / total_words, 1.0), 4)
-
-    risky_params = [
-        "id", "user", "uid", "admin", "debug",
-        "test", "token", "key", "pass", "pwd",
-        "cmd", "exec", "query", "sql", "file"
-    ]
-    param_names = [k.lower() for k in query_params.keys()]
-    if payload.strip().startswith("{") and payload.strip().endswith("}"):
-        try:
-            import json
-            j_data = json.loads(payload)
-            if isinstance(j_data, dict):
-                param_names.extend([k.lower() for k in j_data.keys()])
-        except Exception:
-            pass
-    elif "=" in payload:
-        try:
-            body_params = parse_qs(payload, keep_blank_values=True)
-            param_names.extend([k.lower() for k in body_params.keys()])
-        except Exception:
-            pass
-
-    param_name_risk = sum(1 for p in param_names if any(rp in p for rp in risky_params))
-    url_encoded_ratio = round(url_clean.count("%") / max(len(url_clean), 1), 4)
-    digit_count = sum(1 for c in payload if c.isdigit())
-    payload_digit_ratio = round(digit_count / max(len(payload), 1), 4)
-
-    sql_patterns = [
-        r"'\s*(or|and)\s+'",
-        r"\bunion\b.*\bselect\b",
-        r"--\s*$",
-        r";\s*(drop|delete|insert|update)",
-        r"'\s*=\s*'"
-    ]
-    has_sql_structure = 1 if any(re.search(p, combined_text, re.IGNORECASE) for p in sql_patterns) else 0
-
-    return {
-        "encoded_method": encoded_method,
-        "path_depth": path_depth,
-        "url_length": url_length,
-        "query_param_count": query_param_count,
-        "query_string_length": query_string_length,
-        "payload_length": payload_length,
-        "payload_entropy": payload_entropy,
-        "special_char_count": special_char_count,
-        "header_count": header_count,
-        "auth_header_present": auth_header_present,
-        "status_code": status_code,
-        "response_size": response_size,
-        "keyword_risk_score": keyword_risk_score,
-        "param_name_risk": param_name_risk,
-        "url_encoded_ratio": url_encoded_ratio,
-        "payload_digit_ratio": payload_digit_ratio,
-        "has_sql_structure": has_sql_structure,
-    }
+    return extract_response_features(req_data or {}, None)

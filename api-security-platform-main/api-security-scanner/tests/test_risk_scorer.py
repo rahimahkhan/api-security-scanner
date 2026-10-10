@@ -10,7 +10,7 @@ def test_risk_scorer_calculations():
 
     res = scorer.calculate_risk(mock_sig, mock_ml, mock_dl, "http://localhost/api", "GET")
     
-    assert res["total_score"] == 70.0  # 3 layers -> conf 1.0 -> 70.0
+    assert res["total_score"] == 100.0  # 70 raw + 30 verified-proof bonus, capped at 100
     assert res["severity"] == "CRITICAL"
     assert res["confidence_level"] == 3
     assert res["finding_status"] == "Confirmed"
@@ -75,7 +75,10 @@ def test_confirmed_proof_gets_full_confidence_without_layer_agreement():
 
     assert result["confidence_multiplier"] == 1.0
     assert result["layers_triggered"] == 1
-    assert result["total_score"] == 40.0
+    # Verified proof carries a +30 bonus: a lone confirmed signature (40)
+    # reaches 70 = CRITICAL, per "CRITICAL is reserved for verified proof".
+    assert result["total_score"] == 70.0
+    assert result["severity"] == "CRITICAL"
     assert result["finding_status"] == "Confirmed"
 
 

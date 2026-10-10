@@ -15,24 +15,22 @@ ensure_numpy2_pickle_compat()
 
 from config.logging_config import logger
 from config.settings import MODELS_DIR, LSTM_MODEL_PATH, AUTOENCODER_PATH
+# Canonical feature schema — the single source of truth, shared with training
+# (ml_pipeline/feature_extractor.py). The autoencoder is retrained on this
+# schema; its input_dim follows FEATURE_KEYS instead of a hardcoded 17.
+from ml_pipeline.feature_extractor import FEATURE_KEYS
 from training.train_lstm import PayloadLSTM, encode_text
 from training.train_autoencoder import FeatureAutoencoder
 
 class DeepLearningDetector:
     """
     Layer 3 — Deep Learning Detection Engine
-    Integrates character-level LSTM (malicious payload probability)
-    and PyTorch Autoencoder (reconstruction error score).
+    Integrates character-level LSTM (malicious payload probability — a payload
+    signal, kept as minor context by design) and PyTorch Autoencoder
+    (reconstruction error over the canonical response-differential features).
     """
 
-    FEATURE_KEYS = [
-        "encoded_method", "path_depth", "url_length", "query_param_count",
-        "query_string_length", "payload_length", "payload_entropy",
-        "special_char_count", "header_count", "auth_header_present",
-        "status_code", "response_size", "keyword_risk_score",
-        "param_name_risk", "url_encoded_ratio", "payload_digit_ratio",
-        "has_sql_structure"
-    ]
+    FEATURE_KEYS = FEATURE_KEYS
 
     def __init__(self, models_dir: Optional[str] = None):
         self.models_dir = Path(models_dir) if models_dir else Path(MODELS_DIR)
@@ -77,7 +75,7 @@ class DeepLearningDetector:
             logger.warning("Autoencoder model file missing. Layer 3 Autoencoder set to fallback.")
             return None
         try:
-            model = FeatureAutoencoder(input_dim=17, bottleneck_dim=6)
+            model = FeatureAutoencoder(input_dim=len(FEATURE_KEYS), bottleneck_dim=6)
             model.load_state_dict(torch.load(ae_path, map_location="cpu", weights_only=True))
             model.eval()
             return model
@@ -109,15 +107,25 @@ class DeepLearningDetector:
           - Autoencoder points: 0 to 20
         """
         # 1. LSTM Inference
+        # Left-pad to match training: padding is a constant prefix so the
+        # final LSTM state reflects the real payload content.
         lstm_prob = 0.0
         if self.lstm_model is not None and raw_payload:
             seq = encode_text(raw_payload, self.vocab)[:100]
-            padded = seq + [0] * (100 - len(seq))
+            padded = [0] * (100 - len(seq)) + seq
             inp_tensor = torch.tensor([padded], dtype=torch.long)
             with torch.no_grad():
                 lstm_prob = float(self.lstm_model(inp_tensor).item())
 
-        lstm_points = min(round(lstm_prob * 15.0, 2), 15.0)
+        # The LSTM classifies PAYLOAD text ("is this string attack-like"), not
+        # target behavior. The scanner already knows what payload it sent, so
+        # this adds zero information about the target's vulnerability — and
+        # awarding points for it inflated EVERY probe (we always send attack
+        # payloads). lstm_points is therefore always 0 in scoring; the raw
+        # probability is kept as telemetry (what kind of payload was sent).
+        # The autoencoder below is the honest DL signal: it measures whether
+        # the RESPONSE's feature vector looks anomalous.
+        lstm_points = 0.0
 
         # 2. Autoencoder Inference
         ae_error = 0.0
@@ -159,11 +167,13 @@ class DeepLearningDetector:
 if __name__ == "__main__":
     detector = DeepLearningDetector()
     sample_payload = "' UNION SELECT NULL, password FROM users --"
+    # Response-differential features: SQL error page vs clean baseline.
     sample_features = {
-        "encoded_method": 2, "path_depth": 3, "url_length": 60,
-        "query_param_count": 2, "query_string_length": 30, "payload_length": 45,
-        "payload_entropy": 5.8, "special_char_count": 12, "header_count": 6,
-        "auth_header_present": 0, "status_code": 200, "response_size": 1024
+        "status_changed": 1, "size_delta_ratio": -0.85, "time_delta_ratio": 0.2,
+        "body_diff_ratio": 0.9, "content_type_changed": 1, "error_keyword_delta": 3,
+        "payload_reflected": 0, "status_class": 5, "response_size_log": 1.8,
+        "response_time_s": 0.15, "error_keyword_count": 3, "sensitive_field_count": 0,
+        "payload_length_log": 1.6, "encoded_method": 2,
     }
     res = detector.analyze(sample_payload, sample_features)
     print("\n[+] Layer 3 Deep Learning Test Output:")

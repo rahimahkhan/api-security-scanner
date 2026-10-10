@@ -57,7 +57,9 @@ def test_signature_xss_detection():
 
 def test_waf_status_code_filter():
     detector = SignatureDetector()
-    for waf_status, waf_size in [(403, 0), (429, 0), (202, 0), (502, 0), (503, 0)]:
+    # NOTE: (202, 0) was removed from this list: a 202 Accepted with an empty
+    # body is a legitimate async response, not a WAF block.
+    for waf_status, waf_size in [(403, 0), (429, 0), (502, 0), (503, 0)]:
         sample_waf = {
             "url": "http://localhost:5000/search",
             "payload": "<script>alert(1)</script>",
@@ -119,7 +121,9 @@ def test_bola_verification_rules():
     res_404 = detector.analyze(sample_404)
     assert res_404["attack_type"] != "BOLA_IDOR"
 
-    # Confirmed BOLA: HTTP 200 returning sensitive user object properties
+    # Confirmed BOLA: cross-identity mutation + verified canary (victim login
+    # with the changed password succeeded). Without the canary it is only
+    # Suspected — a 2xx alone is not proof the mutation happened.
     sample_bola_confirmed = {
         "url": "http://localhost:5000/users/2",
         "payload": "",
@@ -128,13 +132,19 @@ def test_bola_verification_rules():
         "response_headers": {"Content-Type": "application/json"},
         "response_body": "{\"id\":2, \"username\":\"alice\", \"email\":\"alice@example.com\", \"role\":\"admin\"}",
         "request_headers": {"Authorization": "Bearer attacker-token"},
-        "cross_identity_probe": True
+        "cross_identity_probe": True,
+        "canary_verified": True
     }
     res_bola = detector.analyze(sample_bola_confirmed)
     assert res_bola["matched"] is True
     assert res_bola["attack_type"] == "BOLA_IDOR"
     assert res_bola["finding_status"] == "Confirmed"
     assert res_bola["points"] == 45
+
+    sample_bola_unverified = dict(sample_bola_confirmed, canary_verified=False)
+    res_unverified = detector.analyze(sample_bola_unverified)
+    assert res_unverified["finding_status"] == "Suspected"
+    assert res_unverified["has_proof"] is False
 
     unauthenticated_bola = dict(sample_bola_confirmed, request_headers={}, cross_identity_probe=False)
     res_unauthenticated = detector.analyze(unauthenticated_bola)
@@ -152,11 +162,29 @@ def test_bola_verification_rules():
             "response_body": "",
             "request_headers": {"Authorization": "Bearer mass-assign-token"},
             "mass_assignment_probe": True,
+            "privilege_verified": True,
         }
     )
     assert mass_assignment["attack_type"] == "Mass_Assignment"
     assert mass_assignment["finding_status"] == "Confirmed"
     assert mass_assignment["points"] == 45
+
+    # Without the privilege canary the same probe is only Suspected.
+    mass_assignment_unverified = detector.analyze(
+        {
+            "url": "http://localhost:5000/users/v1/canary_delete_qc",
+            "payload": "",
+            "status_code": 204,
+            "response_size": 0,
+            "response_headers": {},
+            "response_body": "",
+            "request_headers": {"Authorization": "Bearer mass-assign-token"},
+            "mass_assignment_probe": True,
+        }
+    )
+    assert mass_assignment_unverified["attack_type"] == "Mass_Assignment"
+    assert mass_assignment_unverified["finding_status"] == "Suspected"
+    assert mass_assignment_unverified["has_proof"] is False
 
 def test_signature_missing_headers():
     detector = SignatureDetector()

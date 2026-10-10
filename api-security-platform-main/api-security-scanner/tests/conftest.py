@@ -15,3 +15,13 @@ def pytest_configure(config):
     warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.base")
     # Suppress pandas upcoming pyarrow requirement warning
     warnings.filterwarnings("ignore", category=DeprecationWarning, module="pandas")
+
+
+@pytest.fixture(autouse=True)
+def _allow_private_scan_targets(monkeypatch):
+    # Flow tests scan fake targets like http://example.test, and this
+    # sandbox's fake DNS resolves every hostname to a non-routable range that
+    # the SSRF guard would reject. Allow private targets for flow tests; the
+    # SSRF guard itself is covered by dedicated tests in
+    # test_target_validation.py, which delete this override.
+    monkeypatch.setenv("ALLOW_PRIVATE_SCAN_TARGETS", "1")
