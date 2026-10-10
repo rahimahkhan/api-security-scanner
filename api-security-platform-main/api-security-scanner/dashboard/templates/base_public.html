@@ -48,7 +48,32 @@
     </main>
 
     <footer class="public-footer">
-        <p>&copy; 2026 Xploiter — API Security Scanner &nbsp;·&nbsp; <span style="font-family: monospace">build {{ app_version }}</span></p>
+        <div class="footer-grid">
+            <div class="footer-brand">
+                <div class="wordmark"><span class="x-logo">X</span> XPLOITER</div>
+                <p>Find API vulnerabilities before attackers do.</p>
+            </div>
+            <div class="footer-col">
+                <h4>Product</h4>
+                <a href="{{ url_for('dashboard.index') }}#features">Features</a>
+                <a href="{{ url_for('dashboard.how_it_works') }}">How it works</a>
+                <a href="{{ url_for('dashboard.pricing') }}">Pricing</a>
+                <a href="{{ url_for('dashboard.docs') }}">Docs</a>
+            </div>
+            <div class="footer-col">
+                <h4>Company</h4>
+                <a href="{{ url_for('dashboard.about') }}">About</a>
+                <a href="{{ url_for('dashboard.contact') }}">Contact us</a>
+            </div>
+            <div class="footer-col">
+                <h4>Contact</h4>
+                <a href="{{ url_for('dashboard.contact') }}">[Support email address]</a>
+                <a href="https://github.com/rahimahkhan/api-security-scanner" target="_blank" rel="noopener">GitHub repository</a>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Xploiter — API Security Scanner &nbsp;·&nbsp; <span style="font-family: monospace">build {{ app_version }}</span></p>
+        </div>
     </footer>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
     {% block scripts %}{% endblock %}

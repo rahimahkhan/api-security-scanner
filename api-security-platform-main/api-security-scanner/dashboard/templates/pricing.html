@@ -10,39 +10,40 @@
 
 <div class="pricing-grid">
     <div class="card price-card">
-        <h3>Free</h3>
-        <div class="price">[price]</div>
+        <h3>Basic</h3>
+        <div class="price">$0<span class="per"> / month</span></div>
         <ul>
-            <li>[n] scans per month</li>
-            <li>[n] endpoints per scan</li>
+            <li>5 scans per month</li>
+            <li>25 endpoints per scan</li>
             <li>PDF and JSON export</li>
-            <li>AI Assistant: [n] messages per day</li>
+            <li>AI Assistant: 10 messages per day</li>
         </ul>
         <a class="btn btn-outline btn-block" href="{{ url_for('dashboard.signup') }}">Get Started</a>
     </div>
     <div class="card price-card popular">
         <div class="plan-tag">MOST POPULAR</div>
-        <h3>Pro</h3>
-        <div class="price">[price]<span class="per"> / month</span></div>
+        <h3>Standard</h3>
+        <div class="price">$12<span class="per"> / month</span></div>
         <ul>
-            <li>[n] scans per month</li>
-            <li>[n] endpoints per scan</li>
+            <li>30 scans per month</li>
+            <li>100 endpoints per scan</li>
             <li>All exports including SARIF</li>
-            <li>AI Assistant: higher limit</li>
+            <li>AI Assistant: 50 messages per day</li>
+            <li>Scan history and compare</li>
         </ul>
-        <a class="btn btn-primary btn-block" href="{{ url_for('dashboard.signup') }}">Choose Pro</a>
+        <a class="btn btn-primary btn-block" href="{{ url_for('dashboard.signup') }}">Choose Standard</a>
     </div>
     <div class="card price-card">
-        <h3>Team</h3>
-        <div class="price">[price]<span class="per"> / month</span></div>
+        <h3>Pro</h3>
+        <div class="price">$29<span class="per"> / month</span></div>
         <ul>
-            <li>[n] team members</li>
-            <li>Shared scan history</li>
-            <li>CLI and CI integration</li>
+            <li>Unlimited scans</li>
+            <li>500 endpoints per scan</li>
+            <li>Everything in Standard</li>
+            <li>AI Assistant: unlimited</li>
             <li>Priority support</li>
         </ul>
         <a class="btn btn-outline btn-block" href="{{ url_for('dashboard.contact') }}">Contact us</a>
     </div>
 </div>
-<p class="pricing-note">Plan names, limits, and prices are placeholders to be decided.</p>
 {% endblock %}

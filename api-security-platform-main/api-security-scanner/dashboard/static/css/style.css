@@ -486,6 +486,9 @@ table.data tbody tr:hover { background: var(--card-2); }
 .public-nav .login-link { color: var(--text); font-weight: 600; font-size: 0.92rem; }
 .public-main { max-width: 1120px; margin: 0 auto; padding: 3rem 1.5rem 4rem; }
 .hero { display: grid; grid-template-columns: 1.1fr 1fr; gap: 2.5rem; align-items: center; margin-bottom: 3rem; }
+.hero-centered { display: block; text-align: center; max-width: 780px; margin: 0 auto 3rem; }
+.hero-centered .btn-row { justify-content: center; }
+.hero-centered p.lead { margin-left: auto; margin-right: auto; }
 .hero .kicker { color: var(--blue); font-weight: 700; font-size: 0.8rem; letter-spacing: 0.08em; margin-bottom: 0.8rem; }
 .hero h1 { font-size: 2.9rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.12; margin-bottom: 1rem; }
 .hero p.lead { color: var(--muted); font-size: 1.08rem; margin-bottom: 1.6rem; max-width: 34rem; }
@@ -537,7 +540,15 @@ table.data tbody tr:hover { background: var(--card-2); }
 .price-card li:last-child { border-bottom: none; }
 .pricing-note { text-align: center; color: var(--muted); font-size: 0.9rem; }
 .contact-layout { display: grid; grid-template-columns: 1.6fr 1fr; gap: 1.5rem; align-items: start; }
-.public-footer { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 2rem 1rem; border-top: 1px solid var(--border); margin-top: 3rem; }
+.public-footer { color: var(--muted); font-size: 0.85rem; padding: 2.5rem 1.5rem 1.5rem; border-top: 1px solid var(--border); margin-top: 3rem; }
+.footer-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 2rem; max-width: 1120px; margin: 0 auto 2rem; }
+.footer-brand .wordmark { margin-bottom: 0.6rem; }
+.footer-brand p { font-size: 0.88rem; }
+.footer-col h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text); margin-bottom: 0.7rem; }
+.footer-col a { display: block; color: var(--muted); margin-bottom: 0.5rem; }
+.footer-col a:hover { color: var(--text); }
+.footer-bottom { text-align: center; border-top: 1px solid var(--border); padding-top: 1.2rem; font-size: 0.82rem; }
+@media (max-width: 720px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
 
 /* ---------- Auth pages (dark, per wireframe) ---------- */
 .auth-page {
