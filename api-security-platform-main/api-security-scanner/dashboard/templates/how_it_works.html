@@ -13,25 +13,25 @@
         <div class="step-num">1</div>
         <h3>Add your target</h3>
         <p class="text-muted" style="font-size:0.9rem;">Enter your API base URL and confirm you are authorized to test it.</p>
-        <div class="rp-chart" style="margin-top:1rem;">[Add target screen]</div>
+        <img class="step-shot" src="{{ url_for('static', filename='img/how/step1-target.png') }}" alt="New scan form with target URL field">
     </div>
     <div class="card">
         <div class="step-num">2</div>
         <h3>Add auth and API spec</h3>
         <p class="text-muted" style="font-size:0.9rem;">Optionally add a token or API key for protected endpoints.</p>
-        <div class="rp-chart" style="margin-top:1rem;">[Auth and spec screen]</div>
+        <img class="step-shot" src="{{ url_for('static', filename='img/how/step2-auth.png') }}" alt="Authentication options on the new scan form">
     </div>
     <div class="card">
         <div class="step-num">3</div>
         <h3>The scan runs</h3>
         <p class="text-muted" style="font-size:0.9rem;">Active probes and passive checks run with an endpoint budget and bounded concurrency.</p>
-        <div class="rp-chart" style="margin-top:1rem;">[Live progress screen]</div>
+        <img class="step-shot" src="{{ url_for('static', filename='img/how/step3-progress.png') }}" alt="Live scan progress with stop button">
     </div>
     <div class="card">
         <div class="step-num">4</div>
         <h3>Fix the top risks</h3>
         <p class="text-muted" style="font-size:0.9rem;">Findings are merged per endpoint and ranked. Export as PDF, JSON, HTML, or SARIF.</p>
-        <div class="rp-chart" style="margin-top:1rem;">[Top risks screen]</div>
+        <img class="step-shot" src="{{ url_for('static', filename='img/how/step4-toprisks.png') }}" alt="Dashboard top risky endpoints">
     </div>
 </div>
 
