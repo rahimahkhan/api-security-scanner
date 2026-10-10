@@ -14,10 +14,26 @@
     </div>
     <div class="report-preview">
         <div class="rp-title">SAMPLE REPORT PREVIEW</div>
-        <div class="rp-row"><span class="badge critical">Critical</span><div class="rp-bar"></div></div>
-        <div class="rp-row"><span class="badge high">High</span><div class="rp-bar"></div></div>
-        <div class="rp-row"><span class="badge medium">Medium</span><div class="rp-bar"></div></div>
-        <div class="rp-chart">[Risk score chart]</div>
+        <div class="rp-row"><span class="badge critical">Critical</span><div class="rp-bar"><i style="width:88%;background:#b91c1c"></i></div><span class="rp-count">2</span></div>
+        <div class="rp-row"><span class="badge high">High</span><div class="rp-bar"><i style="width:62%;background:#c2410c"></i></div><span class="rp-count">5</span></div>
+        <div class="rp-row"><span class="badge medium">Medium</span><div class="rp-bar"><i style="width:40%;background:#475569"></i></div><span class="rp-count">8</span></div>
+        <div class="rp-chart">
+            <svg viewBox="0 0 84 84" class="rp-donut" role="img" aria-label="Sample risk score: 72 of 100">
+                <circle cx="42" cy="42" r="34" fill="none" stroke="var(--border)" stroke-width="11"/>
+                <circle cx="42" cy="42" r="34" fill="none" stroke="#b91c1c" stroke-width="11" pathLength="100" stroke-dasharray="12 88" stroke-dashoffset="25" transform="rotate(-90 42 42)"/>
+                <circle cx="42" cy="42" r="34" fill="none" stroke="#c2410c" stroke-width="11" pathLength="100" stroke-dasharray="28 72" stroke-dashoffset="13" transform="rotate(-90 42 42)"/>
+                <circle cx="42" cy="42" r="34" fill="none" stroke="#475569" stroke-width="11" pathLength="100" stroke-dasharray="35 65" stroke-dashoffset="-15" transform="rotate(-90 42 42)"/>
+                <circle cx="42" cy="42" r="34" fill="none" stroke="#64748b" stroke-width="11" pathLength="100" stroke-dasharray="25 75" stroke-dashoffset="-50" transform="rotate(-90 42 42)"/>
+                <text x="42" y="41" text-anchor="middle" class="rp-score-num">72</text>
+                <text x="42" y="55" text-anchor="middle" class="rp-score-label">risk score</text>
+            </svg>
+            <div class="rp-legend">
+                <div><i style="background:#b91c1c"></i>2 critical</div>
+                <div><i style="background:#c2410c"></i>5 high</div>
+                <div><i style="background:#475569"></i>8 medium</div>
+                <div><i style="background:#64748b"></i>4 low</div>
+            </div>
+        </div>
     </div>
 </div>
 

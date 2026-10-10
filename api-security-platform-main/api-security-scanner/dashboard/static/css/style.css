@@ -494,7 +494,14 @@ table.data tbody tr:hover { background: var(--card-2); }
 .report-preview .rp-title { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 0.9rem; }
 .rp-row { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.7rem; }
 .rp-bar { flex: 1; height: 12px; border-radius: 999px; background: var(--bg-soft); }
-.rp-chart { height: 90px; border-radius: 10px; background: var(--bg-soft); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.85rem; margin-top: 0.6rem; }
+.rp-chart { border-radius: 10px; background: var(--bg-soft); display: flex; align-items: center; gap: 1rem; padding: 0.8rem 1rem; margin-top: 0.6rem; }
+.rp-bar i { display: block; height: 100%; border-radius: 999px; }
+.rp-count { font-size: 0.8rem; font-weight: 700; color: var(--muted); min-width: 1.2rem; text-align: right; }
+.rp-donut { width: 96px; height: 96px; flex-shrink: 0; }
+.rp-score-num { font-size: 1.35rem; font-weight: 800; fill: var(--text); }
+.rp-score-label { font-size: 0.55rem; fill: var(--muted); }
+.rp-legend { display: grid; gap: 0.3rem; font-size: 0.78rem; color: var(--text-2); }
+.rp-legend i { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 3px; margin-right: 0.4rem; }
 .feature-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2.5rem; }
 .feature-card h3 { font-size: 1rem; margin-bottom: 0.35rem; }
 .feature-card p { font-size: 0.88rem; color: var(--muted); }
@@ -788,3 +795,8 @@ a.icon-btn:hover, .icon-btn:hover { color: #fff; background: rgba(255,255,255,0.
 }
 .profile-username { font-size: 1.15rem; font-weight: 700; }
 .profile-meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+
+/* ---------- Contact page lines ---------- */
+.contact-line { padding: 0.7rem 0; border-bottom: 1px solid var(--border); font-size: 0.92rem; }
+.contact-line:last-child { border-bottom: none; }
+.contact-line strong { display: block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.2rem; }
