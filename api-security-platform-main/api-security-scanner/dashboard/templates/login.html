@@ -69,16 +69,17 @@
 
         <button type="submit" class="btn-primary" id="login-btn">Log In</button>
     </form>
-    {% if demo_configured %}
-    <div class="divider">or</div>
-    <button class="btn btn-outline btn-block" id="demo-btn" type="button">Try the demo account</button>
-    <p class="form-help" style="text-align:center">One click — explore Xploiter with a shared demo login.</p>
-    {% endif %}
     <script>
     document.getElementById("show-pw").addEventListener("change", function () {
         document.getElementById("password").type = this.checked ? "text" : "password";
     });
     </script>
+    {% endif %}
+
+    {% if demo_configured %}
+    <div class="divider">or</div>
+    <button class="btn btn-outline btn-block" id="demo-btn" type="button">Try the demo account</button>
+    <p class="form-help" style="text-align:center">One click — explore Xploiter with a shared demo login.</p>
     {% endif %}
 
     <p class="switch">New to Xploiter? <a href="{{ url_for('dashboard.signup') }}">Create an account</a></p>
@@ -178,30 +179,44 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
         .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
 });
 
-{% if demo_configured %}
-document.getElementById("demo-btn").addEventListener("click", function () {
-    setBusy(true);
-    // The demo password never leaves the server: we ask the backend to mint
-    // a Firebase custom token for the demo account, then sign in with it.
-    fetch("/api/auth/demo", {method: "POST"})
-        .then(function (resp) { return resp.json(); })
-        .then(function (data) {
-            if (data.status !== "success" || !data.custom_token) {
-                throw new Error(data.message || "Demo sign-in is unavailable right now.");
-            }
-            return auth.signInWithCustomToken(data.custom_token);
-        })
-        .then(function (cred) { return finishSignIn(cred.user); })
-        .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
-});
-{% endif %}
-
 document.getElementById("google-btn").addEventListener("click", function () {
     setBusy(true);
     var provider = new firebase.auth.GoogleAuthProvider();
     auth.signInWithPopup(provider)
         .then(function (cred) { return finishSignIn(cred.user); })
         .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
+});
+</script>
+{% endif %}
+{% if demo_configured %}
+<script>
+// Built-in demo login (development period): standalone on purpose — it must
+// work even when Firebase sign-in is unavailable. The server opens a session
+// for the shared demo account directly; no credentials are involved.
+document.getElementById("demo-btn").addEventListener("click", function () {
+    var btn = document.getElementById("demo-btn");
+    var box = document.getElementById("error-box");
+    btn.disabled = true;
+    fetch("/api/auth/demo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({next: {{ next_url | tojson }}})
+    })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.status === "ok") {
+                window.location.href = data.redirect || "/";
+            } else {
+                btn.disabled = false;
+                box.textContent = data.message || "Demo sign-in is unavailable right now.";
+                box.style.display = "block";
+            }
+        })
+        .catch(function () {
+            btn.disabled = false;
+            box.textContent = "Could not reach the server — please try again.";
+            box.style.display = "block";
+        });
 });
 </script>
 {% endif %}

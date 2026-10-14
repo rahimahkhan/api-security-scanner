@@ -64,28 +64,6 @@ def verify_firebase_token(id_token: str) -> dict:
     return fb_auth.verify_id_token(id_token)
 
 
-def create_demo_custom_token() -> str:
-    """Mint a Firebase custom token for the demo account (server-side only).
-
-    Powers the login page's "Try the demo account" button without the demo
-    password ever reaching the browser (it was previously rendered into the
-    page source). The browser signs in with the returned custom token, then
-    completes sign-in through the normal /api/auth/session flow.
-    Raises RuntimeError when the demo account isn't configured.
-    """
-    demo_email = os.environ.get("DEMO_EMAIL", "").strip()
-    if not demo_email:
-        raise RuntimeError("demo account is not configured (DEMO_EMAIL unset)")
-    _admin_app()
-    from firebase_admin import auth as fb_auth
-    try:
-        user = fb_auth.get_user_by_email(demo_email)
-    except Exception as exc:
-        raise RuntimeError(f"demo account not found in Firebase: {exc}")
-    token = fb_auth.create_custom_token(user.uid)
-    return token.decode("utf-8") if isinstance(token, bytes) else token
-
-
 def reset_admin_app_cache() -> None:
     """Test helper: drop the cached Admin app so each test re-initialises."""
     global _admin_app_instance

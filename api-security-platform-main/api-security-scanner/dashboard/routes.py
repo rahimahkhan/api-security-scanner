@@ -29,7 +29,6 @@ from dashboard.auth_validators import (
     validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
-    create_demo_custom_token,
 )
 from dashboard.results_grouping import (
     group_findings, summarize_findings, VULN_STATUSES, TOP_RISKS_COUNT,
@@ -331,14 +330,12 @@ def login():
     next_url = request.args.get("next") or url_for("dashboard.dashboard")
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.dashboard")
-    demo_email = os.environ.get("DEMO_EMAIL", "").strip()
-    # NOTE: the demo password is deliberately NEVER passed to the template —
-    # it used to be rendered into the page source. Demo sign-in is handled
-    # server-side via POST /api/auth/demo (custom token minting).
+    # The "Try the demo account" button is shown while the built-in demo
+    # login is enabled (development period — see demo_login_enabled below).
     return render_template("login.html", next_url=next_url,
                            firebase_config=firebase_web_config(),
                            firebase_configured=firebase_configured(),
-                           demo_configured=bool(demo_email and firebase_configured()))
+                           demo_configured=demo_login_enabled())
 
 
 @dashboard_bp.route("/signup", methods=["GET"])
@@ -417,22 +414,54 @@ def firebase_session():
     return jsonify({"status": "ok", "redirect": next_url})
 
 
-@dashboard_bp.route("/api/auth/demo", methods=["POST"])
-def demo_signin_token():
-    """Mint a Firebase custom token for the demo account (server-side).
+# ---------------------------------------------------------------------------
+# Built-in demo login (development period only)
+# ---------------------------------------------------------------------------
+# Owner's instruction (2026-10-14): while the project is in development and
+# testing, ANY visitor must be able to enter through a one-click demo login —
+# no account, no credentials, no environment setup. This replaces the earlier
+# Firebase-custom-token design, which needed a DEMO_EMAIL env var and a
+# pre-created Firebase user, so the button silently never appeared.
+# REVERSE THIS when development completes: set XPLOITER_DEMO_LOGIN=0 (or
+# delete this block and the login-page button) before real users rely on it.
+DEMO_LOGIN_UID = "xploiter-demo-account"
+DEMO_LOGIN_EMAIL = "demo@xploiter.local"
+DEMO_LOGIN_USERNAME = "demo"
 
-    The login page's "Try the demo account" button calls this, then signs
-    in with the returned custom token — the demo password never leaves the
-    server (it was previously rendered into the login page source).
+
+def demo_login_enabled() -> bool:
+    return os.environ.get("XPLOITER_DEMO_LOGIN", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+@dashboard_bp.route("/api/auth/demo", methods=["POST"])
+def demo_signin():
+    """Sign the visitor in as the shared built-in demo account.
+
+    No credentials are involved and nothing secret reaches the browser: the
+    server gets-or-creates one local demo user and opens a normal session
+    for it, exactly like a Firebase sign-in does.
     """
+    if not demo_login_enabled():
+        return jsonify({"status": "error", "message": "Demo login is disabled"}), 404
     if not is_auth_enabled():
         return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
-    try:
-        token = create_demo_custom_token()
-    except RuntimeError as exc:
-        logger.warning(f"Demo sign-in unavailable: {exc}")
-        return jsonify({"status": "error", "message": "Demo account is not available right now."}), 503
-    return jsonify({"status": "success", "custom_token": token})
+    user = get_user_by_firebase_uid(DEMO_LOGIN_UID)
+    if user is None:
+        username = DEMO_LOGIN_USERNAME
+        owner = get_user_by_username(username)
+        if owner is not None and owner.firebase_uid != DEMO_LOGIN_UID:
+            username = "demo-account"
+        user = get_or_create_firebase_user(
+            DEMO_LOGIN_UID, DEMO_LOGIN_EMAIL, username, name="Demo Account")
+        logger.info("Built-in demo account signed in (development demo login)")
+    session["user_id"] = user.id
+    session["username"] = user.username
+    data = request.get_json(silent=True) or {}
+    next_url = (data.get("next") or "").strip()
+    if not next_url.startswith("/"):
+        next_url = url_for("dashboard.dashboard")
+    return jsonify({"status": "ok", "redirect": next_url})
 
 
 @dashboard_bp.route("/api/auth/resolve", methods=["POST"])
