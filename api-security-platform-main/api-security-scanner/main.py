@@ -116,7 +116,14 @@ def _bind_payload_to_endpoint(ep_info: Dict[str, Any], method: str, payload: str
     defaults = dict(ep_info.get("form_defaults") or {})
     target = target_field or (fields[0] if fields else None)
     if fields and method.upper() in ["GET", "DELETE"]:
-        values = {field: defaults.get(field, "") for field in fields}
+        # Start from ALL form defaults — including the submit button and
+        # hidden fields a browser would send. Many apps (DVWA included) only
+        # run the vulnerable code path when the submit field is present, so
+        # building values from form_fields alone silently drops it and the
+        # probe becomes a no-op the proof gate can never confirm.
+        values = {key: value for key, value in defaults.items()}
+        for field in fields:
+            values.setdefault(field, "")
         values[target] = payload
         return values, None
     if fields and method.upper() in ["POST", "PUT", "PATCH"]:
@@ -196,6 +203,26 @@ _OPEN_REDIRECT_PARAMS = {
     "next", "return", "return_url", "returnurl", "dest", "destination",
     "target", "continue", "forward", "goto",
 }
+
+
+def _endpoint_priority(ep: Dict[str, Any]) -> int:
+    """Rank an endpoint by how much testable surface it exposes.
+
+    Used only when the endpoint budget forces a cut: form endpoints, POST
+    forms and parameterised URLs carry the confirmable vulnerabilities, so
+    they must survive ahead of bare navigation URLs.
+    """
+    score = 0
+    if ep.get("form_fields"):
+        score += 4
+        if (ep.get("form_method") or ep.get("method") or "").upper() in (
+                "POST", "PUT", "PATCH"):
+            score += 2
+    if ep.get("query_fields"):
+        score += 3
+    if ep.get("json_fields"):
+        score += 3
+    return score
 
 
 def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str, Any]]):
@@ -393,10 +420,17 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
     # Apply the configured safety/performance budget. MAX_ENDPOINTS was
     # previously defined but never enforced, allowing a crawl to expand into
-    # hundreds of sequential active requests.
+    # hundreds of sequential active requests. When a cut is forced, keep the
+    # endpoints with the most testable surface first (forms, POST forms,
+    # parameterised URLs): a plain first-N cut in discovery order silently
+    # drops exactly those on large sites — on DVWA it dropped the
+    # open-redirect quote links and crowded out the POST command form,
+    # leaving real vulnerabilities at Suspected.
     if len(discovered_endpoints) > MAX_ENDPOINTS:
         logger.info("Limiting discovered endpoints from %d to %d", len(discovered_endpoints), MAX_ENDPOINTS)
-        discovered_endpoints = discovered_endpoints[:MAX_ENDPOINTS]
+        discovered_endpoints = sorted(
+            discovered_endpoints, key=_endpoint_priority, reverse=True
+        )[:MAX_ENDPOINTS]
 
     if not discovered_endpoints:
         print("[!] No endpoints discovered. Performing target base URL analysis.")

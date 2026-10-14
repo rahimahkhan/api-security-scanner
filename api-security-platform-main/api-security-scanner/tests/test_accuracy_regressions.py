@@ -177,13 +177,17 @@ def test_connection_reset_without_healthy_baseline_remains_network_error():
     assert result["finding_status"] == "UNREACHABLE / NETWORK_DROPPED"
 
 
-def test_default_endpoint_budget_is_twenty_without_override(monkeypatch):
+def test_default_endpoint_budget_without_override(monkeypatch):
     import importlib
     import config.settings as settings
 
     monkeypatch.delenv("MAX_ENDPOINTS", raising=False)
     reloaded = importlib.reload(settings)
-    assert reloaded.MAX_ENDPOINTS == 20
+    # Raised from 20 to 300 (2026-10-14): 20 silently truncated any real
+    # application (DVWA alone exposes ~100 testable endpoints). The budget
+    # still exists and stays env-overridable; _endpoint_priority decides
+    # what survives when a cut is forced.
+    assert reloaded.MAX_ENDPOINTS == 300
 
 
 def test_endpoint_payload_binding_uses_discovered_query_field():

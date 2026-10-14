@@ -23,7 +23,7 @@ RESPONSE_LSTM_PATH = os.path.join(MODELS_DIR, "response_lstm.pt")
 AUTOENCODER_PATH = os.path.join(MODELS_DIR, "autoencoder.pt")
 
 # Application & Scanner Limits
-MAX_ENDPOINTS = int(os.getenv("MAX_ENDPOINTS", 20))
+MAX_ENDPOINTS = int(os.getenv("MAX_ENDPOINTS", 300))
 SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", 30))
 
 # Flask & Dashboard Settings
