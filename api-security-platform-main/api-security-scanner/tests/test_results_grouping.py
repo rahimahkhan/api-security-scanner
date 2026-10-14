@@ -95,6 +95,26 @@ def test_top_risks_slice_is_six():
     assert TOP_RISKS_COUNT == 6
 
 
+def test_uppercase_scorer_severities_sort_correctly():
+    """D4: the risk scorer stores UPPERCASE severities ("CRITICAL"/"HIGH").
+    Grouping must sort by meaning, not by case — CRITICAL outranks Low."""
+    findings = [
+        _f(1, url="https://api.example.com/low", severity="Low",
+           status="Informational", risk=5.0),     # 1 + 0 = 1
+        _f(2, url="https://api.example.com/crit", severity="CRITICAL",
+           status="Confirmed", risk=85.0),        # 10 + 3 = 13
+        _f(3, url="https://api.example.com/high", severity="HIGH",
+           status="Suspected", risk=50.0),        # 7 + 1 = 8
+    ]
+    groups = group_findings(findings)["groups"]
+    assert [g["path"] for g in groups] == ["/crit", "/high", "/low"]
+    assert [g["score"] for g in groups] == [13, 8, 1]
+    # Stored severities are normalized to canonical title case on ingest.
+    assert groups[0]["severity"] == "Critical"
+    assert groups[2]["severity"] == "Low"
+    assert group_findings(findings)["summary"]["critical_endpoints"] == 1
+
+
 # ------------------------------------------------- summarize_findings ---
 from dashboard.results_grouping import summarize_findings
 

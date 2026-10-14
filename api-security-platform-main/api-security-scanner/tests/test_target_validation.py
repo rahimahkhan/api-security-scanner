@@ -13,7 +13,7 @@ from main import validate_target_url
 def test_valid_target_urls_accepted(url):
     # DNS is mocked: the sandbox's fake DNS resolves everything to a
     # non-routable range, so pin resolution to a public IP here.
-    with patch("main._host_resolves_to_public_ip", return_value=True):
+    with patch("core.target_validation._host_resolves_to_public_ip", return_value=True):
         ok, normalized = validate_target_url(url)
     assert ok is True, f"{url!r} rejected: {normalized}"
     assert normalized == url.strip()
@@ -44,7 +44,7 @@ def test_private_target_allowed_with_env_override(monkeypatch):
 
 def test_hostname_resolving_to_private_ip_rejected(monkeypatch):
     monkeypatch.delenv("ALLOW_PRIVATE_SCAN_TARGETS", raising=False)
-    with patch("main._host_resolves_to_public_ip", return_value=False):
+    with patch("core.target_validation._host_resolves_to_public_ip", return_value=False):
         ok, reason = validate_target_url("https://evil.example/")
     assert ok is False
     assert "private or internal" in reason

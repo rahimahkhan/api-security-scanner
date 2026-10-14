@@ -17,7 +17,37 @@ STATUS_WEIGHTS = {"Confirmed": 3, "Suspected": 1, "Informational": 0}
 SEVERITY_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
 STATUS_ORDER = {"Confirmed": 0, "Suspected": 1, "Informational": 2}
 
+# Stored severity values arrive in two casings: the risk scorer writes
+# UPPERCASE ("CRITICAL"/"HIGH"/"MEDIUM"/"LOW"/"NONE"), while older rows,
+# fixtures and UI code use title case ("Critical"). Normalize at the
+# grouping boundary so every weight/order lookup succeeds regardless of
+# the stored casing (D4: an UPPERCASE "CRITICAL" must outrank "Low").
+_CANONICAL_SEVERITY = {
+    "CRITICAL": "Critical",
+    "HIGH": "High",
+    "MEDIUM": "Medium",
+    "LOW": "Low",
+    "NONE": "None",
+}
+
+
+def _norm_severity(severity):
+    """Canonical title-case severity, robust to either stored casing."""
+    key = (severity or "").strip().upper()
+    return _CANONICAL_SEVERITY.get(key, severity or "Low")
+
 TOP_RISKS_COUNT = 6
+
+
+def severity_key(severity):
+    """Canonical grouping key for a stored severity label.
+
+    The risk scorer persists all-caps labels ("CRITICAL"); other writers may
+    use title case. Normalizing at the lookup keeps Top-Risks sorting,
+    endpoint weights and severity counts correct regardless of stored case.
+    Delegates to _norm_severity so there is a single normalization path.
+    """
+    return _norm_severity(severity)
 
 # The ONE scoring rule for the whole app. Results page, history, dashboard,
 # compare and exports all derive their numbers from this function, so the
@@ -136,7 +166,7 @@ def group_findings(findings):
                 "path": path,
                 "url": url,
                 "attack_type": attack,
-                "severity": f.get("severity") or "Low",
+                "severity": _norm_severity(f.get("severity")),
                 "finding_status": f.get("finding_status") or "Informational",
                 "risk_score": float(f.get("risk_score") or 0.0),
                 "recommendation": f.get("recommendation") or "",
@@ -154,7 +184,7 @@ def group_findings(findings):
             v["top_finding_id"] = f.get("id")
             if f.get("recommendation"):
                 v["recommendation"] = f.get("recommendation")
-        if SEVERITY_ORDER.get(f.get("severity"), 3) < SEVERITY_ORDER.get(v["severity"], 3):
+        if SEVERITY_ORDER.get(severity_key(f.get("severity")), 3) < SEVERITY_ORDER.get(severity_key(v["severity"]), 3):
             v["severity"] = f.get("severity")
         if STATUS_ORDER.get(f.get("finding_status"), 2) < STATUS_ORDER.get(v["finding_status"], 2):
             v["finding_status"] = f.get("finding_status")
@@ -175,11 +205,11 @@ def group_findings(findings):
             }
         g = groups[gkey]
         g["vulns"].append(v)
-        score = (SEVERITY_WEIGHTS.get(v["severity"], 1)
+        score = (SEVERITY_WEIGHTS.get(severity_key(v["severity"]), 1)
                  + STATUS_WEIGHTS.get(v["finding_status"], 0))
         v["score"] = score
         g["score"] = max(g["score"], score)
-        if SEVERITY_ORDER.get(v["severity"], 3) < SEVERITY_ORDER.get(g["severity"], 3):
+        if SEVERITY_ORDER.get(severity_key(v["severity"]), 3) < SEVERITY_ORDER.get(severity_key(g["severity"]), 3):
             g["severity"] = v["severity"]
         if STATUS_ORDER.get(v["finding_status"], 2) < STATUS_ORDER.get(g["finding_status"], 2):
             g["finding_status"] = v["finding_status"]

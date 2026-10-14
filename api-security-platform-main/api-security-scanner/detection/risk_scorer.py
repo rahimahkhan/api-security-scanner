@@ -74,9 +74,16 @@ class RiskScorer:
     ) -> Dict[str, Any]:
         """
         Calculates combined risk score from all 3 detection layers using Hybrid Confidence Multiplier.
-        A finding is only HIGH or CRITICAL when at least 2 layers agree, and
-        CRITICAL is reserved for findings with verified exploit proof —
-        suspected (unproven) findings are capped at HIGH.
+
+        Confidence rule:
+        - Verified exploit proof forces confidence to 1.0 (deterministic proof
+          outranks statistical consensus), adds PROOF_BONUS_POINTS, and is the
+          only path to CRITICAL severity. A lone confirmed signature (40 pts)
+          + proof bonus (30) = 70 = CRITICAL even when only one layer
+          triggered — proof, not layer count, is the deciding rule.
+        - Without proof, confidence comes from layer agreement: 3 layers = 1.0,
+          2 layers = 0.75, 1 layer = 0.35, none = 0.0.
+        Suspected (unproven) findings are capped at HIGH regardless of score.
         """
         telemetry = kwargs.get("telemetry_data", {}) or {}
         resp_status = telemetry.get("status_code", kwargs.get("status_code", 200))
@@ -181,11 +188,18 @@ class RiskScorer:
         sig_points = min(sig_points_raw, self.MAX_SIG_POINTS) if signature_triggered else 0.0
 
         ml_is_anomaly = bool(ml_result.get("is_anomaly", False) or ml_points >= 10.0)
-        # dl_is_suspicious uses the autoencoder only. The LSTM's
-        # lstm_probability classifies our own payload text, not the target, so
-        # it must not count as target-suspicion (it would be "suspicious" on
-        # every probe, since we always send attack payloads).
-        dl_is_suspicious = bool(dl_result.get("is_anomaly", False) or ae_points >= 10.0)
+        # dl_is_suspicious: the autoencoder (response-feature anomaly) OR the
+        # response-body LSTM. The LSTM is trained on real target response
+        # bodies (exploit-effect vs normal), so a high probability IS target
+        # evidence — unlike the retired payload-text LSTM, which only
+        # described our own input and was excluded for that reason. The 0.8
+        # bar is conservative: on the training corpus, benign bodies score
+        # <= 0.47 and exploit-effect bodies >= 0.88.
+        dl_is_suspicious = bool(
+            dl_result.get("is_anomaly", False)
+            or ae_points >= 10.0
+            or float(dl_result.get("lstm_probability", 0.0)) >= 0.8
+        )
 
         # Deterministic proof is stronger evidence than statistical consensus.
         # Keep hybrid confidence for anomaly-only findings, but never discount
@@ -235,6 +249,15 @@ class RiskScorer:
         elif final_risk_score > 0.0:
             finding_status = "Suspected"
         else:
+            finding_status = "Informational"
+        # D3: a passive observation the signature layer deliberately labeled
+        # "Informational" (e.g. missing security headers — a hygiene note, not
+        # an attack signal) must stay Informational when there is no verified
+        # proof. ML/DL anomaly points still contribute to the numeric score,
+        # but the status — which is what vulnerability counts are driven by —
+        # must not be promoted to "Suspected" by statistical signal alone.
+        sig_status = str(signature_result.get("finding_status") or "").lower()
+        if signature_triggered and not has_proof and sig_status == "informational":
             finding_status = "Informational"
 
         rec_key = severity.capitalize() if severity in ["LOW", "MEDIUM", "HIGH", "CRITICAL"] else "Low"

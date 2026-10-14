@@ -2,7 +2,7 @@ import os
 import sys
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker, joinedload
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -420,14 +420,29 @@ def get_all_sessions(user_id: Optional[int] = None) -> List[ScanSession]:
         db.close()
 
 
+def get_session(session_id: int) -> Optional[ScanSession]:
+    """Internal fetch without an ownership check — for the scan worker only.
+    Web routes MUST use get_session_for_user."""
+    db = SessionLocal()
+    try:
+        return db.query(ScanSession).options(joinedload(ScanSession.endpoints)).filter(ScanSession.id == session_id).first()
+    finally:
+        db.close()
+
+
 def get_session_for_user(session_id: int, user_id: Optional[int]) -> Optional[ScanSession]:
     """Fetch one session only if it belongs to the given user (else None,
-    so callers can 404 without leaking other users' scans)."""
+    so callers can 404 without leaking other users' scans).
+
+    A logged-out visitor (user_id None) may only see sessions that also
+    have no owner — never another user's scans.
+    """
     db = SessionLocal()
     try:
         query = db.query(ScanSession).options(joinedload(ScanSession.endpoints)).filter(ScanSession.id == session_id)
-        if user_id is not None:
-            query = query.filter(ScanSession.user_id == user_id)
+        # NOTE: `user_id == None` compiles to IS NULL, so guests only match
+        # ownerless (guest-started) sessions. Never skip this filter.
+        query = query.filter(ScanSession.user_id == user_id)
         return query.first()
     finally:
         db.close()
@@ -439,7 +454,13 @@ def get_session_findings(session_id: int) -> List[Finding]:
             joinedload(Finding.endpoint)
         ).filter(
             Finding.session_id == session_id,
-            Finding.risk_score > 0
+            or_(
+                Finding.risk_score > 0,
+                # Zero-score passive notes (e.g. the CSRF candidate note,
+                # saved with finding_status='Informational') must still
+                # surface in results; they were silently dropped before.
+                Finding.finding_status == "Informational"
+            )
         ).all()
     finally:
         db.close()

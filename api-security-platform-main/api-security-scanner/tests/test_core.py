@@ -146,3 +146,157 @@ def test_async_timeout_maps_to_408(monkeypatch):
     res = asyncio.run(RequestEngine(timeout=1).send_request_async("GET", "http://example.test/"))
     assert res["status_code"] == 408
     assert "Timeout" in res["error"]
+
+
+# --- Redirect SSRF guard (S4 fix) ---
+
+def _fake_redirect_client(responses):
+    """Fake httpx client: serves canned (status, location, url) responses in order."""
+    import httpx
+    class _Resp:
+        def __init__(self, status, location, url):
+            self.status_code = status
+            self.headers = {"content-type": "text/html"}
+            if location:
+                self.headers["location"] = location
+            self.url = url
+        def iter_bytes(self, chunk_size=None):
+            yield b"ok"
+        async def aiter_bytes(self, chunk_size=None):
+            yield b"ok"
+    class _CM:
+        def __init__(self, resp):
+            self._resp = resp
+        def __enter__(self):
+            return self._resp
+        def __exit__(self, *exc):
+            return False
+        async def __aenter__(self):
+            return self._resp
+        async def __aexit__(self, *exc):
+            return False
+    class _FakeClient:
+        def __init__(self):
+            self.fetched = []
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *exc):
+            return False
+        def stream(self, **kwargs):
+            url = str(kwargs.get("url"))
+            self.fetched.append(url)
+            status, location, _ = responses[min(len(self.fetched) - 1, len(responses) - 1)]
+            return _CM(_Resp(status, location, url))
+    return _FakeClient()
+
+
+
+def _pin_ssrf_guard(monkeypatch, is_public):
+    """Pin the SSRF host check in BOTH namespaces the engine consults.
+
+    request_engine imports _host_resolves_to_public_ip by name (first-hop
+    check); the redirect-hop path goes through core.target_validation, which
+    resolves the same name at call time. Both must be pinned because this
+    sandbox's fake DNS resolves every hostname to a private range.
+    """
+    import core.request_engine as re_mod
+    import core.target_validation as tv_mod
+    monkeypatch.setattr(re_mod, "_host_resolves_to_public_ip", is_public)
+    monkeypatch.setattr(tv_mod, "_host_resolves_to_public_ip", is_public)
+
+
+def test_redirect_to_private_ip_is_not_fetched(monkeypatch):
+    import core.request_engine as re_mod
+    monkeypatch.delenv("ALLOW_PRIVATE_SCAN_TARGETS", raising=False)
+    # Sandbox DNS resolves every hostname to a private range; pin the guard so
+    # only the redirect target counts as private for this test.
+    _pin_ssrf_guard(monkeypatch, lambda host: host != "169.254.169.254")
+    client = _fake_redirect_client([(301, "http://169.254.169.254/latest/meta-data/", None)])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    res = RequestEngine(timeout=1).send_request("GET", "http://example.test/start")
+    assert len(client.fetched) == 1, f"private redirect hop was fetched: {client.fetched}"
+    assert res["status_code"] == 0
+    assert res["error"] is not None and "BlockedRedirect" in res["error"]
+    assert "private" in res["error"].lower()
+
+
+def test_redirect_to_public_host_is_followed(monkeypatch):
+    import core.request_engine as re_mod
+    _pin_ssrf_guard(monkeypatch, lambda host: True)
+    client = _fake_redirect_client([
+        (301, "http://example.test/other", None),
+        (200, None, None),
+    ])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    res = RequestEngine(timeout=1).send_request("GET", "http://example.test/start")
+    assert res["status_code"] == 200
+    assert res["error"] is None
+    assert len(client.fetched) == 2
+    assert client.fetched[1] == "http://example.test/other"
+    assert res["url"] == "http://example.test/other"
+
+
+def test_follow_redirects_false_returns_raw_3xx(monkeypatch):
+    import core.request_engine as re_mod
+    monkeypatch.delenv("ALLOW_PRIVATE_SCAN_TARGETS", raising=False)
+    _pin_ssrf_guard(monkeypatch, lambda host: host != "169.254.169.254")
+    client = _fake_redirect_client([(301, "http://169.254.169.254/x", None)])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    # The Open_Redirect probe relies on this: no following, raw 3xx visible.
+    res = RequestEngine(timeout=1).send_request(
+        "GET", "http://example.test/r", follow_redirects=False)
+    assert res["status_code"] == 301
+    assert res["error"] is None
+    assert len(client.fetched) == 1
+
+
+def test_redirect_hop_cap_blocks_loop(monkeypatch):
+    import core.request_engine as re_mod
+    from core.request_engine import MAX_REDIRECT_HOPS
+    _pin_ssrf_guard(monkeypatch, lambda host: True)
+    client = _fake_redirect_client([(301, "http://example.test/loop", None)])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    res = RequestEngine(timeout=1).send_request("GET", "http://example.test/loop")
+    assert res["status_code"] == 0
+    assert res["error"] is not None and "too many redirects" in res["error"].lower()
+    assert len(client.fetched) == MAX_REDIRECT_HOPS + 1
+
+
+def test_redirect_to_non_http_scheme_blocked(monkeypatch):
+    import core.request_engine as re_mod
+    _pin_ssrf_guard(monkeypatch, lambda host: True)
+    client = _fake_redirect_client([(302, "ftp://example.test/x", None)])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    res = RequestEngine(timeout=1).send_request("GET", "http://example.test/start")
+    assert res["status_code"] == 0
+    assert res["error"] is not None and "http" in res["error"].lower()
+    assert len(client.fetched) == 1
+
+
+def test_validate_redirect_target_unit(monkeypatch):
+    from core.target_validation import validate_redirect_target
+    monkeypatch.delenv("ALLOW_PRIVATE_SCAN_TARGETS", raising=False)
+    _pin_ssrf_guard(monkeypatch, lambda host: host == "example.test")
+    ok, target, reason = validate_redirect_target("http://example.test/a", "/other")
+    assert ok is True and target == "http://example.test/other" and reason == ""
+    ok, _, reason = validate_redirect_target("http://example.test/a", "http://169.254.169.254/x")
+    assert ok is False and "private" in reason
+    ok, _, reason = validate_redirect_target("http://example.test/a", "ftp://example.test/x")
+    assert ok is False and "http" in reason  # shared module: "must start with http:// or https://"
+
+
+def test_async_redirect_to_private_ip_is_not_fetched(monkeypatch):
+    import asyncio
+    import core.request_engine as re_mod
+    monkeypatch.delenv("ALLOW_PRIVATE_SCAN_TARGETS", raising=False)
+    _pin_ssrf_guard(monkeypatch, lambda host: host != "169.254.169.254")
+    client = _fake_redirect_client([(301, "http://169.254.169.254/x", None)])
+    monkeypatch.setattr(re_mod, "_build_client", lambda cls, **kw: client)
+    res = asyncio.run(RequestEngine(timeout=1).send_request_async("GET", "http://example.test/start"))
+    assert len(client.fetched) == 1
+    assert res["status_code"] == 0
+    assert res["error"] is not None and "BlockedRedirect" in res["error"]

@@ -101,150 +101,26 @@ def load_csic_texts(csv_path: Path, max_per_class: int = 30000) -> Tuple[List[st
 
 
 def train_lstm_model():
-    logger.info("Starting Layer 3 LSTM model training...")
-    os.makedirs(MODELS_DIR, exist_ok=True)
-    payloads_dir = Path(PAYLOADS_DIR)
+    """RETIRED — the payload-text LSTM trainer.
 
-    texts: List[str] = []
-    labels: List[int] = []
+    This module's PayloadLSTM class, build_char_vocab and encode_text are
+    still the shared architecture/encoding utilities used by serving
+    (detection/deep_learning.py) and by the response-body trainer. But
+    training an LSTM on payload text is retired: the model could only
+    describe our own input, never the target. The production LSTM is
+    trained on real response bodies — run:
 
-    # Primary: CSIC 2010 request payloads (tens of thousands of real samples).
-    csic_csv = Path(__file__).resolve().parent.parent / "datasets" / "raw" / "csic_2010" / "csic_database.csv"
-    if csic_csv.exists():
-        try:
-            texts, labels = load_csic_texts(csic_csv)
-        except Exception as exc:
-            logger.warning(f"Could not load CSIC texts ({exc}); falling back to payload files.")
+        python ml_pipeline/train_response_lstm.py
 
-    # Augment with hand-written payload files (attack samples).
-    malicious_texts = []
-    for file_name in ["sqli.txt", "xss.txt", "cmd_injection.txt", "bola.txt", "auth.txt"]:
-        fpath = payloads_dir / file_name
-        if fpath.exists():
-            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line_clean = line.strip()
-                    if line_clean and not line_clean.startswith("#"):
-                        malicious_texts.append(line_clean)
-
-    # Additional high-risk attack vectors
-    additional_malicious = [
-        # Encoded payloads
-        "%27%20OR%201%3D1--",
-        "%3Cscript%3Ealert(1)%3C%2Fscript%3E",
-        "&#x27;OR&#x20;1=1--",
-        "\\x27 OR 1=1--",
-        "' OR '1'='1",
-        "admin'--",
-        "' OR 1=1#",
-        "') OR ('1'='1",
-        # Path traversal
-        "../../../etc/passwd",
-        "..\\..\\..\\windows\\system32",
-        "%2e%2e%2f%2e%2e%2f",
-        "....//....//etc/passwd",
-        # Second order injection
-        "admin'/*",
-        "1; SELECT SLEEP(5)--",
-        "1 WAITFOR DELAY '0:0:5'--",
-        "'; EXEC xp_cmdshell('dir')--"
-    ]
-    malicious_texts.extend(additional_malicious)
-
-    if texts and labels:
-        # CSIC path: merge hand-written attacks in as extra positives.
-        all_texts = texts + malicious_texts
-        all_labels = labels + [1] * len(malicious_texts)
-    else:
-        # Legacy fallback: tiny hand-written lists only.
-        # Benign text samples
-        benign_base = [
-        "user_login_request", "page=1&sort=asc", "id=10&category=books",
-        "search_query=python", "action=view_profile", "status=active",
-        "format=json&version=1.0", "limit=20&offset=0", "filter=recent",
-        "session_id=abc123xyz", "lang=en-US", "user_agent=browser",
-        "username=john&password=pass123",
-        "search=laptop&category=electronics",
-        "page=1&limit=20&sort=created_at",
-        "name=John+Doe&email=john@example.com",
-        "token=abc123&action=view",
-        "filter=active&type=user"
-    ]
-        benign_texts = (benign_base * (len(malicious_texts) // len(benign_base) + 1))[:len(malicious_texts)]
-
-    if not malicious_texts:
-        logger.warning("No payload files found. Using fallback payload samples for training.")
-        malicious_texts = ["' OR 1=1 --", "<script>alert(1)</script>", "; cat /etc/passwd"] * 50
-
-    if not (texts and labels):
-        all_texts = list(malicious_texts) + list(benign_texts)
-        all_labels = [1] * len(malicious_texts) + [0] * len(benign_texts)
-
-    # Stratified train/test split (80/20)
-    X_train_texts, X_test_texts, y_train, y_test = train_test_split(
-        all_texts, all_labels, test_size=0.20, random_state=42, stratify=all_labels
+    (dataset: ml_pipeline/datasets/response_bodies_v1.csv, built by
+    ml_pipeline/build_response_body_dataset.py). This stub intentionally
+    writes no artifacts so the retired payload model cannot come back by
+    accident.
+    """
+    raise SystemExit(
+        "train_lstm_model() is retired. Train the response-body LSTM with: "
+        "python ml_pipeline/train_response_lstm.py"
     )
-
-    # Build vocab & encode sequences
-    vocab = build_char_vocab(all_texts)
-    vocab_path = Path(MODELS_DIR) / "char_vocab.json"
-    with open(vocab_path, "w", encoding="utf-8") as f:
-        json.dump(vocab, f)
-
-    train_seqs = [encode_text(t, vocab) for t in X_train_texts]
-    test_seqs = [encode_text(t, vocab) for t in X_test_texts]
-
-    train_ds = SequenceDataset(train_seqs, y_train)
-    test_ds = SequenceDataset(test_seqs, y_test)
-
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True)
-    test_loader = DataLoader(test_ds, batch_size=16, shuffle=False)
-
-    # Instantiate model
-    model = PayloadLSTM(vocab_size=len(vocab))
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.005)
-
-    # Training loop
-    epochs = 15
-    model.train()
-    for epoch in range(epochs):
-        epoch_loss = 0.0
-        for x_batch, y_batch in train_loader:
-            optimizer.zero_grad()
-            preds = model(x_batch)
-            loss = criterion(preds, y_batch)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-
-    # Evaluation
-    model.eval()
-    y_true, y_pred = [], []
-    with torch.no_grad():
-        for x_batch, y_batch in test_loader:
-            preds = model(x_batch)
-            predicted_labels = (preds > 0.5).float().tolist()
-            y_true.extend(y_batch.tolist())
-            y_pred.extend(predicted_labels)
-
-    precision = precision_score(y_true, y_pred, zero_division=0)
-    recall = recall_score(y_true, y_pred, zero_division=0)
-    f1 = f1_score(y_true, y_pred, zero_division=0)
-
-    print("\n" + "="*50)
-    print(" LAYER 3: LSTM MODEL EVALUATION METRICS")
-    print("="*50)
-    print(f" Precision : {precision*100:.2f}%")
-    print(f" Recall    : {recall*100:.2f}%")
-    print(f" F1-Score  : {f1*100:.2f}%")
-    print("="*50)
-
-    # Save model weights
-    model_output_path = Path(MODELS_DIR) / "lstm_model.pt"
-    torch.save(model.state_dict(), model_output_path)
-    logger.info(f"Saved trained LSTM model weights to {model_output_path}")
-    print(f"\n[+] LSTM model saved to: {model_output_path}\n")
 
 
 if __name__ == "__main__":

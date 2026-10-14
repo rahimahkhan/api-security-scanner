@@ -107,3 +107,71 @@ def test_suspected_findings_capped_below_critical():
     )
     assert res_confirmed["severity"] == "CRITICAL"
     assert res_confirmed["finding_status"] == "Confirmed"
+
+
+def test_passive_informational_note_stays_informational():
+    """D3: the signature layer labels missing security headers as
+    Informational (a hygiene note, no exploit proof). ML/DL anomaly points
+    still contribute to the numeric score, but the status must not be
+    promoted to Suspected — status is what vulnerability counts are
+    driven by."""
+    scorer = RiskScorer()
+    sig = {
+        "matched": True,
+        "has_proof": False,
+        "is_vulnerable": False,
+        "attack_type": "Security_Misconfiguration",
+        "points": 10.0,
+        "finding_status": "Informational",
+        "pattern_matched": "Missing headers: X-Content-Type-Options",
+    }
+    # ML sees an anomaly in the same response; DL contributes nothing.
+    ml = {"is_anomaly": True, "points": 20.0, "supervised_points": 5.0}
+    dl = {"lstm_points": 0.0, "autoencoder_points": 0.0}
+    res = scorer.calculate_risk(
+        sig, ml, dl, "http://localhost/api", "GET",
+        telemetry_data={"status_code": 200, "response_size": 500, "response_time": 0.2},
+    )
+    assert res["total_score"] > 0.0       # numeric signal preserved for triage
+    assert res["finding_status"] == "Informational"
+    assert res["is_vulnerable"] is False
+    # And the counting layer must not register it as a vulnerability.
+    from dashboard.results_grouping import summarize_findings
+    s = summarize_findings([{
+        "url": "http://localhost/api", "method": "GET",
+        "attack_type": "Security_Misconfiguration",
+        "severity": res["severity"], "finding_status": res["finding_status"],
+        "risk_score": res["risk_score"],
+    }])
+    assert s["vulnerabilities"] == 0
+    assert s["informational"] == 1
+
+
+def test_signature_suspected_without_match_still_suspected():
+    """Sanity on the D3 boundary: a pure ML anomaly lead with NO signature
+    match (signature status absent) keeps the intended Suspected status —
+    only signature-labeled Informational notes are pinned down."""
+    scorer = RiskScorer()
+    res = scorer.calculate_risk(
+        {"matched": False, "has_proof": False, "points": 0.0},
+        {"is_anomaly": True, "points": 22.0},
+        {"lstm_points": 0.0, "autoencoder_points": 0.0},
+        "http://localhost/api", "GET",
+        telemetry_data={"status_code": 200, "response_size": 500, "response_time": 0.2},
+    )
+    assert res["finding_status"] == "Suspected"
+
+
+def test_confirmed_note_not_pinned_to_informational():
+    """A signature-labeled Confirmed/Informational-with-proof edge case:
+    proof always wins over the Informational pin."""
+    scorer = RiskScorer()
+    res = scorer.calculate_risk(
+        {"matched": True, "has_proof": True, "points": 40.0,
+         "finding_status": "Informational"},  # weird but possible input
+        {"is_anomaly": False, "points": 0.0},
+        {"lstm_points": 0.0, "autoencoder_points": 0.0},
+        "http://localhost/api", "GET",
+        telemetry_data={"status_code": 200, "response_size": 500, "response_time": 0.2},
+    )
+    assert res["finding_status"] == "Confirmed"

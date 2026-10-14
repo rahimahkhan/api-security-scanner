@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.logging_config import logger
+from core.target_validation import validate_target_url
 from core.discovery import EndpointDiscovery
 from core.request_engine import RequestEngine
 from core.response_parser import ResponseParser
@@ -18,7 +19,7 @@ from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
-from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session_findings, get_session_for_user, set_session_total_endpoints
+from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session, get_session_findings, get_session_for_user, set_session_total_endpoints
 from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
@@ -151,6 +152,42 @@ def _is_csrf_candidate(ep_info: Dict[str, Any]) -> bool:
     return "csrf" in path and form_method in {"GET", "POST", "PUT", "PATCH", "DELETE"} and has_form_fields and not (ep_info.get("csrf_token_fields") or [])
 
 
+_NUMERIC_ID_SEGMENT_RE = re.compile(r"^\d+$")
+_UUID_ID_SEGMENT_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _mutate_id_path_segment(url: str) -> Optional[str]:
+    """Return a copy of the URL with the first ID-like path segment swapped
+    for a sibling ID (numeric 123 -> 124, UUID -> last nibble flipped).
+
+    This is the generic BOLA probe: fetching a *different* object's URL
+    without authentication reveals whether the server checks object
+    ownership. Returns None when the path has no numeric/UUID segment, in
+    which case the caller must skip the probe rather than fire a duplicate
+    of the baseline request.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    segments = parts.path.split("/")
+    for i, seg in enumerate(segments):
+        if _NUMERIC_ID_SEGMENT_RE.match(seg):
+            try:
+                n = int(seg)
+            except ValueError:
+                continue
+            segments[i] = str(n + 1 if n else 2)
+            return urlunsplit((parts.scheme, parts.netloc, "/".join(segments), parts.query, parts.fragment))
+        if _UUID_ID_SEGMENT_RE.match(seg):
+            flip = "0" if seg[-1].lower() != "0" else "1"
+            segments[i] = seg[:-1] + flip
+            return urlunsplit((parts.scheme, parts.netloc, "/".join(segments), parts.query, parts.fragment))
+    return None
+
+
 # Query/form parameter names that conventionally carry a redirect target. The
 # open-redirect probe is selected when an endpoint exposes one of these, so
 # endpoints like /go?url= are tested instead of only path-keyword matches.
@@ -187,13 +224,17 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
         selected = []
     elif "open_redirect" in path or "redirect" in path or "redirect" in query_fields or query_fields & _OPEN_REDIRECT_PARAMS:
         selected = [by_type["Open_Redirect"]]
-    elif "/register" in path:
+    elif re.search(r"/(register|signup|profile|account)(/|$|\?|#)", path):
+        # Boundary-aware: "/account" must not swallow "/accounts/123", which
+        # belongs to the BOLA branch below.
         selected = [by_type.get("Mass_Assignment", by_type["Baseline_Inspection"])]
     elif any(token in path for token in ("/users/", "/accounts/", "/profiles/")):
         bola_items = [item for item in active_test_queue if item.get("type") == "BOLA_IDOR"]
         selected = bola_items[:2] if bola_items else [by_type["Baseline_Inspection"]]
     elif "exec" in path:
         selected = [by_type["Command_Injection"]]
+        if "Command_Injection_Time" in by_type:
+            selected.append(by_type["Command_Injection_Time"])
     elif "/fi/" in path or "file" in path:
         selected = [by_type["Local_File_Inclusion"]]
     elif "brute" in path or "login" in path or "auth" in path:
@@ -209,6 +250,8 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
             selected.append(by_type["Local_File_Inclusion"])
         if "SQL_Injection_Time" in by_type:
             selected.append(by_type["SQL_Injection_Time"])
+        if "Command_Injection_Time" in by_type:
+            selected.append(by_type["Command_Injection_Time"])
 
     if "Baseline_Inspection" not in {item["type"] for item in selected}:
         selected.append(by_type["Baseline_Inspection"])
@@ -268,86 +311,6 @@ def _identity_api_verified(probe_response: Dict[str, Any]) -> bool:
         return isinstance(parsed, dict)
     except Exception:
         return False
-
-
-_HOSTNAME_RE = re.compile(
-    r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*"
-    r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$"
-)
-_IPV4_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
-
-
-def _host_resolves_to_public_ip(host: str) -> bool:
-    """SSRF guard: reject targets pointing at private/internal networks.
-
-    Scans run server-side, so a target like http://169.254.169.254/ (cloud
-    instance metadata) or http://localhost/ would turn the scanner into a
-    proxy into the host's private network. Literal IPs are checked directly;
-    hostnames are resolved and every resolved address must be public.
-    A DNS failure is not treated as private (the request itself will fail
-    naturally); only positively-private addresses are rejected.
-    """
-    import ipaddress
-    import socket
-
-    def _is_private_ip(ip_str: str) -> bool:
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            return False
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
-
-    # Literal IP literal (brackets already stripped by urlparse's hostname).
-    try:
-        ipaddress.ip_address(host)
-        return not _is_private_ip(host)
-    except ValueError:
-        pass
-    try:
-        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
-    except (socket.gaierror, OSError):
-        return True
-    addresses = {info[4][0] for info in infos}
-    if not addresses:
-        return True
-    return not any(_is_private_ip(addr) for addr in addresses)
-
-
-def validate_target_url(target_url: Any) -> "tuple[bool, str]":
-    """Validate a scan target. Returns (True, normalized_url) or (False, reason).
-
-    Rejects payload-looking junk (e.g. "<script>alert(1)</script>",
-    "; cat /etc/passwd") that previously created garbage scan sessions.
-    """
-    if not isinstance(target_url, str):
-        return False, "target URL must be a string"
-    candidate = target_url.strip()
-    if not candidate:
-        return False, "target URL is empty"
-    if len(candidate) > 2048:
-        return False, "target URL is too long"
-    if any(ch in candidate for ch in "<>\"' \t\r\n\\"):
-        return False, "target URL contains illegal characters"
-    try:
-        parsed = urllib.parse.urlparse(candidate)
-    except ValueError as exc:
-        return False, f"target URL could not be parsed: {exc}"
-    if parsed.scheme not in ("http", "https"):
-        return False, "target URL must start with http:// or https://"
-    host = (parsed.hostname or "").strip().lower()
-    if not host:
-        return False, "target URL must include a host name"
-    is_ipv6 = host.startswith("[") or ":" in host
-    if not (is_ipv6 or _IPV4_RE.match(host) or _HOSTNAME_RE.match(host)):
-        return False, "target URL host name looks invalid"
-    if _IPV4_RE.match(host) and not all(0 <= int(o) <= 255 for o in host.split(".")):
-        return False, "target URL IPv4 address is invalid"
-    # Env override for local lab testing (e.g. scanning a localhost target
-    # from the CLI). Never set this on the deployed service.
-    if os.getenv("ALLOW_PRIVATE_SCAN_TARGETS", "0").lower() not in {"1", "true", "yes", "on"}:
-        if not _host_resolves_to_public_ip(host):
-            return False, "target URL resolves to a private or internal address; only public targets can be scanned"
-    return True, candidate
 
 
 def _make_discovery_progress_callback(session_id, min_interval: float = 3.0):
@@ -459,7 +422,9 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
     # Save Session (or reuse the pre-created one for background web scans)
     if session_id is not None:
-        session_obj = get_session_for_user(session_id, None)
+        # Internal fetch: the worker is trusted server-side code, not a web
+        # visitor, so it bypasses the per-user ownership check.
+        session_obj = get_session(session_id)
         if session_obj is None:
             raise ValueError(f"Scan session {session_id} not found")
         set_session_total_endpoints(session_id, len(discovered_endpoints))
@@ -565,7 +530,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 features = response_parser.extract_features(req_data)
                 sig_res = signature_detector.analyze(req_data, baseline_telemetry={})
                 ml_res = ml_detector.predict(features)
-                dl_res = dl_detector.analyze(payload_str, features)
+                dl_res = dl_detector.analyze(req_data.get("response_body", ""), features)
                 risk_summary = risk_scorer.calculate_risk(
                     signature_result=sig_res,
                     ml_result=ml_res,
@@ -671,8 +636,28 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             {"type": "SQL_Injection_Time", "payload": "1' AND SLEEP(5)--", "method": "GET"},
             {"type": "Cross_Site_Scripting", "payload": "<script>alert('xss')</script>", "method": "POST"},
             {"type": "Command_Injection", "payload": "; cat /etc/passwd", "method": "GET"},
+            # Time-based CMDi mirror of SQL_Injection_Time (D6 fix): the payload
+            # carries BOTH a command the signature layer recognises ("; cat")
+            # for categorisation AND an explicit delay function ("sleep") that
+            # the time-based proof branch requires before Confirming.
+            # attack_category overrides the queue type for the signature
+            # layer: "Command_Injection_Time" is not a signature category, and
+            # without the override a URL containing "exec" would match the
+            # SQLi EXEC keyword and steal the categorisation.
+            {"type": "Command_Injection_Time", "attack_category": "Command_Injection", "payload": "; cat /etc/passwd; sleep 5", "method": "GET"},
             {"type": "Local_File_Inclusion", "payload": "../../../../../../etc/passwd", "method": "GET"},
             {"type": "Open_Redirect", "payload": "https://example.com/api-security-redirect-check", "method": "GET", "follow_redirects": False},
+            # Generic BOLA probe (D2 fix): the URL's numeric/UUID ID segment is
+            # swapped for a sibling ID at dispatch time (bola_id_mutation).
+            # No canary flags are set — without cross-identity verification
+            # this grades Suspected at most; Confirmed stays canary-only.
+            {"type": "BOLA_IDOR", "payload": "", "method": "GET", "bola_id_mutation": True},
+            # Generic mass-assignment probe (D2 fix): fixed JSON body carrying
+            # extra privilege fields. The "payload" string mirrors the body so
+            # the signature layer can categorise the probe; the json_payload
+            # dict is what actually goes on the wire. Suspected-grade only —
+            # no privilege_verified flag is ever set on the queue path.
+            {"type": "Mass_Assignment", "payload": "{\"username\": \"probe-test\", \"password\": \"TestPass123!\", \"role\": \"admin\", \"admin\": true}", "method": "POST", "json_payload": {"username": "probe-test", "password": "TestPass123!", "role": "admin", "admin": True}, "headers": {"Content-Type": "application/json"}},
             {"type": "Broken_Authentication", "payload": "", "method": "GET", "headers": {"Authorization": "Bearer null"}},
             {"type": "Baseline_Inspection", "payload": "", "method": "GET"}
         ]
@@ -690,7 +675,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             # use the faster of the two: a real delay must beat BOTH samples.
             baseline_req = request_engine.send_request(default_method, base_ep_url)
             _prelim_queue = _select_test_queue(ep_info, active_test_queue)
-            needs_time_baseline = any(item.get("type") == "SQL_Injection_Time" for item in _prelim_queue)
+            # Any time-based probe (SQL_Injection_Time, Command_Injection_Time,
+            # ...) needs the double-baseline jitter guard.
+            needs_time_baseline = any(
+                str(item.get("type", "")).endswith("_Time") for item in _prelim_queue
+            )
             if needs_time_baseline:
                 second_baseline = request_engine.send_request(default_method, base_ep_url)
                 try:
@@ -707,6 +696,24 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 # bogus differential-response findings on clean endpoints.
                 "response_body": baseline_req.get("response_body", ""),
             }
+
+            # Baseline feature vector for Layer 3: the autoencoder scores each
+            # probe's EXCESS reconstruction error over the target's own normal
+            # response, so an app unlike the training services doesn't read as
+            # anomalous merely for existing (see DeepLearningDetector.analyze).
+            baseline_features = response_parser.extract_features(
+                {
+                    "status_code": baseline_telemetry["status_code"],
+                    "response_size": baseline_telemetry["response_size"],
+                    "response_time": baseline_telemetry["response_time"],
+                    "response_body": baseline_telemetry["response_body"],
+                    "headers": baseline_req.get("response_headers", {}),
+                    "method": default_method,
+                    "payload": "",
+                    "url": base_ep_url,
+                },
+                baseline_telemetry=baseline_telemetry,
+            )
 
             baseline_is_frontend_shell = _is_frontend_shell_response(
                 base_ep_url,
@@ -747,6 +754,20 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     test_url = base_ep_url
 
                 test_method = _resolve_test_method(ep_info, test_item, default_method)
+                # Generic BOLA probe (D2 fix): swap the URL's ID segment for a
+                # sibling object's URL and fetch it unauthenticated. No canary
+                # flags are set on this path — without cross-identity
+                # verification the signature layer grades this Suspected at
+                # most; Confirmed stays canary-only.
+                if test_item.get("type") == "BOLA_IDOR" and test_item.get("bola_id_mutation"):
+                    mutated_url = _mutate_id_path_segment(test_url)
+                    if mutated_url is None:
+                        logger.info("Skipping BOLA_IDOR probe: no ID segment in %s", test_url)
+                        continue
+                    prepared_requests.append(
+                        (test_item, mutated_url, test_method, "", None, None, None, None)
+                    )
+                    continue
                 payload_str = test_item.get("payload", "")
                 custom_headers = test_item.get("headers", None)
                 fixed_json = test_item.get("json_payload")
@@ -814,7 +835,10 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 if test_item["type"] == "Baseline_Inspection":
                     req_data["payload_had_effect"] = True
 
-                req_data["attack_category"] = test_item.get("type")
+                # The queue "type" drives selection and baseline logic; the
+                # signature layer sees attack_category, which a queue item may
+                # override (e.g. Command_Injection_Time -> Command_Injection).
+                req_data["attack_category"] = test_item.get("attack_category") or test_item.get("type")
                 req_data["cross_identity_probe"] = test_item.get("cross_identity_probe", False)
                 req_data["mass_assignment_probe"] = test_item.get("mass_assignment_probe", False)
                 # Pass the baseline so the ML layer can use response-differential
@@ -829,7 +853,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 ml_res = ml_detector.predict(features)
 
                 # Layer 3 - Deep Learning (PyTorch LSTM + Autoencoder)
-                dl_res = dl_detector.analyze(payload_str, features)
+                dl_res = dl_detector.analyze(response_body, features, baseline_feature_dict=baseline_features)
 
                 # Risk Scoring Calculation
                 risk_summary = risk_scorer.calculate_risk(
@@ -903,7 +927,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
         if sarif_output:
             from reports.sarif_exporter import SARIFReportExporter
-            persisted_session = get_session_for_user(session_obj.id, None)
+            persisted_session = get_session(session_obj.id)
             persisted_findings = get_session_findings(session_obj.id)
             session_data = {
                 "id": persisted_session.id,

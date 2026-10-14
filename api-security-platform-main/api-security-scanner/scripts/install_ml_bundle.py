@@ -15,8 +15,8 @@ EXPECTED_ARTIFACTS = [
     "autoencoder.pt",
     "autoencoder_scaler.pkl",
     "autoencoder_threshold.txt",
-    "lstm_model.pt",
-    "char_vocab.json",
+    "response_lstm.pt",
+    "response_char_vocab.json",
     "model_manifest.json",
     "metrics.json",
 ]

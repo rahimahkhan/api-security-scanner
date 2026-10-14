@@ -51,10 +51,12 @@ class PayloadLSTM(nn.Module):
         return self.sigmoid(out)
 
 
-def encode_text_vocab(text: str, vocab: Dict[str, int], max_len: int = 100) -> torch.Tensor:
+def encode_text_vocab(text: str, vocab: Dict[str, int], max_len: int = 512) -> torch.Tensor:
     indices = [vocab.get(char, vocab.get("<UNK>", 1)) for char in str(text)[:max_len]]
     if len(indices) < max_len:
-        indices += [vocab.get("<PAD>", 0)] * (max_len - len(indices))
+        # LEFT-pad: matches response-LSTM training (padding is a constant
+        # prefix; the final LSTM state reflects the real content).
+        indices = [vocab.get("<PAD>", 0)] * (max_len - len(indices)) + indices
     return torch.tensor([indices], dtype=torch.long)
 
 
@@ -128,8 +130,8 @@ class CSICModelBundle:
         return ae_model, scaler, threshold
 
     def _load_lstm(self):
-        lstm_path = self.bundle_dir / "lstm_model.pt"
-        vocab_path = self.bundle_dir / "char_vocab.json"
+        lstm_path = self.bundle_dir / "response_lstm.pt"
+        vocab_path = self.bundle_dir / "response_char_vocab.json"
         lstm_model, vocab = None, {"<PAD>": 0, "<UNK>": 1}
 
         if vocab_path.exists():
@@ -194,19 +196,15 @@ class CSICModelBundle:
             except Exception:
                 pass
 
-        # 4. Character LSTM Payload Probability
-        # Feed the model exactly what it was trained on: the request content,
-        # falling back to the URL query string (never the full URL). Requests
-        # with neither carry no payload signal -> 0.0, not a false positive.
+        # 4. Response-body LSTM Probability
+        # The LSTM is trained on real response bodies (exploit-effect vs
+        # normal), so it classifies the TARGET'S RESPONSE BODY when the
+        # input carries one. Without a response body there is no signal.
         lstm_prob = 0.0
-        payload_text = str(req_data.get("content") if req_data.get("content") is not None else (req_data.get("payload") or ""))
-        if not payload_text.strip():
-            url_txt = str(req_data.get("URL") or req_data.get("url") or "")
-            payload_text = url_txt.split("?", 1)[1].split(" HTTP")[0] if "?" in url_txt else ""
-        payload_text = payload_text.strip()[:500]
-        if self.lstm is not None and payload_text:
+        response_body = str(req_data.get("response_body") or "")
+        if self.lstm is not None and response_body.strip():
             try:
-                encoded = encode_text_vocab(payload_text, self.char_vocab)
+                encoded = encode_text_vocab(response_body, self.char_vocab)
                 with torch.no_grad():
                     lstm_out = self.lstm(encoded).item()
                 lstm_prob = round(float(np.clip(lstm_out, 0.0, 1.0)), 4)
@@ -218,7 +216,7 @@ class CSICModelBundle:
             "isolation_forest_novelty_score": iso_score,
             "autoencoder_reconstruction_error": ae_recon_error,
             "autoencoder_score": ae_score,
-            "lstm_payload_probability": lstm_prob,
+            "lstm_response_probability": lstm_prob,
             "confirmation": "not_confirmed_model_signal_only",
             "response_telemetry_available": bool(req_data.get("status_code", 0) > 0),
         }

@@ -111,7 +111,7 @@ TOPICS = [
         "id": "login",
         "keywords": ["log in", "login", "sign in", "sign up", "password", "account", "forgot"],
         "text": _t(
-            "Log in with your **email or username** plus password, or **Continue with Google**. New here? Create an account from the login page — each account only ever sees its own scans. Forgot your password? Use **Forgot password** for a reset link or a one-time code.",
+            "Log in with your **email or username** plus password, or **Continue with Google**. New here? Create an account from the login page — each account only ever sees its own scans. Forgot your password? Use **Forgot password** for a reset link sent to your email.",
         ),
         "actions": [{"label": "Open this screen", "href": "/login"}],
     },

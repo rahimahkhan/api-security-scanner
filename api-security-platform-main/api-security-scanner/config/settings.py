@@ -14,11 +14,12 @@ DATASETS_DIR = str(BASE_DIR / "datasets")
 
 # Model File Paths
 # NOTE: Layer 3 (detection/deep_learning.py) loads these with torch.load() on a
-# state_dict, so they must be the .pt files written by training/train_lstm.py
-# and training/train_autoencoder.py (see models/model_manifest.json).
+# state_dict. The response-body LSTM is written by
+# ml_pipeline/train_response_lstm.py and the autoencoder by
+# training/train_autoencoder.py (see models/model_manifest.json).
 ISOLATION_FOREST_PATH = os.path.join(MODELS_DIR, "isolation_forest.pkl")
 TABULAR_RANKER_PATH = os.path.join(MODELS_DIR, "tabular_ranker.pkl")
-LSTM_MODEL_PATH = os.path.join(MODELS_DIR, "lstm_model.pt")
+RESPONSE_LSTM_PATH = os.path.join(MODELS_DIR, "response_lstm.pt")
 AUTOENCODER_PATH = os.path.join(MODELS_DIR, "autoencoder.pt")
 
 # Application & Scanner Limits
@@ -28,7 +29,20 @@ SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", 30))
 # Flask & Dashboard Settings
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5000)))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "False") == "True"
-SECRET_KEY = os.getenv("SECRET_KEY", "default-secure-key")
+# Session signing key. MUST come from the SECRET_KEY env var in any real
+# deployment: a known fallback would let anyone forge session cookies.
+# Without the env var we generate an ephemeral random key so the app still
+# boots, but sessions will NOT survive restarts — and we say so loudly.
+SECRET_KEY = os.getenv("SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    import logging as _logging
+    import secrets as _secrets
+    SECRET_KEY = _secrets.token_hex(32)
+    _logging.getLogger("api-scanner").warning(
+        "SECRET_KEY is not set — generated an ephemeral random key. "
+        "Sessions will NOT survive restarts. Set the SECRET_KEY environment "
+        "variable to a fixed random value."
+    )
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'database.db'}")
 # Render's Postgres URLs start with postgres:// - SQLAlchemy needs postgresql://.
@@ -42,9 +56,11 @@ IS_MYSQL = DATABASE_URL.startswith("mysql+pymysql://")
 IS_REMOTE_DB = IS_POSTGRES or IS_MYSQL
 
 # Dashboard Auth & Security
-# Auth is ON by default: every dashboard page/API needs a user account, and
-# each user only sees their own scans. Set DASHBOARD_AUTH_ENABLED=False to
-# run a fully public instance.
+# Login is OPTIONAL: most dashboard pages and APIs are public, and guests can
+# run scans. A user account is required only for destructive or account-level
+# actions (deleting scans, settings, account management). Logged-in users only
+# ever see their own scans; guests see no one else's. Set
+# DASHBOARD_AUTH_ENABLED=False to force everything public.
 DASHBOARD_AUTH_ENABLED = os.getenv("DASHBOARD_AUTH_ENABLED", "True") == "True"
 CSRF_ENABLED = os.getenv("CSRF_ENABLED", "True") == "True"
 

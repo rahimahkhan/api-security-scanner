@@ -40,9 +40,19 @@ def _now():
 
 
 def _doc_to_ns(doc, extra=None):
-    """Firestore document -> SimpleNamespace with .id attribute."""
+    """Firestore document -> SimpleNamespace with .id attribute.
+
+    Firestore returns timezone-aware datetimes, but the rest of the app
+    (and the SQL backend) works in naive UTC — e.g. the stale-scan reaper
+    subtracts datetime.utcnow(). Normalize to naive UTC here so both
+    backends behave identically; otherwise naive/aware arithmetic raises
+    TypeError on the Firestore backend.
+    """
     data = doc.to_dict() or {}
     data.pop("id", None)
+    for k, v in data.items():
+        if isinstance(v, datetime) and v.tzinfo is not None:
+            data[k] = v.replace(tzinfo=None)
     ns = SimpleNamespace(id=doc.id, **data)
     if extra:
         for k, v in extra.items():
@@ -297,7 +307,10 @@ def get_session_findings(session_id) -> List:
     out = []
     for d in docs:
         ns = _finding_ns(d)
-        if (ns.risk_score or 0) > 0:
+        # Zero-score passive notes (e.g. the CSRF candidate note, saved with
+        # finding_status='Informational') must still surface in results;
+        # they were silently dropped by the score-only filter before.
+        if (ns.risk_score or 0) > 0 or (ns.finding_status or "") == "Informational":
             out.append(ns)
     return out
 
@@ -350,13 +363,31 @@ def get_all_sessions(user_id=None) -> List:
     return sessions
 
 
-def get_session_for_user(session_id, user_id):
-    """Fetch one session only if it belongs to the given user (else None)."""
+def get_session(session_id):
+    """Internal fetch without an ownership check — for the scan worker only.
+    Web routes MUST use get_session_for_user."""
     doc = _get_session_doc(session_id)
     if not doc.exists:
         return None
     ns = _doc_to_ns(doc)
-    if user_id is not None and str(getattr(ns, "user_id", None)) != str(user_id):
+    ns.endpoints = get_session_endpoints(session_id)
+    return ns
+
+
+def get_session_for_user(session_id, user_id):
+    """Fetch one session only if it belongs to the given user (else None).
+
+    A logged-out visitor (user_id None) may only see sessions that also
+    have no owner — never another user's scans.
+    """
+    doc = _get_session_doc(session_id)
+    if not doc.exists:
+        return None
+    ns = _doc_to_ns(doc)
+    # Never skip this check: guests (None) match only ownerless sessions,
+    # logged-in users match only their own. The str() comparison mirrors the
+    # pre-existing convention (Firestore stores the id raw).
+    if str(getattr(ns, "user_id", None)) != str(user_id):
         return None
     ns.endpoints = get_session_endpoints(session_id)
     return ns

@@ -1,18 +1,18 @@
 # API Security Platform
 
-[![CI](https://github.com/rahimahkhan/api-security-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/rahimahkhan/api-security-platform/actions/workflows/ci.yml)
+[![CI](https://github.com/rahimahkhan/api-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/rahimahkhan/api-security-scanner/actions/workflows/ci.yml)
 
 A standalone AI-powered API security testing, structure inspection, and anomaly detection platform built with **Python 3.11**, **Flask**, **scikit-learn (Isolation Forest)**, **PyTorch (LSTM + Autoencoder)**, and **SQLAlchemy**.
 
-Extending OWASP OFFAT under the MIT License, this platform analyzes live API target URLs without requiring OpenAPI specification documents.
+The platform analyzes live API target URLs without requiring OpenAPI specification documents.
 
 ---
 
 ## Detection Architecture
 
 1. **Layer 1 — Signature Engine**: Evaluates HTTP request/response headers, parameters, and bodies against deterministic regex rules, missing security header patterns, stack trace error exposures, and PII leaks.
-2. **Layer 2 — ML Anomaly Detection**: Extracts 17 numerical HTTP features (`runtime-http-17-v1`) (method, path depth, URL length, entropy, status code, response size, header count, auth status) and scores anomalies using a trained **Isolation Forest** model.
-3. **Layer 3 — Deep Learning**: Combines character-level **LSTM** sequence modeling with a PyTorch **Autoencoder** feature reconstruction error benchmark.
+2. **Layer 2 — ML Anomaly Detection**: Extracts 15 response-differential features (`response-diff-14-v1`) — how each probe's response deviates from its baseline: status/size/time changes, error-keyword deltas, reflection checks, content-type changes — and scores them with a trained **Isolation Forest** plus a calibrated tabular ranker. Both models are trained on **686 real (baseline, probe) response pairs** in `ml_pipeline/datasets/response_diff_v1.csv` (live benign traffic + locally collected safe-echo responses); never on payload text.
+3. **Layer 3 — Deep Learning**: A PyTorch **Autoencoder** trained on benign response-differential features flags responses that reconstruct poorly; a character-level **LSTM** trained on real response bodies (exploit-effect vs normal) classifies the target's response and contributes up to 15 points. Both models measure the target's behavior — no model in the scoring path is trained on payload text.
 
 ---
 
@@ -33,8 +33,8 @@ docker compose up --build
 
 1. **Clone & Virtual Environment**:
    ```bash
-   git clone https://github.com/rahimahkhan/api-security-platform.git
-   cd api-security-platform
+   git clone https://github.com/rahimahkhan/api-security-scanner.git
+   cd api-security-scanner/api-security-platform-main/api-security-scanner
    python -m venv venv
    source venv/bin/activate  # Windows: venv\Scripts\activate
    ```
@@ -44,13 +44,11 @@ docker compose up --build
    pip install -r requirements.txt
    ```
 
-3. **Train Baseline Machine Learning & Deep Learning Models**:
+3. **Train Machine Learning & Deep Learning Models** (optional — trained artifacts already ship in `models/`):
    ```bash
-   python training/prepare_dataset.py
-   python training/train_isolation_forest.py
-   python training/train_lstm.py
-   python training/train_autoencoder.py
+   python ml_pipeline/train_csic.py
    ```
+   This trains the Isolation Forest, tabular ranker, and autoencoder on `ml_pipeline/datasets/response_diff_v1.csv` (686 real baseline/probe response pairs), and the response-body LSTM on `ml_pipeline/datasets/response_bodies_v1.csv` (130 real captured response bodies from public test services, a ground-truth app, and VAmPI; see `ml_pipeline/build_response_body_dataset.py`). The legacy `training/` scripts target the older CSIC-2010 pipeline and are not used by the shipped models.
 
 4. **Launch Application**:
    - **CLI Inspection Scan**:
@@ -66,7 +64,8 @@ docker compose up --build
 
 ## Dataset Instructions
 
-- **Primary Dataset**: HTTP CSIC 2010 Web Application Attacks ([Kaggle Download](https://www.kaggle.com/datasets/ispangler/csic-2010-web-application-attacks)). Place downloaded raw text files inside `datasets/raw/csic_2010/`.
+- **Live model dataset**: `ml_pipeline/datasets/response_diff_v1.csv` — 686 (baseline, probe) response pairs (434 benign, 252 anomalous), built by `ml_pipeline/build_response_dataset.py` from live benign traffic (httpbin.org, example.com, postman-echo.com) plus locally collected safe-echo responses. This is what the shipped Isolation Forest, tabular ranker, and autoencoder are trained on.
+- **Legacy**: the HTTP CSIC 2010 files under `datasets/raw/csic_2010/` belong to the older training pipeline and are **not** used by the shipped models.
 
 ---
 
@@ -81,4 +80,4 @@ The scanner can be evaluated against these vulnerable targets:
 
 ## License
 
-Distributed under the [MIT License](LICENSE).
+No `LICENSE` file is currently included in this repository — add one before distributing.

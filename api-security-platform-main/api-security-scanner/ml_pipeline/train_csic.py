@@ -12,8 +12,8 @@ Artifacts written to the models directory:
       at the model's own contamination quantile (see detection/ml_model.py)
   tabular_ranker.pkl      — calibrated LogisticRegression, benign=0 / anomalous=1
   autoencoder.pt / autoencoder_scaler.pkl / autoencoder_threshold.txt
-  lstm_model.pt / char_vocab.json — payload-maliciousness LSTM (properly
-      trained this time, not randomly initialized)
+  response_lstm.pt / response_char_vocab.json — response-body LSTM trained
+      on real captured response bodies (see train_response_lstm.py)
 
 Run:  python ml_pipeline/train_csic.py [--data PATH] [--output DIR]
 """
@@ -40,38 +40,13 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from config.settings import MODELS_DIR
 from ml_pipeline.feature_extractor import FEATURE_KEYS, SCHEMA_VERSION
+from ml_pipeline.train_response_lstm import train_response_lstm
 from training.train_autoencoder import FeatureAutoencoder
-from training.train_lstm import PayloadLSTM, build_char_vocab, encode_text
 
 DEFAULT_DATA = ROOT_DIR / "ml_pipeline" / "datasets" / "response_diff_v1.csv"
 
-# Payload-maliciousness LSTM corpus: benign parameter/query strings vs real
-# attack payloads. The LSTM scores the *payload*, not the response — it stays
-# a minor context signal by design.
-BENIGN_TEXTS = [
-    "id=10&name=alice", "search?q=laptop", "api/v1/users", "page=2&limit=25",
-    "q=hello+world", "username=bob&email=bob@example.com", "sort=asc&filter=new",
-    "product_id=42", "city=karachi&zip=74000", "token=abc123def456",
-    "category=books&author=smith", "lang=en&theme=dark", "ref=homepage",
-    "amount=100&currency=pkr", "status=active", "name=rahimah",
-]
-MALICIOUS_TEXTS = [
-    "' OR '1'='1", "' OR '1'='1' --", "admin' --", "' UNION SELECT NULL--",
-    "' UNION SELECT password FROM users--", "<script>alert(1)</script>",
-    "<img src=x onerror=alert(1)>", "'; DROP TABLE users--",
-    "../../etc/passwd", "../../../../etc/shadow", "; cat /etc/passwd",
-    "1' AND SLEEP(5)--", "' OR SLEEP(5)--", "${7*7}", "{{7*7}}",
-    "' AND (SELECT 1 FROM (SELECT COUNT(*),CONCAT(0x3a,(SELECT version())))x)--",
-]
 
-
-def _lstm_corpus() -> Tuple[List[str], List[int]]:
-    texts = BENIGN_TEXTS * 4 + MALICIOUS_TEXTS * 4
-    labels = [0] * (len(BENIGN_TEXTS) * 4) + [1] * (len(MALICIOUS_TEXTS) * 4)
-    return texts, labels
-
-
-def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm_epochs: int = 15):
+def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm_epochs: int = 200):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not data_path.exists():
@@ -156,33 +131,10 @@ def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm
     (output_dir / "autoencoder_threshold.txt").write_text(f"{threshold:.6f}\n")
     print(f"    autoencoder 95th-percentile threshold: {threshold:.6f}")
 
-    # 4. Payload LSTM — trained classifier, not random weights
-    print(f"[+] Training payload LSTM ({lstm_epochs} epochs)...")
-    texts, labels = _lstm_corpus()
-    vocab = build_char_vocab(texts)
-    (output_dir / "char_vocab.json").write_text(json.dumps(vocab, indent=2))
-    seqs = [encode_text(t, vocab) for t in texts]
-    max_len = 100
-    # LEFT-pad: padding tokens form a constant prefix and the final LSTM state
-    # always reflects the real content. (Right-padding washed the signal out:
-    # dozens of trailing PADs made every hidden state identical.)
-    x_seq = torch.tensor([[0] * (max_len - len(s)) + s[:max_len] for s in seqs], dtype=torch.long)
-    y_seq = torch.tensor(labels, dtype=torch.float32)
-    lstm = PayloadLSTM(vocab_size=len(vocab))
-    opt = torch.optim.Adam(lstm.parameters(), lr=0.005)
-    crit = nn.BCELoss()
-    lstm.train()
-    for _epoch in range(lstm_epochs):
-        opt.zero_grad()
-        loss = crit(lstm(x_seq), y_seq)
-        loss.backward()
-        opt.step()
-    lstm.eval()
-    with torch.no_grad():
-        preds = (lstm(x_seq) > 0.5).int().numpy()
-    acc = float((preds == np.array(labels)).mean())
-    torch.save(lstm.state_dict(), output_dir / "lstm_model.pt")
-    print(f"    LSTM train accuracy: {acc:.3f}")
+    # 4. Response-body LSTM — trained on real captured response bodies
+    # (ml_pipeline/datasets/response_bodies_v1.csv) by the dedicated trainer.
+    print(f"[+] Training response-body LSTM ({lstm_epochs} epochs)...")
+    lstm_metrics = train_response_lstm(output_dir, lstm_epochs)
 
     manifest = {
         "schema": SCHEMA_VERSION,
@@ -191,7 +143,7 @@ def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm
         "rows": len(df),
         "benign_rows": int((y == 0).sum()),
         "anomalous_rows": int((y == 1).sum()),
-        "lstm_train_accuracy": round(acc, 4),
+        "response_lstm": lstm_metrics,
         "artifacts": {
             "isolation_forest": "isolation_forest.pkl",
             "feature_scaler": "feature_scaler.pkl",
@@ -200,8 +152,8 @@ def train_pipeline(data_path: Path, output_dir: Path, ae_epochs: int = 200, lstm
             "autoencoder": "autoencoder.pt",
             "autoencoder_scaler": "autoencoder_scaler.pkl",
             "autoencoder_threshold": "autoencoder_threshold.txt",
-            "lstm": "lstm_model.pt",
-            "char_vocab": "char_vocab.json",
+            "response_lstm": "response_lstm.pt",
+            "response_char_vocab": "response_char_vocab.json",
         },
     }
     (output_dir / "response_model_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -213,7 +165,7 @@ def main():
     parser.add_argument("--data", type=Path, default=DEFAULT_DATA)
     parser.add_argument("--output", type=Path, default=Path(MODELS_DIR))
     parser.add_argument("--ae-epochs", type=int, default=30)
-    parser.add_argument("--lstm-epochs", type=int, default=15)
+    parser.add_argument("--lstm-epochs", type=int, default=200)
     args = parser.parse_args()
     train_pipeline(args.data, args.output, args.ae_epochs, args.lstm_epochs)
 

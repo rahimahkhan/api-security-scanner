@@ -35,9 +35,9 @@ def test_preflight_positive_all_artifacts_present():
         # Create required critical files
         required = [
             "isolation_forest.pkl",
-            "lstm_model.pt",
+            "response_lstm.pt",
             "autoencoder.pt",
-            "char_vocab.json",
+            "response_char_vocab.json",
         ]
         for fname in required:
             (models_path / fname).write_bytes(b"dummy")

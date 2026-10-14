@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# The app lives in api-security-platform-main/api-security-scanner/; run all
+# steps from there (requirements.txt, tests/, models/, tools/ all live there).
+defaults:
+  run:
+    working-directory: api-security-platform-main/api-security-scanner
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -37,16 +43,15 @@ jobs:
           # Install dev linting tools
           pip install ruff black
 
-      - name: Prepare synthetic model artifacts for preflight
+      - name: Verify committed model artifacts for preflight
         run: |
-          mkdir -p models
-          echo dummy > models/isolation_forest.pkl
-          echo dummy > models/lstm_model.pt
-          echo dummy > models/autoencoder.pt
-          echo '{}' > models/char_vocab.json
-          echo dummy > models/feature_scaler.pkl
-          echo dummy > models/autoencoder_scaler.pkl
-          echo 1.0 > models/autoencoder_threshold.txt
+          # The real trained artifacts are committed to models/ (the shipped
+          # detectors need them: isolation forest, ranker, LSTM, autoencoder).
+          # Never write dummy files here — the full test suite exercises the
+          # real models, and dummy files would silently fake the results.
+          for f in models/isolation_forest.pkl models/tabular_ranker.pkl models/feature_scaler.pkl models/response_lstm.pt models/response_char_vocab.json models/autoencoder.pt models/autoencoder_scaler.pkl models/autoencoder_threshold.txt; do
+            test -f "$f" || { echo "missing model artifact: $f"; exit 1; }
+          done
 
       - name: Create safe docker-compose for preflight
         run: |
@@ -65,6 +70,6 @@ jobs:
           ruff check . || true
           black --check . || true
 
-      - name: Run fast tests
+      - name: Run full test suite
         run: |
-          pytest -q tests/test_core.py tests/test_feature_vector.py tests/test_setup.py tests/test_dashboard.py tests/test_database.py tests/test_preflight.py
+          pytest -q tests/

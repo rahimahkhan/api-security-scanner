@@ -6,8 +6,8 @@
     "autoencoder": "autoencoder.pt",
     "autoencoder_scaler": "autoencoder_scaler.pkl",
     "autoencoder_threshold": "autoencoder_threshold.txt",
-    "lstm": "lstm_model.pt",
-    "char_vocab": "char_vocab.json"
+    "response_lstm": "response_lstm.pt",
+    "response_char_vocab": "response_char_vocab.json"
   },
   "feature_schema": "runtime-http-17-v1",
   "output_confirmation_policy": "not_confirmed_model_signal_only"

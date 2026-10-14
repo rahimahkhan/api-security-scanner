@@ -21,7 +21,6 @@
   "rows": 686,
   "benign_rows": 434,
   "anomalous_rows": 252,
-  "lstm_train_accuracy": 1.0,
   "artifacts": {
     "isolation_forest": "isolation_forest.pkl",
     "feature_scaler": "feature_scaler.pkl",
@@ -30,7 +29,23 @@
     "autoencoder": "autoencoder.pt",
     "autoencoder_scaler": "autoencoder_scaler.pkl",
     "autoencoder_threshold": "autoencoder_threshold.txt",
-    "lstm": "lstm_model.pt",
-    "char_vocab": "char_vocab.json"
+    "response_lstm": "response_lstm.pt",
+    "response_char_vocab": "response_char_vocab.json"
+  },
+  "response_lstm": {
+    "model": "response-body char LSTM (PayloadLSTM architecture)",
+    "trains_on": "target response bodies (first 512 chars), never payload text",
+    "dataset": "ml_pipeline/datasets/response_bodies_v1.csv",
+    "rows": 130,
+    "benign_rows": 114,
+    "anomalous_rows": 16,
+    "vocab_size": 93,
+    "max_len": 512,
+    "epochs": 200,
+    "train_accuracy": 1.0,
+    "grouped_holdout_accuracy": 0.9048,
+    "grouped_holdout_rows": 21,
+    "chosen_seed": 42,
+    "sanity_gates": "passed (sql error & xss reflection > 0.5; clean json & normal page < 0.5)"
   }
 }

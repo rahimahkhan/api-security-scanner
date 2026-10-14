@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+# The app lives in api-security-platform-main/api-security-scanner/; run all
+# steps from there (requirements.txt, tests/, models/, tools/ all live there).
+defaults:
+  run:
+    working-directory: api-security-platform-main/api-security-scanner
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Install dev linting tools
+          pip install ruff black
+
+      - name: Verify committed model artifacts for preflight
+        run: |
+          # The real trained artifacts are committed to models/ (the shipped
+          # detectors need them: isolation forest, ranker, LSTM, autoencoder).
+          # Never write dummy files here — the full test suite exercises the
+          # real models, and dummy files would silently fake the results.
+          for f in models/isolation_forest.pkl models/tabular_ranker.pkl models/feature_scaler.pkl models/response_lstm.pt models/response_char_vocab.json models/autoencoder.pt models/autoencoder_scaler.pkl models/autoencoder_threshold.txt; do
+            test -f "$f" || { echo "missing model artifact: $f"; exit 1; }
+          done
+
+      - name: Create safe docker-compose for preflight
+        run: |
+          echo "version: '3.8'\nservices:\n  api-scanner:\n    image: example/api-scanner:latest" > safe-docker-compose.yml
+
+      - name: Create secure .env for preflight
+        run: |
+          echo SECRET_KEY=abcdefghijklmnopqrstuvwxyz1234567890 > .env
+
+      - name: Run preflight checker
+        run: |
+          python tools/check_environment.py --models-dir models --compose-path safe-docker-compose.yml --env-path .env
+
+      - name: Run linters
+        run: |
+          ruff check . || true
+          black --check . || true
+
+      - name: Run full test suite
+        run: |
+          pytest -q tests/

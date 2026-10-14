@@ -1,0 +1,600 @@
+body,label,source
+"{
+  ""args"": {}, 
+  ""headers"": {
+    ""Accept"": ""*/*"", 
+    ""Host"": ""httpbin.org"", 
+    ""User-Agent"": ""curl/8.5.0"", 
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-4ebbc3da6066de6f71d3b027""
+  }, 
+  ""origin"": ""87.81.235.24"", 
+  ""url"": ""https://httpbin.org/get""
+}
+",0,live:httpbin-get
+"{
+  ""args"": {
+    ""book"": ""harry potter"", 
+    ""page"": ""2""
+  }, 
+  ""headers"": {
+    ""Accept"": ""*/*"", 
+    ""Host"": ""httpbin.org"", 
+    ""User-Agent"": ""curl/8.5.0"", 
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-5ac9e00332318f370f93b089""
+  }, 
+  ""origin"": ""87.81.238.93"", 
+  ""url"": ""https://httpbin.org/get?book=harry+potter&page=2""
+}
+",0,live:httpbin-get-q
+"{
+  ""slideshow"": {
+    ""author"": ""Yours Truly"", 
+    ""date"": ""date of publication"", 
+    ""slides"": [
+      {
+        ""title"": ""Wake up to WonderWidgets!"", 
+        ""type"": ""all""
+      }, 
+      {
+        ""items"": [
+          ""Why <em>WonderWidgets</em> are great"", 
+          ""Who <em>buys</em> WonderWidgets""
+        ], 
+        ""title"": ""Overview"", 
+        ""type"": ""all""
+      }
+    ], 
+    ""title"": ""Sample Slide Show""
+  }
+}
+",0,live:httpbin-json
+"<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <body>
+      <h1>Herman Melville - Moby-Dick</h1>
+
+      <div>
+        <p>
+          Availing himself of the mild, summer-cool weather that now reigned in these latitudes, and in preparation for the peculiarly active pursuits shortly to be anticipated, Perth, the begrimed, blistered old blacksmith, had not removed his portable forge to the hold again, after concluding his contributory work for Ahab's leg, but still retained it on deck, fast lashed to ringbolts by the foremast; being now almost incessantly invoked by the headsmen, and harpooneers, and bowsmen to do some little job for them; altering, or repairing, or new shaping their various weapons and boat furniture. Often he would be surrounded by an eager circle, all waiting to be served; holding boat-spades, pike-heads, harpoons, and lances, and jealously watching his every sooty movement, as he toiled. Nevertheless, this old man's was a patient hammer wielded by a patient arm. No murmur, no impatience, no petulance did come from him. Silent, slow, and solemn; bowing over still further his chronically broken back, he toiled away, as if toil were life itself, and the heavy beating of his hammer the heavy beating of his heart. And so it was.—Most miserable! A peculiar walk in this old man, a certain slight but painful appearing yawing in his gait, had at an early period of the voyage excited the curiosity of the mariners. And to the importunity of their persisted questionings he had finally given in; and so it came to pass that every one now knew the shameful story of his wretched fate. Belated, and not innocently, one bitter winter's midnight, on the road running between two country towns, the blacksmith half-stupidly felt the deadly numbness stealing over him, and sought refuge in a leaning, dilapidated barn. The issue was, the loss of the extremities of both feet. Out of this revelation, part by part, at last came out the four acts of the gladness, and the one long, and as yet uncatastrophied fifth act of the grief of his life's drama. He was an old man, who, at the age of nearly sixty, had postponedly encountered that thing in sorrow's technicals called ruin. He had been an artisan of famed excellence, and with plenty to do; owned a house and garden; embraced a youthful, daughter-like, loving wife, and three blithe, ruddy children; every Sunday went to a cheerful-looking church, planted in a grove. But one night, under cover of darkness, and further concealed in a most cunning disguisement, a desperate burglar slid into his happy home, and robbed them all of everything. And darker yet to tell, the blacksmith himself did ignorantly conduct this burglar into his family's heart. It was the Bottle Conjuror! Upon the opening of that fatal cork, forth flew the fiend, and shrivelled up his home. Now, for prudent, most wise, and economic reasons, the blacksmith's shop was in the basement of his dwelling, but with a separate entrance to it; so that always had the young and loving healthy wife listened with no unhappy nervousness, but with vigorous pleasure, to the stout ringing of her young-armed old husband's hammer; whose reverberations, muffled by passing through the floors and walls, came up to her, not unsweetly, in her nursery; and so, to stout Labor's iron lullaby, the blacksmith's infants were rocked to slumber. Oh, woe on woe! Oh, Death, why canst thou not sometimes be timely? Hadst thou taken this old blacksmith to thyself ere his full ruin came upon him, then had the young widow had a delicious grief, and her orphans a truly venerable, legendary sire to dream of in their after years; and all of them a care-killing competency.
+        </p>
+      </div>
+  </body>
+</html>",0,live:httpbin-html
+"<?xml version='1.0' encoding='us-ascii'?>
+
+<!--  A SAMPLE set of slides  -->
+
+<slideshow 
+    title=""Sample Slide Show""
+    date=""Date of publication""
+    author=""Yours Truly""
+    >
+
+    <!-- TITLE SLIDE -->
+    <slide type=""all"">
+      <title>Wake up to WonderWidgets!</title>
+    </slide>
+
+    <!-- OVERVIEW -->
+    <slide type=""all"">
+        <title>Overview</title>
+        <item>Why <em>WonderWidgets</em> are great</item>
+        <item/>
+        <item>Who <em>buys</em> WonderWidgets</item>
+    </slide>
+
+</slideshow>",0,live:httpbin-xml
+"User-agent: *
+Disallow: /deny
+",0,live:httpbin-robots
+"
+          .-''''''-.
+        .' _      _ '.
+       /   O      O   \
+      :                :
+      |                |
+      :       __       :
+       \  .-""`  `""-.  /
+        '.          .'
+          '-......-'
+     YOU SHOULDN'T BE HERE
+",0,live:httpbin-deny
+"{
+  ""headers"": {
+    ""Accept"": ""*/*"", 
+    ""Host"": ""httpbin.org"", 
+    ""User-Agent"": ""curl/8.5.0"", 
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16af-5d1e84fc5e1f9f6148713b9e""
+  }
+}
+",0,live:httpbin-headers
+"{
+  ""uuid"": ""fbd3ba79-74e8-4375-beaa-4e6b0232c2b7""
+}
+",0,live:httpbin-uuid
+"<!DOCTYPE html>
+<html>
+  <head>
+  </head>
+  <body>
+  <!-- Example form from HTML5 spec http://www.w3.org/TR/html5/forms.html#writing-a-form's-user-interface -->
+  <form method=""post"" action=""/post"">
+   <p><label>Customer name: <input name=""custname""></label></p>
+   <p><label>Telephone: <input type=tel name=""custtel""></label></p>
+   <p><label>E-mail address: <input type=email name=""custemail""></label></p>
+   <fieldset>
+    <legend> Pizza Size </legend>
+    <p><label> <input type=radio name=size value=""small""> Small </label></p>
+    <p><label> <input type=radio name=size value=""medium""> Medium </label></p>
+    <p><label> <input type=radio name=size value=""large""> Large </label></p>
+   </fieldset>
+   <fieldset>
+    <legend> Pizza Toppings </legend>
+    <p><label> <input type=checkbox name=""topping"" value=""bacon""> Bacon </label></p>
+    <p><label> <input type=checkbox name=""topping"" value=""cheese""> Extra Cheese </label></p>
+    <p><label> <input type=checkbox name=""topping"" value=""onion""> Onion </label></p>
+    <p><label> <input type=checkbox name=""topping"" value=""mushroom""> Mushroom </label></p>
+   </fieldset>
+   <p><label>Preferred delivery time: <input type=time min=""11:00"" max=""21:00"" step=""900"" name=""delivery""></label></p>
+   <p><label>Delivery instructions: <textarea name=""comments""></textarea></label></p>
+   <p><button>Submit order</button></p>
+  </form>
+  </body>
+</html>",0,live:httpbin-form
+"<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><meta name=viewport content=""width=device-width,initial-scale=1""><title>Example Domain</title><style>html{color-scheme:light dark;background:light-dark(#eee,#222)}body{font:16px/1.6 system-ui,sans-serif;max-width:26em;margin:auto;padding:25vh 2em 2em;text-align:center}</style></head><body><p>This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.</p><script src=/s.js></script></body></html>
+",0,live:example
+"{""args"":{""item"":""notebook"",""qty"":""2""},""headers"":{""host"":""postman-echo.com"",""accept"":""*/*"",""user-agent"":""curl/8.5.0"",""x-forwarded-proto"":""https"",""accept-encoding"":""gzip, br""},""url"":""https://postman-echo.com/get?item=notebook&qty=2""}",0,live:echo-get
+"{""args"":{},""data"":{""name"":""alice"",""item"":""notebook"",""qty"":2},""files"":{},""form"":{},""headers"":{""host"":""postman-echo.com"",""content-type"":""application/json"",""accept"":""*/*"",""user-agent"":""curl/8.5.0"",""accept-encoding"":""gzip, br"",""x-forwarded-proto"":""https"",""content-length"":""42""},""json"":{""name"":""alice"",""item"":""notebook"",""qty"":2},""url"":""https://postman-echo.com/post""}",0,live:echo-post
+"{""args"":{},""data"":""{not json!!"",""files"":{},""form"":{},""headers"":{""host"":""postman-echo.com"",""content-type"":""application/json"",""accept"":""*/*"",""user-agent"":""curl/8.5.0"",""accept-encoding"":""gzip, br"",""x-forwarded-proto"":""https"",""content-length"":""11""},""json"":null,""url"":""https://postman-echo.com/post""}",0,live:echo-badjson-normal
+"{""status"":""ok"",""version"":""1.0""}
+",0,gt:clean[200]
+"{""echo"":""shoes"",""query_length"":5}
+",0,gt:search[200]
+"{""echo"":""laptop stand"",""query_length"":12}
+",0,gt:search2[200]
+"{""id"":""1"",""name"":""user""}
+",0,gt:sqli-normal[200]
+"{""id"":""2"",""name"":""user""}
+",0,gt:sqli-normal2[200]
+<html><body><h1>Hello alice</h1></body></html>,0,gt:xss-normal-name[200]
+<html><body><h1>Hello bob</h1></body></html>,0,gt:xss-normal-name2[200]
+<html><body><h1>Hello charlie</h1></body></html>,0,gt:xss-normal-name3[200]
+<html><body><h1>Hello admin</h1></body></html>,0,gt:xss-normal-name4[200]
+"{""echo"":""wireless mouse"",""query_length"":14}
+",0,gt:search3[200]
+"{""echo"":""coffee"",""query_length"":6}
+",0,gt:search4[200]
+"{""echo"":""&#x27; OR 1=1--"",""query_length"":10}
+",0,gt:search-escaped-attack[200]
+"{""id"":""1 UNION SELECT 1,2,3"",""name"":""user""}
+",0,gt:sqli-union-normal[200]
+"Warning: mysql_fetch_array() expects parameter 1 to be resource, boolean given. You have an error in your SQL syntax near '' OR 1=1 --''",1,gt:sqli-tautology[200]
+"Warning: mysql_fetch_array() expects parameter 1 to be resource, boolean given. You have an error in your SQL syntax near '' OR 1=1 --''",1,gt:sqli-quote-error[200]
+"Warning: mysql_fetch_array() expects parameter 1 to be resource, boolean given. You have an error in your SQL syntax near '' OR 1=1 --''",1,gt:sqli-or-error[200]
+"Warning: mysql_fetch_array() expects parameter 1 to be resource, boolean given. You have an error in your SQL syntax near '' OR 1=1 --''",1,gt:sqli-and-error[200]
+<html><body><h1>Hello <script>alert(1)</script></h1></body></html>,1,gt:xss-reflect[200]
+<html><body><h1>Hello <svg onload=alert(1)></h1></body></html>,1,gt:xss-reflect2[200]
+<html><body><h1>Hello <img src=x onerror=alert(1)></h1></body></html>,1,gt:xss-reflect3[200]
+<html><body><h1>Hello <iframe src=javascript:alert(1)></h1></body></html>,1,gt:xss-reflect4[200]
+"<!doctype html>
+<html lang=en>
+<title>Redirecting...</title>
+<h1>Redirecting...</h1>
+<p>You should be redirected automatically to the target URL: <a href=""https://evil.example.com"">https://evil.example.com</a>. If not, click the link.
+",1,gt:open-redirect[302]
+"<!doctype html>
+<html lang=en>
+<title>Redirecting...</title>
+<h1>Redirecting...</h1>
+<p>You should be redirected automatically to the target URL: <a href=""https://phish.example.org/login"">https://phish.example.org/login</a>. If not, click the link.
+",1,gt:open-redirect2[302]
+"{ ""message"": ""VAmPI the Vulnerable API"", ""help"": ""VAmPI is a vulnerable on purpose API. It was created in order to evaluate the efficiency of third party tools in identifying vulnerabilities in APIs but it can also be used in learning/teaching purposes."", ""vulnerable"":1}",0,vampi:home[200]
+"{
+  ""Books"": [
+    {
+      ""book_title"": ""bookTitle32"",
+      ""user"": ""name1""
+    },
+    {
+      ""book_title"": ""bookTitle15"",
+      ""user"": ""name2""
+    },
+    {
+      ""book_title"": ""bookTitle73"",
+      ""user"": ""admin""
+    }
+  ]
+}
+",0,vampi:books[200]
+"{""username"": ""name1"", ""email"": ""mail1@mail.com""}",0,vampi:user-lookup[200]
+"{ ""status"": ""fail"", ""message"": ""Username does not exist""}",0,vampi:login-badcreds[200]
+"{
+  ""detail"": ""No authorization token provided"",
+  ""status"": 401,
+  ""title"": ""Unauthorized"",
+  ""type"": ""about:blank""
+}
+",0,vampi:sqli-book-401[401]
+"{ ""status"": ""fail"", ""message"": ""User already exists. Please Log in.""}",0,vampi:register[200]
+"{""auth_token"": ""eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTE5NTY3MzMsImlhdCI6MTc5MTk1NjY3Mywic3ViIjoiY29ycHVzdXNlcjgifQ.DMZQNyhlBa8USahzy6tYqYQ6DA2oI1B2CjQP8QmDJi0"", ""message"": ""Successfully logged in."", ""status"": ""success""}",0,vampi:login-ok[200]
+"{
+  ""users"": [
+    {
+      ""admin"": false,
+      ""email"": ""mail1@mail.com"",
+      ""password"": ""pass1"",
+      ""username"": ""name1""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""mail2@mail.com"",
+      ""password"": ""pass2"",
+      ""username"": ""name2""
+    },
+    {
+      ""admin"": true,
+      ""email"": ""admin@mail.com"",
+      ""password"": ""pass1"",
+      ""username"": ""admin""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""corpus7@mail.com"",
+      ""password"": ""CorpusPass1!"",
+      ""username"": ""corpususer7""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""corpus8@mail.com"",
+      ""password"": ""CorpusPass1!"",
+      ""username"": ""corpususer8""
+    }
+  ]
+}
+",1,vampi:debug-dump[200]
+"{
+  ""users"": [
+    {
+      ""email"": ""mail1@mail.com"",
+      ""username"": ""name1""
+    },
+    {
+      ""email"": ""mail2@mail.com"",
+      ""username"": ""name2""
+    },
+    {
+      ""email"": ""admin@mail.com"",
+      ""username"": ""admin""
+    },
+    {
+      ""email"": ""corpus7@mail.com"",
+      ""username"": ""corpususer7""
+    },
+    {
+      ""email"": ""corpus8@mail.com"",
+      ""username"": ""corpususer8""
+    }
+  ]
+}
+",0,vampi:users-list[200]
+"{""book_title"": ""bookTitle32"", ""owner"": ""name1"", ""secret"": ""secret for bookTitle32""}",0,vampi:book-auth-normal[200]
+"{ ""status"": ""fail"", ""message"": ""Book not found!""}",0,vampi:book-sqli-auth[404]
+"{ ""status"": ""fail"", ""message"": ""Book not found!""}",0,vampi:book-union-auth[404]
+"{
+  ""args"": {},
+  ""headers"": {
+    ""Accept"": ""*/*"",
+    ""Host"": ""httpbin.org"",
+    ""User-Agent"": ""curl/8.5.0"",
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-4ebbc3da6066de6f71d3b027""
+  },
+  ""origin"": ""87.81.235.24"",
+  ""url"": ""https://httpbin.org/get""
+}",0,live:httpbin-get+aug
+"{""args"": {}, ""headers"": {""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-4ebbc3da6066de6f71d3b027""}, ""origin"": ""87.81.235.24"", ""url"": ""https://httpbin.org/get""}",0,live:httpbin-get+aug
+"{ ""args"": {}, ""headers"": { ""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-4ebbc3da6066de6f71d3b027"" }, ""origin"": ""87.81.235.24"", ""url"": ""https://httpbin.org/get"" }",0,live:httpbin-get+aug
+"{
+  ""args"": {
+    ""book"": ""harry potter"",
+    ""page"": ""2""
+  },
+  ""headers"": {
+    ""Accept"": ""*/*"",
+    ""Host"": ""httpbin.org"",
+    ""User-Agent"": ""curl/8.5.0"",
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-5ac9e00332318f370f93b089""
+  },
+  ""origin"": ""87.81.238.93"",
+  ""url"": ""https://httpbin.org/get?book=harry+potter&page=2""
+}",0,live:httpbin-get-q+aug
+"{""args"": {""book"": ""harry potter"", ""page"": ""2""}, ""headers"": {""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-5ac9e00332318f370f93b089""}, ""origin"": ""87.81.238.93"", ""url"": ""https://httpbin.org/get?book=harry+potter&page=2""}",0,live:httpbin-get-q+aug
+"{ ""args"": { ""book"": ""harry potter"", ""page"": ""2"" }, ""headers"": { ""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16ac-5ac9e00332318f370f93b089"" }, ""origin"": ""87.81.238.93"", ""url"": ""https://httpbin.org/get?book=harry+potter&page=2"" }",0,live:httpbin-get-q+aug
+"{
+  ""slideshow"": {
+    ""author"": ""Yours Truly"",
+    ""date"": ""date of publication"",
+    ""slides"": [
+      {
+        ""title"": ""Wake up to WonderWidgets!"",
+        ""type"": ""all""
+      },
+      {
+        ""items"": [
+          ""Why <em>WonderWidgets</em> are great"",
+          ""Who <em>buys</em> WonderWidgets""
+        ],
+        ""title"": ""Overview"",
+        ""type"": ""all""
+      }
+    ],
+    ""title"": ""Sample Slide Show""
+  }
+}",0,live:httpbin-json+aug
+"{""slideshow"": {""author"": ""Yours Truly"", ""date"": ""date of publication"", ""slides"": [{""title"": ""Wake up to WonderWidgets!"", ""type"": ""all""}, {""items"": [""Why <em>WonderWidgets</em> are great"", ""Who <em>buys</em> WonderWidgets""], ""title"": ""Overview"", ""type"": ""all""}], ""title"": ""Sample Slide Show""}}",0,live:httpbin-json+aug
+"{ ""slideshow"": { ""author"": ""Yours Truly"", ""date"": ""date of publication"", ""slides"": [ { ""title"": ""Wake up to WonderWidgets!"", ""type"": ""all"" }, { ""items"": [ ""Why <em>WonderWidgets</em> are great"", ""Who <em>buys</em> WonderWidgets"" ], ""title"": ""Overview"", ""type"": ""all"" } ], ""title"": ""Sample Slide Show"" } }",0,live:httpbin-json+aug
+"<!DOCTYPE html> <html> <head> </head> <body> <h1>Herman Melville - Moby-Dick</h1> <div> <p> Availing himself of the mild, summer-cool weather that now reigned in these latitudes, and in preparation for the peculiarly active pursuits shortly to be anticipated, Perth, the begrimed, blistered old blacksmith, had not removed his portable forge to the hold again, after concluding his contributory work for Ahab's leg, but still retained it on deck, fast lashed to ringbolts by the foremast; being now almost incessantly invoked by the headsmen, and harpooneers, and bowsmen to do some little job for them; altering, or repairing, or new shaping their various weapons and boat furniture. Often he would be surrounded by an eager circle, all waiting to be served; holding boat-spades, pike-heads, harpoons, and lances, and jealously watching his every sooty movement, as he toiled. Nevertheless, this old man's was a patient hammer wielded by a patient arm. No murmur, no impatience, no petulance did come from him. Silent, slow, and solemn; bowing over still further his chronically broken back, he toiled away, as if toil were life itself, and the heavy beating of his hammer the heavy beating of his heart. And so it was.—Most miserable! A peculiar walk in this old man, a certain slight but painful appearing yawing in his gait, had at an early period of the voyage excited the curiosity of the mariners. And to the importunity of their persisted questionings he had finally given in; and so it came to pass that every one now knew the shameful story of his wretched fate. Belated, and not innocently, one bitter winter's midnight, on the road running between two country towns, the blacksmith half-stupidly felt the deadly numbness stealing over him, and sought refuge in a leaning, dilapidated barn. The issue was, the loss of the extremities of both feet. Out of this revelation, part by part, at last came out the four acts of the gladness, and the one long, and as yet uncatastrophied fifth act of the grief of his life's drama. He was an old man, who, at the age of nearly sixty, had postponedly encountered that thing in sorrow's technicals called ruin. He had been an artisan of famed excellence, and with plenty to do; owned a house and garden; embraced a youthful, daughter-like, loving wife, and three blithe, ruddy children; every Sunday went to a cheerful-looking church, planted in a grove. But one night, under cover of darkness, and further concealed in a most cunning disguisement, a desperate burglar slid into his happy home, and robbed them all of everything. And darker yet to tell, the blacksmith himself did ignorantly conduct this burglar into his family's heart. It was the Bottle Conjuror! Upon the opening of that fatal cork, forth flew the fiend, and shrivelled up his home. Now, for prudent, most wise, and economic reasons, the blacksmith's shop was in the basement of his dwelling, but with a separate entrance to it; so that always had the young and loving healthy wife listened with no unhappy nervousness, but with vigorous pleasure, to the stout ringing of her young-armed old husband's hammer; whose reverberations, muffled by passing through the floors and walls, came up to her, not unsweetly, in her nursery; and so, to stout Labor's iron lullaby, the blacksmith's infants were rocked to slumber. Oh, woe on woe! Oh, Death, why canst thou not sometimes be timely? Hadst thou taken this old blacksmith to thyself ere his full ruin came upon him, then had the young widow had a delicious grief, and her orphans a truly venerable, legendary sire to dream of in their after years; and all of them a care-killing competency. </p> </div> </body> </html>",0,live:httpbin-html+aug
+"<?xml version='1.0' encoding='us-ascii'?> <!-- A SAMPLE set of slides --> <slideshow title=""Sample Slide Show"" date=""Date of publication"" author=""Yours Truly"" > <!-- TITLE SLIDE --> <slide type=""all""> <title>Wake up to WonderWidgets!</title> </slide> <!-- OVERVIEW --> <slide type=""all""> <title>Overview</title> <item>Why <em>WonderWidgets</em> are great</item> <item/> <item>Who <em>buys</em> WonderWidgets</item> </slide> </slideshow>",0,live:httpbin-xml+aug
+User-agent: * Disallow: /deny,0,live:httpbin-robots+aug
+".-''''''-. .' _ _ '. / O O \ : : | | : __ : \ .-""` `""-. / '. .' '-......-' YOU SHOULDN'T BE HERE",0,live:httpbin-deny+aug
+"{
+  ""headers"": {
+    ""Accept"": ""*/*"",
+    ""Host"": ""httpbin.org"",
+    ""User-Agent"": ""curl/8.5.0"",
+    ""X-Amzn-Trace-Id"": ""Root=1-6acf16af-5d1e84fc5e1f9f6148713b9e""
+  }
+}",0,live:httpbin-headers+aug
+"{""headers"": {""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16af-5d1e84fc5e1f9f6148713b9e""}}",0,live:httpbin-headers+aug
+"{ ""headers"": { ""Accept"": ""*/*"", ""Host"": ""httpbin.org"", ""User-Agent"": ""curl/8.5.0"", ""X-Amzn-Trace-Id"": ""Root=1-6acf16af-5d1e84fc5e1f9f6148713b9e"" } }",0,live:httpbin-headers+aug
+"{
+  ""uuid"": ""fbd3ba79-74e8-4375-beaa-4e6b0232c2b7""
+}",0,live:httpbin-uuid+aug
+"{""uuid"": ""fbd3ba79-74e8-4375-beaa-4e6b0232c2b7""}",0,live:httpbin-uuid+aug
+"{ ""uuid"": ""fbd3ba79-74e8-4375-beaa-4e6b0232c2b7"" }",0,live:httpbin-uuid+aug
+"<!DOCTYPE html> <html> <head> </head> <body> <!-- Example form from HTML5 spec http://www.w3.org/TR/html5/forms.html#writing-a-form's-user-interface --> <form method=""post"" action=""/post""> <p><label>Customer name: <input name=""custname""></label></p> <p><label>Telephone: <input type=tel name=""custtel""></label></p> <p><label>E-mail address: <input type=email name=""custemail""></label></p> <fieldset> <legend> Pizza Size </legend> <p><label> <input type=radio name=size value=""small""> Small </label></p> <p><label> <input type=radio name=size value=""medium""> Medium </label></p> <p><label> <input type=radio name=size value=""large""> Large </label></p> </fieldset> <fieldset> <legend> Pizza Toppings </legend> <p><label> <input type=checkbox name=""topping"" value=""bacon""> Bacon </label></p> <p><label> <input type=checkbox name=""topping"" value=""cheese""> Extra Cheese </label></p> <p><label> <input type=checkbox name=""topping"" value=""onion""> Onion </label></p> <p><label> <input type=checkbox name=""topping"" value=""mushroom""> Mushroom </label></p> </fieldset> <p><label>Preferred delivery time: <input type=time min=""11:00"" max=""21:00"" step=""900"" name=""delivery""></label></p> <p><label>Delivery instructions: <textarea name=""comments""></textarea></label></p> <p><button>Submit order</button></p> </form> </body> </html>",0,live:httpbin-form+aug
+"<!doctype html><html lang=en><head><meta charset=utf-8><link rel=icon href=data:,><meta name=viewport content=""width=device-width,initial-scale=1""><title>Example Domain</title><style>html{color-scheme:light dark;background:light-dark(#eee,#222)}body{font:16px/1.6 system-ui,sans-serif;max-width:26em;margin:auto;padding:25vh 2em 2em;text-align:center}</style></head><body><p>This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.</p><script src=/s.js></script></body></html>",0,live:example+aug
+"{
+  ""args"": {
+    ""item"": ""notebook"",
+    ""qty"": ""2""
+  },
+  ""headers"": {
+    ""accept"": ""*/*"",
+    ""accept-encoding"": ""gzip, br"",
+    ""host"": ""postman-echo.com"",
+    ""user-agent"": ""curl/8.5.0"",
+    ""x-forwarded-proto"": ""https""
+  },
+  ""url"": ""https://postman-echo.com/get?item=notebook&qty=2""
+}",0,live:echo-get+aug
+"{""args"": {""item"": ""notebook"", ""qty"": ""2""}, ""headers"": {""host"": ""postman-echo.com"", ""accept"": ""*/*"", ""user-agent"": ""curl/8.5.0"", ""x-forwarded-proto"": ""https"", ""accept-encoding"": ""gzip, br""}, ""url"": ""https://postman-echo.com/get?item=notebook&qty=2""}",0,live:echo-get+aug
+"{
+  ""args"": {},
+  ""data"": {
+    ""item"": ""notebook"",
+    ""name"": ""alice"",
+    ""qty"": 2
+  },
+  ""files"": {},
+  ""form"": {},
+  ""headers"": {
+    ""accept"": ""*/*"",
+    ""accept-encoding"": ""gzip, br"",
+    ""content-length"": ""42"",
+    ""content-type"": ""application/json"",
+    ""host"": ""postman-echo.com"",
+    ""user-agent"": ""curl/8.5.0"",
+    ""x-forwarded-proto"": ""https""
+  },
+  ""json"": {
+    ""item"": ""notebook"",
+    ""name"": ""alice"",
+    ""qty"": 2
+  },
+  ""url"": ""https://postman-echo.com/post""
+}",0,live:echo-post+aug
+"{""args"": {}, ""data"": {""name"": ""alice"", ""item"": ""notebook"", ""qty"": 2}, ""files"": {}, ""form"": {}, ""headers"": {""host"": ""postman-echo.com"", ""content-type"": ""application/json"", ""accept"": ""*/*"", ""user-agent"": ""curl/8.5.0"", ""accept-encoding"": ""gzip, br"", ""x-forwarded-proto"": ""https"", ""content-length"": ""42""}, ""json"": {""name"": ""alice"", ""item"": ""notebook"", ""qty"": 2}, ""url"": ""https://postman-echo.com/post""}",0,live:echo-post+aug
+"{
+  ""args"": {},
+  ""data"": ""{not json!!"",
+  ""files"": {},
+  ""form"": {},
+  ""headers"": {
+    ""accept"": ""*/*"",
+    ""accept-encoding"": ""gzip, br"",
+    ""content-length"": ""11"",
+    ""content-type"": ""application/json"",
+    ""host"": ""postman-echo.com"",
+    ""user-agent"": ""curl/8.5.0"",
+    ""x-forwarded-proto"": ""https""
+  },
+  ""json"": null,
+  ""url"": ""https://postman-echo.com/post""
+}",0,live:echo-badjson-normal+aug
+"{""args"": {}, ""data"": ""{not json!!"", ""files"": {}, ""form"": {}, ""headers"": {""host"": ""postman-echo.com"", ""content-type"": ""application/json"", ""accept"": ""*/*"", ""user-agent"": ""curl/8.5.0"", ""accept-encoding"": ""gzip, br"", ""x-forwarded-proto"": ""https"", ""content-length"": ""11""}, ""json"": null, ""url"": ""https://postman-echo.com/post""}",0,live:echo-badjson-normal+aug
+"{
+  ""status"": ""ok"",
+  ""version"": ""1.0""
+}",0,gt:clean[200]+aug
+"{""status"": ""ok"", ""version"": ""1.0""}",0,gt:clean[200]+aug
+"{""status"":""ok"",""version"":""1.0""}",0,gt:clean[200]+aug
+"{
+  ""echo"": ""shoes"",
+  ""query_length"": 5
+}",0,gt:search[200]+aug
+"{""echo"": ""shoes"", ""query_length"": 5}",0,gt:search[200]+aug
+"{""echo"":""shoes"",""query_length"":5}",0,gt:search[200]+aug
+"{
+  ""echo"": ""laptop stand"",
+  ""query_length"": 12
+}",0,gt:search2[200]+aug
+"{""echo"": ""laptop stand"", ""query_length"": 12}",0,gt:search2[200]+aug
+"{""echo"":""laptop stand"",""query_length"":12}",0,gt:search2[200]+aug
+"{
+  ""id"": ""1"",
+  ""name"": ""user""
+}",0,gt:sqli-normal[200]+aug
+"{""id"": ""1"", ""name"": ""user""}",0,gt:sqli-normal[200]+aug
+"{""id"":""1"",""name"":""user""}",0,gt:sqli-normal[200]+aug
+"{
+  ""id"": ""2"",
+  ""name"": ""user""
+}",0,gt:sqli-normal2[200]+aug
+"{""id"": ""2"", ""name"": ""user""}",0,gt:sqli-normal2[200]+aug
+"{""id"":""2"",""name"":""user""}",0,gt:sqli-normal2[200]+aug
+"{
+  ""echo"": ""wireless mouse"",
+  ""query_length"": 14
+}",0,gt:search3[200]+aug
+"{""echo"": ""wireless mouse"", ""query_length"": 14}",0,gt:search3[200]+aug
+"{""echo"":""wireless mouse"",""query_length"":14}",0,gt:search3[200]+aug
+"{
+  ""echo"": ""coffee"",
+  ""query_length"": 6
+}",0,gt:search4[200]+aug
+"{""echo"": ""coffee"", ""query_length"": 6}",0,gt:search4[200]+aug
+"{""echo"":""coffee"",""query_length"":6}",0,gt:search4[200]+aug
+"{
+  ""echo"": ""&#x27; OR 1=1--"",
+  ""query_length"": 10
+}",0,gt:search-escaped-attack[200]+aug
+"{""echo"": ""&#x27; OR 1=1--"", ""query_length"": 10}",0,gt:search-escaped-attack[200]+aug
+"{""echo"":""&#x27; OR 1=1--"",""query_length"":10}",0,gt:search-escaped-attack[200]+aug
+"{
+  ""id"": ""1 UNION SELECT 1,2,3"",
+  ""name"": ""user""
+}",0,gt:sqli-union-normal[200]+aug
+"{""id"": ""1 UNION SELECT 1,2,3"", ""name"": ""user""}",0,gt:sqli-union-normal[200]+aug
+"{""id"":""1 UNION SELECT 1,2,3"",""name"":""user""}",0,gt:sqli-union-normal[200]+aug
+"<!doctype html> <html lang=en> <title>Redirecting...</title> <h1>Redirecting...</h1> <p>You should be redirected automatically to the target URL: <a href=""https://evil.example.com"">https://evil.example.com</a>. If not, click the link.",1,gt:open-redirect[302]+aug
+"<!doctype html> <html lang=en> <title>Redirecting...</title> <h1>Redirecting...</h1> <p>You should be redirected automatically to the target URL: <a href=""https://phish.example.org/login"">https://phish.example.org/login</a>. If not, click the link.",1,gt:open-redirect2[302]+aug
+"{
+  ""help"": ""VAmPI is a vulnerable on purpose API. It was created in order to evaluate the efficiency of third party tools in identifying vulnerabilities in APIs but it can also be used in learning/teaching purposes."",
+  ""message"": ""VAmPI the Vulnerable API"",
+  ""vulnerable"": 1
+}",0,vampi:home[200]+aug
+"{""message"": ""VAmPI the Vulnerable API"", ""help"": ""VAmPI is a vulnerable on purpose API. It was created in order to evaluate the efficiency of third party tools in identifying vulnerabilities in APIs but it can also be used in learning/teaching purposes."", ""vulnerable"": 1}",0,vampi:home[200]+aug
+"{
+  ""Books"": [
+    {
+      ""book_title"": ""bookTitle32"",
+      ""user"": ""name1""
+    },
+    {
+      ""book_title"": ""bookTitle15"",
+      ""user"": ""name2""
+    },
+    {
+      ""book_title"": ""bookTitle73"",
+      ""user"": ""admin""
+    }
+  ]
+}",0,vampi:books[200]+aug
+"{""Books"": [{""book_title"": ""bookTitle32"", ""user"": ""name1""}, {""book_title"": ""bookTitle15"", ""user"": ""name2""}, {""book_title"": ""bookTitle73"", ""user"": ""admin""}]}",0,vampi:books[200]+aug
+"{ ""Books"": [ { ""book_title"": ""bookTitle32"", ""user"": ""name1"" }, { ""book_title"": ""bookTitle15"", ""user"": ""name2"" }, { ""book_title"": ""bookTitle73"", ""user"": ""admin"" } ] }",0,vampi:books[200]+aug
+"{
+  ""email"": ""mail1@mail.com"",
+  ""username"": ""name1""
+}",0,vampi:user-lookup[200]+aug
+"{
+  ""message"": ""Username does not exist"",
+  ""status"": ""fail""
+}",0,vampi:login-badcreds[200]+aug
+"{""status"": ""fail"", ""message"": ""Username does not exist""}",0,vampi:login-badcreds[200]+aug
+"{
+  ""detail"": ""No authorization token provided"",
+  ""status"": 401,
+  ""title"": ""Unauthorized"",
+  ""type"": ""about:blank""
+}",0,vampi:sqli-book-401[401]+aug
+"{""detail"": ""No authorization token provided"", ""status"": 401, ""title"": ""Unauthorized"", ""type"": ""about:blank""}",0,vampi:sqli-book-401[401]+aug
+"{ ""detail"": ""No authorization token provided"", ""status"": 401, ""title"": ""Unauthorized"", ""type"": ""about:blank"" }",0,vampi:sqli-book-401[401]+aug
+"{
+  ""message"": ""User already exists. Please Log in."",
+  ""status"": ""fail""
+}",0,vampi:register[200]+aug
+"{""status"": ""fail"", ""message"": ""User already exists. Please Log in.""}",0,vampi:register[200]+aug
+"{
+  ""auth_token"": ""eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTE5NTY3MzMsImlhdCI6MTc5MTk1NjY3Mywic3ViIjoiY29ycHVzdXNlcjgifQ.DMZQNyhlBa8USahzy6tYqYQ6DA2oI1B2CjQP8QmDJi0"",
+  ""message"": ""Successfully logged in."",
+  ""status"": ""success""
+}",0,vampi:login-ok[200]+aug
+"{
+  ""users"": [
+    {
+      ""admin"": false,
+      ""email"": ""mail1@mail.com"",
+      ""password"": ""pass1"",
+      ""username"": ""name1""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""mail2@mail.com"",
+      ""password"": ""pass2"",
+      ""username"": ""name2""
+    },
+    {
+      ""admin"": true,
+      ""email"": ""admin@mail.com"",
+      ""password"": ""pass1"",
+      ""username"": ""admin""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""corpus7@mail.com"",
+      ""password"": ""CorpusPass1!"",
+      ""username"": ""corpususer7""
+    },
+    {
+      ""admin"": false,
+      ""email"": ""corpus8@mail.com"",
+      ""password"": ""CorpusPass1!"",
+      ""username"": ""corpususer8""
+    }
+  ]
+}",1,vampi:debug-dump[200]+aug
+"{""users"": [{""admin"": false, ""email"": ""mail1@mail.com"", ""password"": ""pass1"", ""username"": ""name1""}, {""admin"": false, ""email"": ""mail2@mail.com"", ""password"": ""pass2"", ""username"": ""name2""}, {""admin"": true, ""email"": ""admin@mail.com"", ""password"": ""pass1"", ""username"": ""admin""}, {""admin"": false, ""email"": ""corpus7@mail.com"", ""password"": ""CorpusPass1!"", ""username"": ""corpususer7""}, {""admin"": false, ""email"": ""corpus8@mail.com"", ""password"": ""CorpusPass1!"", ""username"": ""corpususer8""}]}",1,vampi:debug-dump[200]+aug
+"{ ""users"": [ { ""admin"": false, ""email"": ""mail1@mail.com"", ""password"": ""pass1"", ""username"": ""name1"" }, { ""admin"": false, ""email"": ""mail2@mail.com"", ""password"": ""pass2"", ""username"": ""name2"" }, { ""admin"": true, ""email"": ""admin@mail.com"", ""password"": ""pass1"", ""username"": ""admin"" }, { ""admin"": false, ""email"": ""corpus7@mail.com"", ""password"": ""CorpusPass1!"", ""username"": ""corpususer7"" }, { ""admin"": false, ""email"": ""corpus8@mail.com"", ""password"": ""CorpusPass1!"", ""username"": ""corpususer8"" } ] }",1,vampi:debug-dump[200]+aug
+"{
+  ""users"": [
+    {
+      ""email"": ""mail1@mail.com"",
+      ""username"": ""name1""
+    },
+    {
+      ""email"": ""mail2@mail.com"",
+      ""username"": ""name2""
+    },
+    {
+      ""email"": ""admin@mail.com"",
+      ""username"": ""admin""
+    },
+    {
+      ""email"": ""corpus7@mail.com"",
+      ""username"": ""corpususer7""
+    },
+    {
+      ""email"": ""corpus8@mail.com"",
+      ""username"": ""corpususer8""
+    }
+  ]
+}",0,vampi:users-list[200]+aug
+"{""users"": [{""email"": ""mail1@mail.com"", ""username"": ""name1""}, {""email"": ""mail2@mail.com"", ""username"": ""name2""}, {""email"": ""admin@mail.com"", ""username"": ""admin""}, {""email"": ""corpus7@mail.com"", ""username"": ""corpususer7""}, {""email"": ""corpus8@mail.com"", ""username"": ""corpususer8""}]}",0,vampi:users-list[200]+aug
+"{ ""users"": [ { ""email"": ""mail1@mail.com"", ""username"": ""name1"" }, { ""email"": ""mail2@mail.com"", ""username"": ""name2"" }, { ""email"": ""admin@mail.com"", ""username"": ""admin"" }, { ""email"": ""corpus7@mail.com"", ""username"": ""corpususer7"" }, { ""email"": ""corpus8@mail.com"", ""username"": ""corpususer8"" } ] }",0,vampi:users-list[200]+aug
+"{
+  ""book_title"": ""bookTitle32"",
+  ""owner"": ""name1"",
+  ""secret"": ""secret for bookTitle32""
+}",0,vampi:book-auth-normal[200]+aug
+"{
+  ""message"": ""Book not found!"",
+  ""status"": ""fail""
+}",0,vampi:book-sqli-auth[404]+aug
+"{""status"": ""fail"", ""message"": ""Book not found!""}",0,vampi:book-sqli-auth[404]+aug
+"{
+  ""message"": ""Book not found!"",
+  ""status"": ""fail""
+}",0,vampi:book-union-auth[404]+aug
+"{""status"": ""fail"", ""message"": ""Book not found!""}",0,vampi:book-union-auth[404]+aug

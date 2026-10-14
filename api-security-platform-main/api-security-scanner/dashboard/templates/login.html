@@ -179,11 +179,18 @@ document.getElementById("login-form").addEventListener("submit", function (e) {
 });
 
 {% if demo_configured %}
-var DEMO_EMAIL = {{ demo_email | tojson }};
-var DEMO_PASSWORD = {{ demo_password | tojson }};
 document.getElementById("demo-btn").addEventListener("click", function () {
     setBusy(true);
-    auth.signInWithEmailAndPassword(DEMO_EMAIL, DEMO_PASSWORD)
+    // The demo password never leaves the server: we ask the backend to mint
+    // a Firebase custom token for the demo account, then sign in with it.
+    fetch("/api/auth/demo", {method: "POST"})
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.status !== "success" || !data.custom_token) {
+                throw new Error(data.message || "Demo sign-in is unavailable right now.");
+            }
+            return auth.signInWithCustomToken(data.custom_token);
+        })
         .then(function (cred) { return finishSignIn(cred.user); })
         .catch(function (err) { setBusy(false); showError(friendlyAuthError(err)); });
 });

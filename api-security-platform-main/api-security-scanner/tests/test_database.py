@@ -1,5 +1,5 @@
 import pytest
-from database.db import init_db, save_scan_session, save_endpoint, save_finding, get_session_findings, delete_session
+from database.db import init_db, save_scan_session, save_endpoint, save_finding, get_session_findings, delete_session, get_session_for_user
 
 def test_database_crud_operations():
     init_db()
@@ -26,3 +26,32 @@ def test_database_crud_operations():
     
     deleted = delete_session(session_obj.id)
     assert deleted is True
+
+
+def test_guest_cannot_fetch_another_users_session():
+    """S1 regression: a logged-out guest (user_id=None) must NOT see a
+    session owned by a logged-in user."""
+    init_db()
+    owned = save_scan_session("http://owned.example/api", user_id=4242)
+    try:
+        assert get_session_for_user(owned.id, None) is None
+        # The owner can still see their own session.
+        assert get_session_for_user(owned.id, 4242) is not None
+        # Another logged-in user cannot.
+        assert get_session_for_user(owned.id, 9999) is None
+    finally:
+        delete_session(owned.id)
+
+
+def test_guest_can_fetch_guest_owned_session():
+    """Guest-started scans (user_id NULL) remain visible to guests."""
+    init_db()
+    guest = save_scan_session("http://guest.example/api")
+    try:
+        got = get_session_for_user(guest.id, None)
+        assert got is not None
+        assert got.id == guest.id
+        # A logged-in user must not see the guest's scan.
+        assert get_session_for_user(guest.id, 4242) is None
+    finally:
+        delete_session(guest.id)

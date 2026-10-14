@@ -964,3 +964,118 @@ def test_openapi_operation_metadata_is_retained():
     result = merged[("https://example.test/users", "GET")]
     assert result["operation_id"] == "listUsers"
     assert len(result["security_requirements"]) == 2
+
+
+# --- Generic BOLA / mass-assignment queue probes (D2 fix) ---
+
+def _d2_queue():
+    return [
+        {"type": "SQL_Injection_GET", "method": "GET", "payload": "' OR 1=1 --"},
+        {"type": "Cross_Site_Scripting", "method": "POST", "payload": "<script>alert(1)</script>"},
+        {"type": "Command_Injection", "method": "GET", "payload": "; cat /etc/passwd"},
+        {"type": "BOLA_IDOR", "payload": "", "method": "GET", "bola_id_mutation": True},
+        {"type": "Mass_Assignment", "payload": '{"username":"t","admin":true}', "method": "POST",
+         "json_payload": {"username": "t", "password": "x", "role": "admin", "admin": True}},
+        {"type": "Baseline_Inspection", "method": "GET", "payload": ""},
+    ]
+
+
+def test_bola_probe_selected_on_id_bearing_path():
+    from main import _select_test_queue
+    selected = _select_test_queue(
+        {"url": "https://example.test/api/users/123", "method": "GET"}, _d2_queue())
+    assert [item["type"] for item in selected] == ["BOLA_IDOR", "Baseline_Inspection"]
+
+
+def test_mass_assignment_selected_on_register_path_not_on_accounts():
+    from main import _select_test_queue
+    selected = _select_test_queue(
+        {"url": "https://example.test/api/register", "method": "POST"}, _d2_queue())
+    assert [item["type"] for item in selected] == ["Mass_Assignment", "Baseline_Inspection"]
+    # The "/account" boundary must not swallow "/accounts/<id>" — that stays BOLA.
+    selected_accounts = _select_test_queue(
+        {"url": "https://example.test/api/accounts/7", "method": "GET"}, _d2_queue())
+    assert [item["type"] for item in selected_accounts] == ["BOLA_IDOR", "Baseline_Inspection"]
+
+
+def test_mutate_id_path_segment():
+    from main import _mutate_id_path_segment
+    assert _mutate_id_path_segment("https://example.test/api/users/123") == \
+        "https://example.test/api/users/124"
+    assert _mutate_id_path_segment("https://example.test/api/users/0") == \
+        "https://example.test/api/users/2"
+    uuid_url = "https://example.test/api/users/123e4567-e89b-12d3-a456-426614174000"
+    assert _mutate_id_path_segment(uuid_url) == \
+        "https://example.test/api/users/123e4567-e89b-12d3-a456-426614174001"
+    assert _mutate_id_path_segment("https://example.test/api/users") is None
+    # Only the FIRST id segment mutates; version prefixes stay intact.
+    assert _mutate_id_path_segment("https://example.test/api/v1/orders/42").endswith(
+        "/api/v1/orders/43")
+
+
+# --- Time-based command-injection probe (D6 fix) ---
+
+def _d6_queue():
+    # The default branch of _select_test_queue indexes the standard keys, so
+    # the test queue carries them like the production queue does.
+    return [
+        {"type": "SQL_Injection_GET", "method": "GET", "payload": "' OR 1=1 --"},
+        {"type": "Cross_Site_Scripting", "method": "POST", "payload": "<script>alert(1)</script>"},
+        {"type": "Command_Injection", "payload": "; cat /etc/passwd", "method": "GET"},
+        {"type": "Command_Injection_Time", "payload": "; cat /etc/passwd; sleep 5", "method": "GET"},
+        {"type": "Local_File_Inclusion", "payload": "../../etc/passwd", "method": "GET"},
+        {"type": "SQL_Injection_Time", "payload": "1' AND SLEEP(5)--", "method": "GET"},
+        {"type": "Baseline_Inspection", "payload": "", "method": "GET"},
+    ]
+
+
+def test_command_injection_time_probe_in_exec_and_default_queues():
+    from main import _select_test_queue
+    selected = _select_test_queue(
+        {"url": "https://example.test/vulnerabilities/exec/", "method": "GET"}, _d6_queue())
+    types = [item["type"] for item in selected]
+    assert "Command_Injection" in types
+    assert "Command_Injection_Time" in types
+    # Default queue for real-world endpoints gets it too (mirrors SQL_Injection_Time).
+    selected_default = _select_test_queue(
+        {"url": "https://example.test/api/health", "method": "GET"}, _d6_queue())
+    assert "Command_Injection_Time" in [item["type"] for item in selected_default]
+
+
+def test_command_injection_time_payload_carries_delay_syntax():
+    # The signature layer only Confirms time-based CMDi when the payload
+    # contains an explicit delay function; the queue payload must satisfy
+    # both categorisation ("; cat") and the proof gate ("sleep").
+    import re
+    payload = "; cat /etc/passwd; sleep 5"
+    assert re.search(r";\s*(cat|ls|whoami|id|pwd|uname|netstat)\b", payload)
+    assert re.search(r"(?i)\bsleep\b", payload)
+
+
+def test_command_injection_time_probe_categorises_as_command_injection():
+    # Regression: the queue item overrides attack_category to
+    # Command_Injection. Without it, a URL containing "exec" matches the
+    # SQLi EXEC keyword and steals the categorisation (was: SQL_Injection
+    # Suspected on a 5s delay). With the override, an explicit delay payload
+    # plus a >3s slowdown Confirms.
+    from detection.signature import SignatureDetector
+    telemetry = {
+        "url": "http://example.test/vulnerabilities/exec/",
+        "payload": "; cat /etc/passwd; sleep 5",
+        "attack_category": "Command_Injection",
+        "status_code": 200,
+        "response_size": 100,
+        "response_headers": {},
+        "response_body": "ok",
+        "request_headers": {},
+        "response_time": 5.2,
+    }
+    result = SignatureDetector().analyze(telemetry, baseline_telemetry={"response_time": 0.2})
+    assert result["attack_type"] == "Command_Injection"
+    assert result["finding_status"] == "Confirmed"
+    assert result["has_proof"] is True
+    # Same probe, healthy response time: only a lead, never a confirmation.
+    telemetry["response_time"] = 0.2
+    fast = SignatureDetector().analyze(telemetry, baseline_telemetry={"response_time": 0.2})
+    assert fast["finding_status"] == "Suspected"
+    assert fast["has_proof"] is False

@@ -29,15 +29,18 @@ from dashboard.auth_validators import (
     validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.firebase_auth import (
     firebase_web_config, firebase_configured, verify_firebase_token,
+    create_demo_custom_token,
 )
 from dashboard.results_grouping import (
-    group_findings, summarize_findings, VULN_STATUSES, TOP_RISKS_COUNT
+    group_findings, summarize_findings, VULN_STATUSES, TOP_RISKS_COUNT,
+    severity_key
 )
 from dashboard.vuln_guide_content import GUIDE_CHECKS, get_check
 from dashboard import assistant as assistant_engine
 from core.discovery import EndpointDiscovery
 from core.request_engine import RequestEngine
 from core.response_parser import ResponseParser
+from core.rate_limit import rate_limited, scan_limit, assistant_limit
 from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
@@ -84,11 +87,17 @@ def _scan_worker(target_url: str, session_id: int, extra_headers=None) -> None:
     finally:
         stop_heartbeat.set()
         # A user-cancelled scan stays failed even if the worker just finished.
-        if session_id in _cancelled_scans:
+        # Ids are normalized to str on both sides: on the SQL backend the
+        # worker's session id is an int while the cancel route receives a
+        # URL string. Without this the check never matches on SQL.
+        if str(session_id) in _cancelled_scans:
             try:
                 fail_scan_session(session_id, "Cancelled by user")
             except Exception:
                 pass
+        # The worker is done with this scan either way: drop it from the
+        # cancelled set so the set can't grow unboundedly.
+        _cancelled_scans.discard(str(session_id))
 
 
 # Session ids the user asked to cancel. The worker checks this after the
@@ -256,7 +265,7 @@ def _build_alerts(user_id):
             continue  # a running scan is progress, not an alert
         else:
             critical = sum(
-                1 for f in get_session_findings(s.id) if f.severity == "Critical"
+                1 for f in get_session_findings(s.id) if severity_key(f.severity) == "Critical"
             )
             if critical:
                 alerts.append({
@@ -323,12 +332,13 @@ def login():
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.dashboard")
     demo_email = os.environ.get("DEMO_EMAIL", "").strip()
-    demo_password = os.environ.get("DEMO_PASSWORD", "")
+    # NOTE: the demo password is deliberately NEVER passed to the template —
+    # it used to be rendered into the page source. Demo sign-in is handled
+    # server-side via POST /api/auth/demo (custom token minting).
     return render_template("login.html", next_url=next_url,
                            firebase_config=firebase_web_config(),
                            firebase_configured=firebase_configured(),
-                           demo_configured=bool(demo_email and demo_password),
-                           demo_email=demo_email, demo_password=demo_password)
+                           demo_configured=bool(demo_email and firebase_configured()))
 
 
 @dashboard_bp.route("/signup", methods=["GET"])
@@ -405,6 +415,24 @@ def firebase_session():
     if not next_url.startswith("/"):
         next_url = url_for("dashboard.dashboard")
     return jsonify({"status": "ok", "redirect": next_url})
+
+
+@dashboard_bp.route("/api/auth/demo", methods=["POST"])
+def demo_signin_token():
+    """Mint a Firebase custom token for the demo account (server-side).
+
+    The login page's "Try the demo account" button calls this, then signs
+    in with the returned custom token — the demo password never leaves the
+    server (it was previously rendered into the login page source).
+    """
+    if not is_auth_enabled():
+        return jsonify({"status": "error", "message": "Authentication is disabled"}), 400
+    try:
+        token = create_demo_custom_token()
+    except RuntimeError as exc:
+        logger.warning(f"Demo sign-in unavailable: {exc}")
+        return jsonify({"status": "error", "message": "Demo account is not available right now."}), 503
+    return jsonify({"status": "success", "custom_token": token})
 
 
 @dashboard_bp.route("/api/auth/resolve", methods=["POST"])
@@ -485,6 +513,7 @@ def _auth_headers_from_form():
 
 
 @dashboard_bp.route("/scan", methods=["POST"])
+@rate_limited(limit=scan_limit(), scope="scan")
 def start_scan():
     target_url = request.form.get("target_url")
     if not target_url:
@@ -518,7 +547,9 @@ def cancel_scan(session_id):
     """
     if not get_session_for_user(session_id, get_current_user_id()):
         return "Session not found", 404
-    _cancelled_scans.add(session_id)
+    # Normalized to str: the worker compares str(session id) too, so cancel
+    # works on the SQL backend (int ids) as well as Firestore (string ids).
+    _cancelled_scans.add(str(session_id))
     fail_scan_session(session_id, "Cancelled by user")
     return redirect(url_for("dashboard.results", session_id=session_id))
 
@@ -559,7 +590,7 @@ def results(session_id):
     attack_counts = {}
 
     for f in findings:
-        sev = f.severity
+        sev = severity_key(f.severity)
         severity_counts[sev] = severity_counts.get(sev, 0) + 1
         att = f.attack_type
         attack_counts[att] = attack_counts.get(att, 0) + 1
@@ -583,6 +614,10 @@ def results(session_id):
 def history():
     user_id = get_current_user_id()
     sessions = _visible_sessions()
+    # Reap dead "running" scans here too, so history never shows a scan
+    # stuck "in progress" forever (the reaper is cheap: no-ops unless stale).
+    for s in sessions:
+        reap_stale_scan(s)
     q = (request.args.get("q") or "").strip().lower()
     severity = (request.args.get("severity") or "").strip()
     date = (request.args.get("date") or "").strip()
@@ -611,8 +646,12 @@ def history():
 def finding_detail(finding_id):
     finding = get_finding_by_id(finding_id)
     user_id = get_current_user_id()
-    if finding and user_id is not None and finding.session and finding.session.user_id != user_id:
-        finding = None
+    if finding:
+        owner_id = finding.session.user_id if finding.session else None
+        # Guests (None) may only see findings from ownerless sessions;
+        # logged-in users only their own. Never skip this check.
+        if str(owner_id) != str(user_id):
+            finding = None
     if finding:
         current_app.logger.info(
             "Finding %s scores: risk_score=%r, ml_score=%r, lstm_score=%r, autoencoder_score=%r",
@@ -736,6 +775,10 @@ def _current_user():
 def dashboard():
     user_id = get_current_user_id()
     sessions = _visible_sessions()
+    # Reap dead "running" scans here too, so the dashboard never shows a
+    # scan stuck "in progress" forever (the reaper no-ops unless stale).
+    for s in sessions:
+        reap_stale_scan(s)
 
     scans_run = len(sessions)
     scored = [s for s in sessions if s.overall_risk_score is not None]
@@ -748,10 +791,11 @@ def dashboard():
         recent_findings.extend(get_session_findings(_sid))
     critical_findings = sum(
         1 for f in recent_findings
-        if f.severity == "Critical" and (f.finding_status or "Informational") in VULN_STATUSES)
+        if severity_key(f.severity) == "Critical" and (f.finding_status or "Informational") in VULN_STATUSES)
     severity_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
     for f in recent_findings:
-        severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
+        sev = severity_key(f.severity)
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
     trend = [s for s in sessions[:10] if s.scan_start_time][::-1]
     risk_over_time = {
@@ -797,8 +841,8 @@ def compare():
         compared.append({
             "session": s,
             "summary": summarize_findings(fd),
-            "critical": sum(1 for f in fd if f["severity"] == "Critical" and f["finding_status"] in VULN_STATUSES),
-            "high": sum(1 for f in fd if f["severity"] == "High" and f["finding_status"] in VULN_STATUSES),
+            "critical": sum(1 for f in fd if severity_key(f["severity"]) == "Critical" and f["finding_status"] in VULN_STATUSES),
+            "high": sum(1 for f in fd if severity_key(f["severity"]) == "High" and f["finding_status"] in VULN_STATUSES),
         })
     return render_template("compare.html", compared=compared)
 
@@ -959,6 +1003,7 @@ def _assistant_scan_context():
 
 
 @dashboard_bp.route("/api/assistant/ask", methods=["POST"])
+@rate_limited(limit=assistant_limit(), scope="assistant")
 def assistant_ask():
     data = request.get_json(silent=True) or {}
     question = (data.get("question") or "").strip()
@@ -1096,6 +1141,7 @@ def api_delete_session(session_id):
 
 
 @dashboard_bp.route("/api/scan", methods=["POST"])
+@rate_limited(limit=scan_limit(), scope="scan")
 def api_trigger_scan():
     req_json = request.get_json(silent=True) or {}
     target_url = req_json.get("target_url") or request.form.get("target_url")

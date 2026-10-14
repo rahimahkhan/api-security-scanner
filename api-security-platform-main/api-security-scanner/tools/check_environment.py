@@ -27,13 +27,14 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from config.settings import MODELS_DIR, ISOLATION_FOREST_PATH, LSTM_MODEL_PATH, AUTOENCODER_PATH
+from config.settings import MODELS_DIR, ISOLATION_FOREST_PATH, RESPONSE_LSTM_PATH, AUTOENCODER_PATH
 from config.settings import BASE_DIR, SECRET_KEY as SETTINGS_SECRET_KEY
 
 # Values that must never be accepted as a production SECRET_KEY. This includes
-# the actual default from config/settings.py (not just a guessed placeholder).
+# the former hardcoded default from config/settings.py (now removed — but an
+# operator could still set it explicitly, so it stays blocklisted).
 INSECURE_SECRET_VALUES = {
-    "default-secure-key",  # config/settings.py default
+    "default-secure-key",  # former config/settings.py default
     "dev-secret-key-change-in-production",
     "changeme",
     "secret",
@@ -42,9 +43,9 @@ INSECURE_SECRET_VALUES = {
 
 CRITICAL_MODEL_FILES = [
     ISOLATION_FOREST_PATH,
-    LSTM_MODEL_PATH,
+    RESPONSE_LSTM_PATH,
     AUTOENCODER_PATH,
-    os.path.join(MODELS_DIR, "char_vocab.json")
+    os.path.join(MODELS_DIR, "response_char_vocab.json")
 ]
 
 OPTIONAL_MODEL_FILES = [
@@ -63,7 +64,7 @@ def check_model_artifacts(models_dir: Optional[str] = None,
     """
     models_dir = models_dir or MODELS_DIR
     isolation_forest_path = isolation_forest_path or ISOLATION_FOREST_PATH
-    lstm_path = lstm_path or LSTM_MODEL_PATH
+    lstm_path = lstm_path or RESPONSE_LSTM_PATH
     autoencoder_path = autoencoder_path or AUTOENCODER_PATH
 
     # Resolve paths relative to BASE_DIR if not absolute
@@ -77,7 +78,7 @@ def check_model_artifacts(models_dir: Optional[str] = None,
         "isolation_forest": resolve(isolation_forest_path),
         "lstm": resolve(lstm_path),
         "autoencoder": resolve(autoencoder_path),
-        "char_vocab": resolve(os.path.join(models_dir, "char_vocab.json")),
+        "response_char_vocab": resolve(os.path.join(models_dir, "response_char_vocab.json")),
         "feature_scaler": resolve(os.path.join(models_dir, "feature_scaler.pkl")),
         "autoencoder_scaler": resolve(os.path.join(models_dir, "autoencoder_scaler.pkl")),
         "autoencoder_threshold": resolve(os.path.join(models_dir, "autoencoder_threshold.txt"))
@@ -87,7 +88,7 @@ def check_model_artifacts(models_dir: Optional[str] = None,
     missing_optional = []
     present_files = []
 
-    for key in ["isolation_forest", "lstm", "autoencoder", "char_vocab"]:
+    for key in ["isolation_forest", "lstm", "autoencoder", "response_char_vocab"]:
         if not Path(resolved[key]).exists():
             missing_critical.append(resolved[key])
         else:
@@ -169,7 +170,7 @@ def run_preflight(models_dir: Optional[str] = None,
     # If a models_dir override is provided, ensure the specific expected artifact paths point inside it
     if models_dir:
         isolation_path = os.path.join(models_dir, "isolation_forest.pkl")
-        lstm_path = os.path.join(models_dir, "lstm_model.pt")
+        lstm_path = os.path.join(models_dir, "response_lstm.pt")
         autoencoder_path = os.path.join(models_dir, "autoencoder.pt")
         results = check_model_artifacts(models_dir=models_dir, isolation_forest_path=isolation_path, lstm_path=lstm_path, autoencoder_path=autoencoder_path)
     else:
