@@ -222,6 +222,34 @@ def test_module_specific_queue_and_form_method_resolution():
     assert _resolve_test_method(xss, selected_xss[0], "GET") == "GET"
 
 
+def test_bare_quote_error_probe_selected_on_sqli_and_default_paths():
+    """Bare-quote SQLi error probe (ported from the platform's bb5e1b9 queue)
+    must be selected both on sqli module paths and on generic real-world
+    endpoints (default branch)."""
+    from main import _select_test_queue
+
+    queue = [
+        {"type": "SQL_Injection", "method": "POST", "payload": "sql"},
+        {"type": "SQL_Injection_GET", "method": "GET", "payload": "sql-get"},
+        {"type": "SQL_Injection_Time", "method": "GET", "payload": "1' AND SLEEP(5)--"},
+        {"type": "SQL_Injection_Error", "attack_category": "SQL_Injection", "method": "GET", "payload": "'"},
+        {"type": "Cross_Site_Scripting", "method": "POST", "payload": "xss"},
+        {"type": "Command_Injection", "method": "GET", "payload": "cmd"},
+        {"type": "Local_File_Inclusion", "method": "GET", "payload": "lfi"},
+        {"type": "Baseline_Inspection", "method": "GET", "payload": ""},
+    ]
+    sqli = {"url": "https://example.test/vulnerabilities/sqli/", "form_method": "GET", "form_fields": ["id"]}
+    selected = _select_test_queue(sqli, queue)
+    assert [item["type"] for item in selected] == [
+        "SQL_Injection", "SQL_Injection_GET", "SQL_Injection_Time",
+        "SQL_Injection_Error", "Baseline_Inspection",
+    ]
+
+    generic = {"url": "https://example.test/api/search", "form_method": "GET", "form_fields": ["q"]}
+    selected_generic = _select_test_queue(generic, queue)
+    assert "SQL_Injection_Error" in [item["type"] for item in selected_generic]
+
+
 def test_stored_xss_module_skips_persistent_probe():
     from main import _select_test_queue
 

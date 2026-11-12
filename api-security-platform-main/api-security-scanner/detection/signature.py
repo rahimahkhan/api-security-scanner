@@ -11,6 +11,44 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.logging_config import logger
 from config.settings import PAYLOADS_DIR
 
+# --- Time-based proof margin (tightened 2026-10-15) ---------------------------
+# A single slow response is not proof that a delay payload executed: target
+# slowness under scan load fabricated Confirmed findings live (CMDi @100 on
+# /about.php with only 3.64s against a SLEEP-style 5s payload; SQLi @100 on
+# /logout.php with a one-off 8.68s spike — neither page has a sink).
+# Confirming a time-based proof now requires BOTH:
+#   1. proportionality: the observed delay must reach the payload's own
+#      injected delay (minus tolerance), not merely clear a 3.0s floor;
+#   2. reproduction: an identical re-probe must show the delay again
+#      (telemetry key "time_proof_repro_delta", attached by the pipeline).
+# Direct analyze() callers without a re-probe keep the old single-measurement
+# contract (proportionality only); the live pipeline always re-probes.
+TIME_PROOF_FLOOR_SECONDS = 3.0
+TIME_PROOF_TOLERANCE_SECONDS = 1.0
+
+
+def extract_delay_seconds(payload: str) -> Optional[float]:
+    """Parse the explicit delay (seconds) a time-based payload asks for.
+
+    Handles SLEEP(n), pg_sleep(n), DBMS_LOCK.SLEEP(n), shell `sleep n`,
+    and WAITFOR DELAY 'h:m:s'. Returns None for delay syntax whose real
+    duration is unknowable up front (e.g. BENCHMARK iterations), which then
+    falls back to the plain 3.0s floor plus the reproduction requirement.
+    """
+    if not payload:
+        return None
+    m = re.search(r"(?i)\b(?:pg_sleep|dbms_lock\.sleep|sleep)\s*\(\s*(\d+(?:\.\d+)?)\s*\)", payload)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"(?i)\bsleep(?!\s*\()\s+(\d+(?:\.\d+)?)s?\b", payload)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"(?i)waitfor\s+delay\s+'(\d+):(\d+):(\d+(?:\.\d+)?)'", payload)
+    if m:
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return None
+
+
 class SignatureDetector:
     """
     Layer 1 — Signature & Response Verification Detection Engine
@@ -165,6 +203,57 @@ class SignatureDetector:
         similarity = difflib.SequenceMatcher(None, norm_baseline, norm_current).ratio()
         difference_ratio = round(1.0 - similarity, 4)
         return float(difference_ratio)
+
+    def _time_proof_gate(self, category: str, time_delta: float, payload: str,
+                         repro_delta: Optional[float], repro_failed: bool) -> Dict[str, Any]:
+        """Tightened time-based proof gate (2026-10-15).
+
+        Returns one of:
+          {"verdict": "confirmed", "proof": <poc text>}
+          {"verdict": "rejected",  "reason": <why the delay is not proof>}
+          {"verdict": "absent"}   -- no delay syntax / too fast to even attempt
+
+        "confirmed" requires the delay syntax for the category, the observed
+        delay to reach the payload's own injected delay (minus tolerance,
+        never below the 3.0s floor), and — when the pipeline supplies one —
+        the same delay on the reproduction re-probe. A re-probe that failed
+        or timed out is never proof, so it downgrades outright.
+        """
+        delay_syntax = (
+            r"(?i)\b(?:sleep|benchmark|pg_sleep|waitfor\s+delay)\s*\("
+            if category == "SQL_Injection" else r"(?i)\bsleep\b"
+        )
+        if not (time_delta > TIME_PROOF_FLOOR_SECONDS
+                and re.search(delay_syntax, payload or "")):
+            return {"verdict": "absent"}
+        injected = extract_delay_seconds(payload or "")
+        required = max(TIME_PROOF_FLOOR_SECONDS,
+                       (injected - TIME_PROOF_TOLERANCE_SECONDS)
+                       if injected is not None else TIME_PROOF_FLOOR_SECONDS)
+        if time_delta < required:
+            if injected is not None:
+                reason = (f"observed delay {time_delta:.2f}s below the required "
+                          f"{required:.2f}s for the injected {injected:g}s delay — "
+                          f"the sleep did not execute; likely target slowness")
+            else:
+                reason = (f"observed delay {time_delta:.2f}s below the required "
+                          f"{required:.2f}s")
+            return {"verdict": "rejected", "reason": reason}
+        if repro_failed:
+            return {"verdict": "rejected",
+                    "reason": "delay did not reproduce: the verification re-probe "
+                              "failed or timed out, so no proof exists"}
+        if repro_delta is not None and repro_delta < required:
+            return {"verdict": "rejected",
+                    "reason": (f"delay did not reproduce on re-probe "
+                               f"({repro_delta:.2f}s < required {required:.2f}s) — "
+                               f"likely one-off target slowness under load")}
+        attack_label = category.replace("_", " ")
+        proof = (f"Time-based {attack_label}: explicit delay payload reproduced — "
+                 f"delay {time_delta:.2f}s"
+                 + (f", re-probe {repro_delta:.2f}s" if repro_delta is not None else "")
+                 + f" >= required {required:.2f}s")
+        return {"verdict": "confirmed", "proof": proof}
 
     def analyze(self, telemetry_data: Dict[str, Any], baseline_telemetry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -323,6 +412,12 @@ class SignatureDetector:
 
         time_delta = max(0.0, resp_time - baseline_time)
         size_delta = resp_size - baseline_size
+        # Time-based proof verification (pipeline): the delay must reproduce on
+        # an identical re-probe before it counts as proof. Attached by main.py
+        # after re-sending the probe; None means no re-probe was performed
+        # (direct analyze() callers keep the single-measurement contract).
+        repro_delta = telemetry_data.get("time_proof_repro_delta")
+        repro_failed = bool(telemetry_data.get("time_proof_repro_failed"))
         body_difference_ratio = self._body_difference_ratio(baseline_body, resp_body)
         status_changed = resp_status != baseline_status
         differential_signal = bool(baseline_telemetry) and (status_changed or abs(size_delta) >= 64 or body_difference_ratio >= 0.25)
@@ -385,7 +480,9 @@ class SignatureDetector:
                     proof_of_concept = "Payload syntax matched but missing verbatim HTML/XML unescaped reflection"
 
             elif candidate_category == "SQL_Injection":
-                # Error-based SQL trace verification OR Time-based SQLi (time_delta > 3.0s)
+                # Error-based SQL trace verification OR Time-based SQLi
+                # (tightened gate: delay must be proportional to the injected
+                # sleep AND reproduce on a re-probe).
                 matched_sql_err = next((err for err in self.SQL_ERROR_PATTERNS if re.search(err, resp_body)), None)
                 if matched_sql_err:
                     matched = True
@@ -394,27 +491,32 @@ class SignatureDetector:
                     confidence = "High"
                     points = 40
                     proof_of_concept = f"SQL Error signature matched: {matched_sql_err}"
-                elif time_delta > 3.0 and re.search(r"(?i)\b(?:sleep|benchmark|pg_sleep|waitfor\s+delay)\s*\(", payload):
-                    matched = True
-                    has_proof = True
-                    finding_status = "Confirmed"
-                    confidence = "High"
-                    points = 40
-                    proof_of_concept = f"Time-based SQLi response delay detected for an explicit delay payload: {time_delta:.2f}s > 3.00s"
                 else:
-                    matched = True
-                    has_proof = False
-                    finding_status = "Suspected"
-                    confidence = "Medium" if differential_signal else "Low"
-                    points = 15 if differential_signal else 10
-                    if differential_signal:
-                        proof_of_concept = (
-                            "SQL parameter payload caused a differential response without database-error or timing proof: "
-                            f"status_changed={status_changed}, size_delta={size_delta}, "
-                            f"body_difference_ratio={body_difference_ratio:.4f}"
-                        )
+                    time_gate = self._time_proof_gate("SQL_Injection", time_delta,
+                                                      payload, repro_delta, repro_failed)
+                    if time_gate["verdict"] == "confirmed":
+                        matched = True
+                        has_proof = True
+                        finding_status = "Confirmed"
+                        confidence = "High"
+                        points = 40
+                        proof_of_concept = time_gate["proof"]
                     else:
-                        proof_of_concept = "SQL parameter payload syntax matched without database error, differential response, or execution time delay"
+                        matched = True
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Medium" if differential_signal else "Low"
+                        points = 15 if differential_signal else 10
+                        if differential_signal:
+                            proof_of_concept = (
+                                "SQL parameter payload caused a differential response without database-error or timing proof: "
+                                f"status_changed={status_changed}, size_delta={size_delta}, "
+                                f"body_difference_ratio={body_difference_ratio:.4f}"
+                            )
+                        else:
+                            proof_of_concept = "SQL parameter payload syntax matched without database error, differential response, or execution time delay"
+                        if time_gate["verdict"] == "rejected":
+                            proof_of_concept += f"; time-based proof rejected: {time_gate['reason']}"
 
             elif candidate_category == "GraphQL_Introspection":
                 matched_graphql = bool(re.search(r'(?i)"__schema"|"queryType"|"__typename"', resp_body))
@@ -494,7 +596,9 @@ class SignatureDetector:
                     proof_of_concept = "File traversal syntax matched without known local-file content"
 
             elif candidate_category == "Command_Injection":
-                # Shell output signature OR Time-based delay > 3.0s
+                # Shell output signature OR Time-based delay
+                # (tightened gate: delay must be proportional to the injected
+                # sleep AND reproduce on a re-probe).
                 matched_cmd_sig = next((cmd_pat for cmd_pat in self.CMD_OUTPUT_PATTERNS if re.search(cmd_pat, resp_body)), None)
                 if matched_cmd_sig:
                     matched = True
@@ -503,29 +607,37 @@ class SignatureDetector:
                     confidence = "High"
                     points = 40
                     proof_of_concept = f"Command execution signature matched: {matched_cmd_sig}"
-                elif time_delta > 3.0 and re.search(r"(?i)\bsleep\b", payload):
-                    matched = True
-                    has_proof = True
-                    finding_status = "Confirmed"
-                    confidence = "High"
-                    points = 40
-                    proof_of_concept = f"Time-based Command Injection delay detected for an explicit delay payload: {time_delta:.2f}s > 3.00s"
-                elif time_delta > 3.0:
-                    # Slowness alone is not proof: the shipped payloads contain
-                    # no delay function, so a slow response is only a lead.
-                    matched = True
-                    has_proof = False
-                    finding_status = "Suspected"
-                    confidence = "Low"
-                    points = 10
-                    proof_of_concept = f"Response was slow ({time_delta:.2f}s > 3.00s) but the payload contains no delay function; execution not proven"
                 else:
-                    matched = True
-                    has_proof = False
-                    finding_status = "Suspected"
-                    confidence = "Low"
-                    points = 10
-                    proof_of_concept = "Command payload syntax matched without shell output or execution delay"
+                    time_gate = self._time_proof_gate("Command_Injection", time_delta,
+                                                      payload, repro_delta, repro_failed)
+                    if time_gate["verdict"] == "confirmed":
+                        matched = True
+                        has_proof = True
+                        finding_status = "Confirmed"
+                        confidence = "High"
+                        points = 40
+                        proof_of_concept = time_gate["proof"]
+                    elif time_delta > 3.0:
+                        # Slowness alone is not proof: the shipped payloads contain
+                        # no delay function, or the delay did not prove execution,
+                        # so a slow response is only a lead.
+                        matched = True
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Low"
+                        points = 10
+                        if time_gate["verdict"] == "rejected":
+                            proof_of_concept = (f"Time-based proof rejected: {time_gate['reason']}; "
+                                                f"slow response ({time_delta:.2f}s > 3.00s) is only a lead")
+                        else:
+                            proof_of_concept = f"Response was slow ({time_delta:.2f}s > 3.00s) but the payload contains no delay function; execution not proven"
+                    else:
+                        matched = True
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Low"
+                        points = 10
+                        proof_of_concept = "Command payload syntax matched without shell output or execution delay"
 
             elif candidate_category == "Auth_Weakness":
                 auth_hdr = telemetry_data.get("request_headers", {}).get("Authorization", "")

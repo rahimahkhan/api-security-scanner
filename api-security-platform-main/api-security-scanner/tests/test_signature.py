@@ -201,3 +201,46 @@ def test_signature_missing_headers():
     assert result["attack_type"] == "Security_Misconfiguration"
     assert len(result["missing_headers"]) > 0
 
+
+def test_bare_quote_error_probe_confirms_on_sql_error():
+    """Bare-quote SQLi error probe (ported from the platform's bb5e1b9 queue):
+    a lone quote matches no payload-syntax rule, so confirmation must come
+    purely from the SQL error in the response — the response-evidence sweep
+    re-attributes the finding to SQL_Injection and the error pattern proves it."""
+    detector = SignatureDetector()
+
+    # DVWA's MariaDB error text, verbatim shape
+    sample_error = {
+        "url": "http://localhost:5000/vulnerabilities/sqli/?id='",
+        "payload": "'",
+        "attack_category": "SQL_Injection",
+        "status_code": 200,
+        "response_size": 220,
+        "response_headers": {"Content-Type": "text/html"},
+        "response_body": "You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near ''' at line 1",
+    }
+    res_err = detector.analyze(sample_error)
+    assert res_err["matched"] is True
+    assert res_err["attack_type"] == "SQL_Injection"
+    assert res_err["finding_status"] == "Confirmed"
+    assert res_err["has_proof"] is True
+    assert res_err["confidence"] == "High"
+    assert res_err["points"] == 40
+
+    # Same bare quote against a clean response: no syntax match, no error
+    # evidence — must NOT confirm as SQLi. (The response still yields the
+    # routine missing-headers Informational note, as any response does;
+    # that is not a vulnerability finding.)
+    sample_clean = {
+        "url": "http://localhost:5000/api/users?id=1",
+        "payload": "'",
+        "attack_category": "SQL_Injection",
+        "status_code": 200,
+        "response_size": 120,
+        "response_headers": {"Content-Type": "application/json"},
+        "response_body": "{\"status\":\"ok\"}",
+    }
+    res_clean = detector.analyze(sample_clean)
+    assert res_clean["has_proof"] is False
+    assert res_clean["finding_status"] != "Confirmed"
+    assert res_clean["attack_type"] != "SQL_Injection"

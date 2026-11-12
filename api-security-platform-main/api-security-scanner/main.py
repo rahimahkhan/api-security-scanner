@@ -244,6 +244,8 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
         selected = [by_type["SQL_Injection"], by_type["SQL_Injection_GET"]]
         if "SQL_Injection_Time" in by_type:
             selected.append(by_type["SQL_Injection_Time"])
+        if "SQL_Injection_Error" in by_type:
+            selected.append(by_type["SQL_Injection_Error"])
     elif "xss_r" in path or "xss_d" in path:
         selected = [by_type["Cross_Site_Scripting"]]
     elif "xss_s" in path:
@@ -277,6 +279,8 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
             selected.append(by_type["Local_File_Inclusion"])
         if "SQL_Injection_Time" in by_type:
             selected.append(by_type["SQL_Injection_Time"])
+        if "SQL_Injection_Error" in by_type:
+            selected.append(by_type["SQL_Injection_Error"])
         if "Command_Injection_Time" in by_type:
             selected.append(by_type["Command_Injection_Time"])
 
@@ -366,6 +370,60 @@ def _make_discovery_progress_callback(session_id, min_interval: float = 3.0):
         )
 
     return _callback
+
+
+def verify_time_based_proof(request_engine, signature_detector, test_item, test_method,
+                            test_url, payload_str, custom_headers, query_params,
+                            form_data, json_payload, req_data, baseline_telemetry):
+    """Re-verify a time-based Confirmed finding before it stands (2026-10-15).
+
+    The tightened proof margin requires the delay to reproduce: after the
+    signature layer Confirms a finding purely on a timing delay, this sends
+    one identical re-probe and re-runs the analysis with the reproduction
+    measurement attached. A delay that was one-off target slowness under scan
+    load (seen live on /about.php and /logout.php, 2026-10-14) downgrades to
+    Suspected with the reason in the proof text.
+
+    The re-probe is sequential and bounded by the engine's own request
+    timeout, so it cannot wedge the scan; a failed or timed-out re-probe
+    downgrades outright (a timeout's synthetic ~30s response time must never
+    count as a reproduced delay). Returns the final signature result.
+    """
+    repro_delta = None
+    repro_failed = False
+    try:
+        repro = request_engine.send_request(
+            test_method,
+            test_url,
+            payload=payload_str,
+            custom_headers=custom_headers,
+            json_payload=json_payload,
+            query_params=query_params,
+            form_data=form_data,
+            follow_redirects=test_item.get("follow_redirects", True),
+        )
+    except Exception as exc:
+        logger.warning("Time-proof re-probe failed for %s: %s", test_url, exc)
+        repro = None
+    if repro is None:
+        repro_failed = True
+    else:
+        err_text = str(repro.get("error", "") or "").lower()
+        if (repro.get("status_code") == 408 or "timeout" in err_text
+                or "timed out" in err_text):
+            repro_failed = True
+        else:
+            try:
+                repro_delta = max(
+                    0.0,
+                    float(repro.get("response_time", 0.0))
+                    - float(baseline_telemetry.get("response_time", 0.0)),
+                )
+            except (TypeError, ValueError):
+                repro_failed = True
+    req_data["time_proof_repro_delta"] = repro_delta
+    req_data["time_proof_repro_failed"] = repro_failed
+    return signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)
 
 
 def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None,
@@ -668,6 +726,14 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             {"type": "SQL_Injection", "payload": "{\"username\": \"admin' OR 1=1 --\", \"password\": \"pass\"}", "method": "POST", "headers": {"Content-Type": "application/json"}},
             {"type": "SQL_Injection_GET", "payload": "' OR 1=1 --", "method": "GET"},
             {"type": "SQL_Injection_Time", "payload": "1' AND SLEEP(5)--", "method": "GET"},
+            # Bare-quote error probe (ported from the platform's bb5e1b9 queue):
+            # a lone quote reliably forces a database syntax error on injectable
+            # endpoints (e.g. DVWA's sqli module dies with its MariaDB error),
+            # which the signature layer confirms on the response evidence alone
+            # — no boolean or time-based payload needed. attack_category pins
+            # the expected category since the bare quote matches no
+            # payload-syntax rule by itself.
+            {"type": "SQL_Injection_Error", "attack_category": "SQL_Injection", "payload": "'", "method": "GET"},
             {"type": "Cross_Site_Scripting", "payload": "<script>alert('xss')</script>", "method": "POST"},
             {"type": "Command_Injection", "payload": "; cat /etc/passwd", "method": "GET"},
             # Time-based CMDi mirror of SQL_Injection_Time (D6 fix): the payload
@@ -831,7 +897,8 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     form_data=form_data,
                     follow_redirects=test_item.get("follow_redirects", True)
                 )
-                return test_item, test_url, test_method, payload_str, req_data
+                return (test_item, test_url, test_method, payload_str, custom_headers,
+                        query_params, form_data, json_payload, req_data)
 
             # Requests are bounded and concurrent, but all detection and SQLite writes
             # remain sequential below so proof evaluation and persistence are deterministic.
@@ -844,7 +911,8 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 timeout=ENDPOINT_DISPATCH_TIMEOUT,
             )
 
-            for test_item, test_url, test_method, payload_str, req_data in dispatched_requests:
+            for (test_item, test_url, test_method, payload_str, custom_headers,
+                 query_params, form_data, json_payload, req_data) in dispatched_requests:
                 current_size = req_data.get("response_size", 0)
                 current_status = req_data.get("status_code", 200)
                 response_body = req_data.get("response_body", "")
@@ -882,6 +950,18 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
                 # Layer 1 - Signature Detection & Proof Verification
                 sig_res = signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)
+
+                # Time-based proof margin (2026-10-15): a single slow response
+                # is not proof the delay payload executed. When the signature
+                # layer Confirms purely on a timing delay, re-probe identically
+                # and require the delay to reproduce before the finding stands.
+                if (sig_res.get("has_proof")
+                        and sig_res.get("finding_status") == "Confirmed"
+                        and "Time-based" in str(sig_res.get("proof_of_concept", ""))):
+                    sig_res = verify_time_based_proof(
+                        request_engine, signature_detector, test_item, test_method,
+                        test_url, payload_str, custom_headers, query_params,
+                        form_data, json_payload, req_data, baseline_telemetry)
 
                 # Layer 2 - ML Anomaly Detection (Isolation Forest)
                 ml_res = ml_detector.predict(features)

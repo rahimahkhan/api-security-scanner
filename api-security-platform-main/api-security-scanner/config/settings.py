@@ -29,6 +29,12 @@ SCAN_TIMEOUT = int(os.getenv("SCAN_TIMEOUT", 30))
 # Flask & Dashboard Settings
 FLASK_PORT = int(os.getenv("PORT", os.getenv("FLASK_PORT", 5000)))
 FLASK_DEBUG = os.getenv("FLASK_DEBUG", "False") == "True"
+# Session cookies must be Secure on the deployed HTTPS service (Render sets
+# RENDER=true automatically) but plain HTTP locally so dev sessions still
+# work. Overridable with SESSION_COOKIE_SECURE=0/1.
+SESSION_COOKIE_SECURE = os.getenv(
+    "SESSION_COOKIE_SECURE", "1" if os.getenv("RENDER") else "0"
+) == "1"
 # Session signing key. MUST come from the SECRET_KEY env var in any real
 # deployment: a known fallback would let anyone forge session cookies.
 # Without the env var we generate an ephemeral random key so the app still

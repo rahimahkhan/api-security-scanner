@@ -5,7 +5,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.settings import SECRET_KEY, FLASK_DEBUG
+from config.settings import SECRET_KEY, FLASK_DEBUG, SESSION_COOKIE_SECURE
 from database.db import init_db
 
 def create_app():
@@ -23,6 +23,7 @@ def create_app():
     app.config["TEMPLATES_AUTO_RELOAD"] = True
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = SESSION_COOKIE_SECURE
     app.jinja_env.cache = {}
 
     # Trust Render's (or any) reverse proxy for scheme/host so url_for and
