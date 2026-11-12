@@ -3,6 +3,7 @@ import json
 import re
 import sys
 import os
+import threading
 import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, wait as _futures_wait
@@ -24,7 +25,21 @@ from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from urllib.parse import urlsplit, urlunsplit
 
-ACTIVE_CONCURRENCY = max(1, int(os.getenv("ACTIVE_CONCURRENCY", "4")))
+ACTIVE_CONCURRENCY = max(1, int(os.getenv("ACTIVE_CONCURRENCY", "8")))
+# Endpoints used to be scanned strictly one at a time, so wall-clock time
+# was the sum of every endpoint's slowest probe batch. Endpoints are
+# independent (own baselines, probes, findings), so up to
+# ENDPOINT_CONCURRENCY of them run at once. Total in-flight HTTP requests
+# stay capped by MAX_IN_FLIGHT_REQUESTS so the scan never floods the target
+# or the free-tier container, however many probe threads are parked.
+ENDPOINT_CONCURRENCY = max(1, int(os.getenv("ENDPOINT_CONCURRENCY", "4")))
+MAX_IN_FLIGHT_REQUESTS = max(1, int(os.getenv("MAX_IN_FLIGHT_REQUESTS", "8")))
+_IN_FLIGHT_SEMAPHORE = threading.BoundedSemaphore(MAX_IN_FLIGHT_REQUESTS)
+# Serializes DB writes across endpoint workers: SQLite serializes writers
+# internally and a contended commit can raise "database is locked"; the lock
+# makes parallel writes safe on every backend (Firestore is natively safe,
+# the lock just costs nothing there).
+_DB_WRITE_LOCK = threading.Lock()
 # Total budget for one endpoint's concurrent probe batch. A single probe can
 # hang past the per-request timeout (e.g. DNS stalls aren't covered by it);
 # without this cap one wedged probe stalls the whole scan forever.
@@ -762,261 +777,291 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             {"type": "Baseline_Inspection", "payload": "", "method": "GET"}
         ]
 
-        for idx, ep_info in enumerate(discovered_endpoints, start=1):
-            base_ep_url = ep_info["url"]
-            default_method = ep_info["method"]
+        def _scan_one_endpoint(idx, ep_info):
+                base_ep_url = ep_info["url"]
+                default_method = ep_info["method"]
 
-            print(f"\n[{idx}/{len(discovered_endpoints)}] Testing Endpoint: [{default_method}] {base_ep_url}")
+                print(f"\n[{idx}/{len(discovered_endpoints)}] Testing Endpoint: [{default_method}] {base_ep_url}")
 
-            # Baseline request. Time-based proofs (SLEEP payloads) compare the
-            # probe's response time against this baseline, so a single slow
-            # baseline sample can fabricate a "Confirmed" via normal jitter.
-            # When a time-based probe is queued, take a second baseline and
-            # use the faster of the two: a real delay must beat BOTH samples.
-            baseline_req = request_engine.send_request(default_method, base_ep_url)
-            _prelim_queue = _select_test_queue(ep_info, active_test_queue)
-            # Any time-based probe (SQL_Injection_Time, Command_Injection_Time,
-            # ...) needs the double-baseline jitter guard.
-            needs_time_baseline = any(
-                str(item.get("type", "")).endswith("_Time") for item in _prelim_queue
-            )
-            if needs_time_baseline:
-                second_baseline = request_engine.send_request(default_method, base_ep_url)
-                try:
-                    if float(second_baseline.get("response_time", 0.0)) < float(baseline_req.get("response_time", 0.0)):
-                        baseline_req = second_baseline
-                except (TypeError, ValueError):
-                    pass
-            baseline_telemetry = {
-                "status_code": baseline_req.get("status_code", 200),
-                "response_size": baseline_req.get("response_size", 0),
-                "response_time": baseline_req.get("response_time", 0.0),
-                # The signature layer diffs response bodies against this; without
-                # it every non-empty response looked "100% different" and produced
-                # bogus differential-response findings on clean endpoints.
-                "response_body": baseline_req.get("response_body", ""),
-            }
-
-            # Baseline feature vector for Layer 3: the autoencoder scores each
-            # probe's EXCESS reconstruction error over the target's own normal
-            # response, so an app unlike the training services doesn't read as
-            # anomalous merely for existing (see DeepLearningDetector.analyze).
-            baseline_features = response_parser.extract_features(
-                {
-                    "status_code": baseline_telemetry["status_code"],
-                    "response_size": baseline_telemetry["response_size"],
-                    "response_time": baseline_telemetry["response_time"],
-                    "response_body": baseline_telemetry["response_body"],
-                    "headers": baseline_req.get("response_headers", {}),
-                    "method": default_method,
-                    "payload": "",
-                    "url": base_ep_url,
-                },
-                baseline_telemetry=baseline_telemetry,
-            )
-
-            baseline_is_frontend_shell = _is_frontend_shell_response(
-                base_ep_url,
-                baseline_req.get("response_headers", {}),
-                baseline_req.get("response_body", "")
-            )
-
-            if _is_csrf_candidate(ep_info):
-                csrf_ep = save_endpoint(session_id=session_obj.id, url=base_ep_url, method=default_method)
-                save_finding(
-                    session_id=session_obj.id,
-                    endpoint_id=csrf_ep.id,
-                    attack_type="CSRF",
-                    severity="Low",
-                    risk_score=0.0,
-                    finding_status="Informational",
-                    signature_triggered="POST form has no detected anti-CSRF token; exploitability not verified",
-                    recommendation="Verify Origin/Referer validation and use a framework CSRF token for state-changing forms.",
-                    request_payload="",
-                    response_status=baseline_req.get("status_code", 200),
-                    response_size=baseline_req.get("response_size", 0),
-                    response_time=baseline_req.get("response_time", 0.0)
+                # Baseline request. Time-based proofs (SLEEP payloads) compare the
+                # probe's response time against this baseline, so a single slow
+                # baseline sample can fabricate a "Confirmed" via normal jitter.
+                # When a time-based probe is queued, take a second baseline and
+                # use the faster of the two: a real delay must beat BOTH samples.
+                # Baselines share the global in-flight cap with probe traffic.
+                with _IN_FLIGHT_SEMAPHORE:
+                    baseline_req = request_engine.send_request(default_method, base_ep_url)
+                _prelim_queue = _select_test_queue(ep_info, active_test_queue)
+                # Any time-based probe (SQL_Injection_Time, Command_Injection_Time,
+                # ...) needs the double-baseline jitter guard.
+                needs_time_baseline = any(
+                    str(item.get("type", "")).endswith("_Time") for item in _prelim_queue
                 )
-                logger.info("Recorded passive CSRF candidate without submitting state-changing form: %s", base_ep_url)
-            if baseline_is_frontend_shell:
-                endpoint_queue = [item for item in active_test_queue if item.get("type") == "Baseline_Inspection"]
-                logger.info("Skipping active payloads for frontend shell endpoint: %s", base_ep_url)
-            else:
-                endpoint_queue = _select_test_queue(ep_info, active_test_queue)
-            prepared_requests = []
-            for test_item in endpoint_queue:
-                path_suffix = test_item.get("path_suffix", "")
-                if path_suffix:
-                    parsed_base = urlsplit(base_ep_url)
-                    origin = urlunsplit((parsed_base.scheme, parsed_base.netloc, "", "", ""))
-                    test_url = origin.rstrip("/") + path_suffix
-                else:
-                    test_url = base_ep_url
+                if needs_time_baseline:
+                    with _IN_FLIGHT_SEMAPHORE:
+                        second_baseline = request_engine.send_request(default_method, base_ep_url)
+                    try:
+                        if float(second_baseline.get("response_time", 0.0)) < float(baseline_req.get("response_time", 0.0)):
+                            baseline_req = second_baseline
+                    except (TypeError, ValueError):
+                        pass
+                baseline_telemetry = {
+                    "status_code": baseline_req.get("status_code", 200),
+                    "response_size": baseline_req.get("response_size", 0),
+                    "response_time": baseline_req.get("response_time", 0.0),
+                    # The signature layer diffs response bodies against this; without
+                    # it every non-empty response looked "100% different" and produced
+                    # bogus differential-response findings on clean endpoints.
+                    "response_body": baseline_req.get("response_body", ""),
+                }
 
-                test_method = _resolve_test_method(ep_info, test_item, default_method)
-                # Generic BOLA probe (D2 fix): swap the URL's ID segment for a
-                # sibling object's URL and fetch it unauthenticated. No canary
-                # flags are set on this path — without cross-identity
-                # verification the signature layer grades this Suspected at
-                # most; Confirmed stays canary-only.
-                if test_item.get("type") == "BOLA_IDOR" and test_item.get("bola_id_mutation"):
-                    mutated_url = _mutate_id_path_segment(test_url)
-                    if mutated_url is None:
-                        logger.info("Skipping BOLA_IDOR probe: no ID segment in %s", test_url)
-                        continue
-                    prepared_requests.append(
-                        (test_item, mutated_url, test_method, "", None, None, None, None)
-                    )
-                    continue
-                payload_str = test_item.get("payload", "")
-                custom_headers = test_item.get("headers", None)
-                fixed_json = test_item.get("json_payload")
-                # Probe every injectable field (bounded), not just the first:
-                # vulnerabilities often hide in the 2nd or 3rd parameter.
-                targets = _probe_targets(ep_info, test_method, fixed_json is not None) or [None]
-                for target_field in targets:
-                    query_params, form_data = _bind_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
-                    if fixed_json is not None:
-                        json_payload = fixed_json
+                # Baseline feature vector for Layer 3: the autoencoder scores each
+                # probe's EXCESS reconstruction error over the target's own normal
+                # response, so an app unlike the training services doesn't read as
+                # anomalous merely for existing (see DeepLearningDetector.analyze).
+                baseline_features = response_parser.extract_features(
+                    {
+                        "status_code": baseline_telemetry["status_code"],
+                        "response_size": baseline_telemetry["response_size"],
+                        "response_time": baseline_telemetry["response_time"],
+                        "response_body": baseline_telemetry["response_body"],
+                        "headers": baseline_req.get("response_headers", {}),
+                        "method": default_method,
+                        "payload": "",
+                        "url": base_ep_url,
+                    },
+                    baseline_telemetry=baseline_telemetry,
+                )
+
+                baseline_is_frontend_shell = _is_frontend_shell_response(
+                    base_ep_url,
+                    baseline_req.get("response_headers", {}),
+                    baseline_req.get("response_body", "")
+                )
+
+                if _is_csrf_candidate(ep_info):
+                    with _DB_WRITE_LOCK:
+                        csrf_ep = save_endpoint(session_id=session_obj.id, url=base_ep_url, method=default_method)
+                        save_finding(
+                            session_id=session_obj.id,
+                            endpoint_id=csrf_ep.id,
+                            attack_type="CSRF",
+                            severity="Low",
+                            risk_score=0.0,
+                            finding_status="Informational",
+                            signature_triggered="POST form has no detected anti-CSRF token; exploitability not verified",
+                            recommendation="Verify Origin/Referer validation and use a framework CSRF token for state-changing forms.",
+                            request_payload="",
+                            response_status=baseline_req.get("status_code", 200),
+                            response_size=baseline_req.get("response_size", 0),
+                            response_time=baseline_req.get("response_time", 0.0)
+                        )
+                    logger.info("Recorded passive CSRF candidate without submitting state-changing form: %s", base_ep_url)
+                if baseline_is_frontend_shell:
+                    endpoint_queue = [item for item in active_test_queue if item.get("type") == "Baseline_Inspection"]
+                    logger.info("Skipping active payloads for frontend shell endpoint: %s", base_ep_url)
+                else:
+                    endpoint_queue = _select_test_queue(ep_info, active_test_queue)
+                prepared_requests = []
+                for test_item in endpoint_queue:
+                    path_suffix = test_item.get("path_suffix", "")
+                    if path_suffix:
+                        parsed_base = urlsplit(base_ep_url)
+                        origin = urlunsplit((parsed_base.scheme, parsed_base.netloc, "", "", ""))
+                        test_url = origin.rstrip("/") + path_suffix
                     else:
-                        json_payload = _bind_json_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
-                    headers = dict(custom_headers) if custom_headers else None
-                    if json_payload is not None and headers is None:
-                        headers = {"Content-Type": "application/json"}
-                    prepared_requests.append((test_item, test_url, test_method, payload_str, headers, query_params, form_data, json_payload))
+                        test_url = base_ep_url
 
-            def dispatch(prepared):
-                test_item, test_url, test_method, payload_str, custom_headers, query_params, form_data, json_payload = prepared
-                req_data = request_engine.send_request(
-                    test_method,
-                    test_url,
-                    payload=payload_str,
-                    custom_headers=custom_headers,
-                    json_payload=json_payload,
-                    query_params=query_params,
-                    form_data=form_data,
-                    follow_redirects=test_item.get("follow_redirects", True)
-                )
-                return (test_item, test_url, test_method, payload_str, custom_headers,
-                        query_params, form_data, json_payload, req_data)
+                    test_method = _resolve_test_method(ep_info, test_item, default_method)
+                    # Generic BOLA probe (D2 fix): swap the URL's ID segment for a
+                    # sibling object's URL and fetch it unauthenticated. No canary
+                    # flags are set on this path — without cross-identity
+                    # verification the signature layer grades this Suspected at
+                    # most; Confirmed stays canary-only.
+                    if test_item.get("type") == "BOLA_IDOR" and test_item.get("bola_id_mutation"):
+                        mutated_url = _mutate_id_path_segment(test_url)
+                        if mutated_url is None:
+                            logger.info("Skipping BOLA_IDOR probe: no ID segment in %s", test_url)
+                            continue
+                        prepared_requests.append(
+                            (test_item, mutated_url, test_method, "", None, None, None, None)
+                        )
+                        continue
+                    payload_str = test_item.get("payload", "")
+                    custom_headers = test_item.get("headers", None)
+                    fixed_json = test_item.get("json_payload")
+                    # Probe every injectable field (bounded), not just the first:
+                    # vulnerabilities often hide in the 2nd or 3rd parameter.
+                    targets = _probe_targets(ep_info, test_method, fixed_json is not None) or [None]
+                    for target_field in targets:
+                        query_params, form_data = _bind_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
+                        if fixed_json is not None:
+                            json_payload = fixed_json
+                        else:
+                            json_payload = _bind_json_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
+                        headers = dict(custom_headers) if custom_headers else None
+                        if json_payload is not None and headers is None:
+                            headers = {"Content-Type": "application/json"}
+                        prepared_requests.append((test_item, test_url, test_method, payload_str, headers, query_params, form_data, json_payload))
 
-            # Requests are bounded and concurrent, but all detection and SQLite writes
-            # remain sequential below so proof evaluation and persistence are deterministic.
-            # The dispatch budget caps the whole batch: one hung probe is dropped
-            # instead of wedging the scan on this endpoint forever.
-            dispatched_requests = _dispatch_bounded(
-                dispatch,
-                prepared_requests,
-                max_workers=min(ACTIVE_CONCURRENCY, max(1, len(prepared_requests))),
-                timeout=ENDPOINT_DISPATCH_TIMEOUT,
-            )
+                def dispatch(prepared):
+                    test_item, test_url, test_method, payload_str, custom_headers, query_params, form_data, json_payload = prepared
+                    # Global in-flight cap: however many endpoint/probe threads
+                    # are parked, at most MAX_IN_FLIGHT_REQUESTS HTTP requests
+                    # are live at once, so the scan never floods the target.
+                    with _IN_FLIGHT_SEMAPHORE:
+                        req_data = request_engine.send_request(
+                            test_method,
+                            test_url,
+                            payload=payload_str,
+                            custom_headers=custom_headers,
+                            json_payload=json_payload,
+                            query_params=query_params,
+                            form_data=form_data,
+                            follow_redirects=test_item.get("follow_redirects", True)
+                        )
+                    return (test_item, test_url, test_method, payload_str, custom_headers,
+                            query_params, form_data, json_payload, req_data)
 
-            for (test_item, test_url, test_method, payload_str, custom_headers,
-                 query_params, form_data, json_payload, req_data) in dispatched_requests:
-                current_size = req_data.get("response_size", 0)
-                current_status = req_data.get("status_code", 200)
-                response_body = req_data.get("response_body", "")
-                req_data["frontend_shell_response"] = _is_frontend_shell_response(test_url, req_data.get("response_headers", {}), response_body, payload_str) and bool(payload_str)
-
-                error_indicators = [
-                    "error", "sql", "syntax", "warning",
-                    "exception", "invalid", "undefined",
-                    "mysql", "ora-", "pg::", "sqlite", "traceback"
-                ]
-                has_error = any(ind in response_body.lower() for ind in error_indicators)
-
-                if (response_body == baseline_telemetry.get("response_body", "")
-                    and current_status == baseline_telemetry.get("status_code", 200)
-                    and current_size > 0
-                    and not has_error
-                    and test_item["type"] not in ["Baseline_Inspection"]):
-                    req_data["payload_had_effect"] = False
-                else:
-                    req_data["payload_had_effect"] = True
-
-                if test_item["type"] == "Baseline_Inspection":
-                    req_data["payload_had_effect"] = True
-
-                # The queue "type" drives selection and baseline logic; the
-                # signature layer sees attack_category, which a queue item may
-                # override (e.g. Command_Injection_Time -> Command_Injection).
-                req_data["attack_category"] = test_item.get("attack_category") or test_item.get("type")
-                req_data["cross_identity_probe"] = test_item.get("cross_identity_probe", False)
-                req_data["mass_assignment_probe"] = test_item.get("mass_assignment_probe", False)
-                # Pass the baseline so the ML layer can use response-differential
-                # features (how the probe's response deviates from baseline),
-                # not just absolute response features.
-                features = response_parser.extract_features(req_data, baseline_telemetry=baseline_telemetry)
-
-                # Layer 1 - Signature Detection & Proof Verification
-                sig_res = signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)
-
-                # Time-based proof margin (2026-10-15): a single slow response
-                # is not proof the delay payload executed. When the signature
-                # layer Confirms purely on a timing delay, re-probe identically
-                # and require the delay to reproduce before the finding stands.
-                if (sig_res.get("has_proof")
-                        and sig_res.get("finding_status") == "Confirmed"
-                        and "Time-based" in str(sig_res.get("proof_of_concept", ""))):
-                    sig_res = verify_time_based_proof(
-                        request_engine, signature_detector, test_item, test_method,
-                        test_url, payload_str, custom_headers, query_params,
-                        form_data, json_payload, req_data, baseline_telemetry)
-
-                # Layer 2 - ML Anomaly Detection (Isolation Forest)
-                ml_res = ml_detector.predict(features)
-
-                # Layer 3 - Deep Learning (PyTorch LSTM + Autoencoder)
-                dl_res = dl_detector.analyze(response_body, features, baseline_feature_dict=baseline_features)
-
-                # Risk Scoring Calculation
-                risk_summary = risk_scorer.calculate_risk(
-                    signature_result=sig_res,
-                    ml_result=ml_res,
-                    dl_result=dl_res,
-                    endpoint_url=test_url,
-                    http_method=test_method,
-                    payload_had_effect=req_data.get("payload_had_effect", True),
-                    telemetry_data=req_data
+                # Requests are bounded and concurrent; detection runs per
+                # endpoint in parallel, while DB writes are serialized by
+                # _DB_WRITE_LOCK so persistence stays deterministic.
+                # The dispatch budget caps the whole batch: one hung probe is dropped
+                # instead of wedging the scan on this endpoint forever.
+                dispatched_requests = _dispatch_bounded(
+                    dispatch,
+                    prepared_requests,
+                    max_workers=min(ACTIVE_CONCURRENCY, max(1, len(prepared_requests))),
+                    timeout=ENDPOINT_DISPATCH_TIMEOUT,
                 )
 
-                score = risk_summary["total_score"]
-                severity = risk_summary["severity"]
+                for (test_item, test_url, test_method, payload_str, custom_headers,
+                     query_params, form_data, json_payload, req_data) in dispatched_requests:
+                    current_size = req_data.get("response_size", 0)
+                    current_status = req_data.get("status_code", 200)
+                    response_body = req_data.get("response_body", "")
+                    req_data["frontend_shell_response"] = _is_frontend_shell_response(test_url, req_data.get("response_headers", {}), response_body, payload_str) and bool(payload_str)
 
-                # Print Console Breakdown
-                print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")
+                    error_indicators = [
+                        "error", "sql", "syntax", "warning",
+                        "exception", "invalid", "undefined",
+                        "mysql", "ora-", "pg::", "sqlite", "traceback"
+                    ]
+                    has_error = any(ind in response_body.lower() for ind in error_indicators)
 
-                # Persist Result to SQLite Database
-                ep_obj = save_endpoint(session_id=session_obj.id, url=test_url, method=test_method)
+                    if (response_body == baseline_telemetry.get("response_body", "")
+                        and current_status == baseline_telemetry.get("status_code", 200)
+                        and current_size > 0
+                        and not has_error
+                        and test_item["type"] not in ["Baseline_Inspection"]):
+                        req_data["payload_had_effect"] = False
+                    else:
+                        req_data["payload_had_effect"] = True
 
-                confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
-                attack_name = sig_res.get("attack_type", "None") if (confirmed or sig_res.get("matched") or sig_res.get("finding_status") == "Informational") else "None"
+                    if test_item["type"] == "Baseline_Inspection":
+                        req_data["payload_had_effect"] = True
 
-                # Persist non-zero triage signals for auditability, but only
-                # confirmed proof contributes to the vulnerability total.
-                if score > 0 or sig_res.get("matched"):
-                    save_finding(
-                        session_id=session_obj.id,
-                        endpoint_id=ep_obj.id,
-                        attack_type=attack_name,
-                        severity=severity,
-                        risk_score=score,
-                        finding_status=risk_summary.get("finding_status", "Informational"),
-                        signature_triggered=sig_res.get("proof_of_concept") or sig_res.get("pattern_matched", ""),
-                        ml_score=ml_res.get("points", 0.0),
-                        lstm_score=dl_res.get("lstm_points", 0.0),
-                        autoencoder_score=dl_res.get("autoencoder_points", 0.0),
-                        recommendation=risk_summary.get("recommendation", ""),
-                        request_payload=payload_str,
-                        response_status=req_data.get("status_code", 200),
-                        response_size=req_data.get("response_size", 0),
-                        response_time=req_data.get("response_time", 0.0)
+                    # The queue "type" drives selection and baseline logic; the
+                    # signature layer sees attack_category, which a queue item may
+                    # override (e.g. Command_Injection_Time -> Command_Injection).
+                    req_data["attack_category"] = test_item.get("attack_category") or test_item.get("type")
+                    req_data["cross_identity_probe"] = test_item.get("cross_identity_probe", False)
+                    req_data["mass_assignment_probe"] = test_item.get("mass_assignment_probe", False)
+                    # Pass the baseline so the ML layer can use response-differential
+                    # features (how the probe's response deviates from baseline),
+                    # not just absolute response features.
+                    features = response_parser.extract_features(req_data, baseline_telemetry=baseline_telemetry)
+
+                    # Layer 1 - Signature Detection & Proof Verification
+                    sig_res = signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)
+
+                    # Time-based proof margin (2026-10-15): a single slow response
+                    # is not proof the delay payload executed. When the signature
+                    # layer Confirms purely on a timing delay, re-probe identically
+                    # and require the delay to reproduce before the finding stands.
+                    if (sig_res.get("has_proof")
+                            and sig_res.get("finding_status") == "Confirmed"
+                            and "Time-based" in str(sig_res.get("proof_of_concept", ""))):
+                        sig_res = verify_time_based_proof(
+                            request_engine, signature_detector, test_item, test_method,
+                            test_url, payload_str, custom_headers, query_params,
+                            form_data, json_payload, req_data, baseline_telemetry)
+
+                    # Layer 2 - ML Anomaly Detection (Isolation Forest)
+                    ml_res = ml_detector.predict(features)
+
+                    # Layer 3 - Deep Learning (PyTorch LSTM + Autoencoder)
+                    dl_res = dl_detector.analyze(response_body, features, baseline_feature_dict=baseline_features)
+
+                    # Risk Scoring Calculation
+                    risk_summary = risk_scorer.calculate_risk(
+                        signature_result=sig_res,
+                        ml_result=ml_res,
+                        dl_result=dl_res,
+                        endpoint_url=test_url,
+                        http_method=test_method,
+                        payload_had_effect=req_data.get("payload_had_effect", True),
+                        telemetry_data=req_data
                     )
 
-            # Bump the live progress counter so the results page can show
-            # "endpoint X of Y — about Z left".
-            update_scan_progress(session_obj.id, done=idx)
+                    score = risk_summary["total_score"]
+                    severity = risk_summary["severity"]
 
+                    # Print Console Breakdown
+                    print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")
+
+                    # Persist Result to SQLite Database
+                    with _DB_WRITE_LOCK:
+                        ep_obj = save_endpoint(session_id=session_obj.id, url=test_url, method=test_method)
+
+                    confirmed = bool(risk_summary.get("is_vulnerable") or sig_res.get("is_vulnerable"))
+                    attack_name = sig_res.get("attack_type", "None") if (confirmed or sig_res.get("matched") or sig_res.get("finding_status") == "Informational") else "None"
+
+                    # Persist non-zero triage signals for auditability, but only
+                    # confirmed proof contributes to the vulnerability total.
+                    if score > 0 or sig_res.get("matched"):
+                        with _DB_WRITE_LOCK:
+                            save_finding(
+                                session_id=session_obj.id,
+                                endpoint_id=ep_obj.id,
+                                attack_type=attack_name,
+                                severity=severity,
+                                risk_score=score,
+                                finding_status=risk_summary.get("finding_status", "Informational"),
+                                signature_triggered=sig_res.get("proof_of_concept") or sig_res.get("pattern_matched", ""),
+                                ml_score=ml_res.get("points", 0.0),
+                                lstm_score=dl_res.get("lstm_points", 0.0),
+                                autoencoder_score=dl_res.get("autoencoder_points", 0.0),
+                                recommendation=risk_summary.get("recommendation", ""),
+                                request_payload=payload_str,
+                                response_status=req_data.get("status_code", 200),
+                                response_size=req_data.get("response_size", 0),
+                                response_time=req_data.get("response_time", 0.0)
+                            )
+
+        # Endpoints are independent (own baselines, probes, findings), so
+        # scan them concurrently instead of strictly one at a time — wall
+        # time used to be the sum of every endpoint's slowest probe batch.
+        # A fault in one endpoint is logged and skipped; it must not kill
+        # the whole scan. Progress counts completed endpoints, in
+        # completion order.
+        _progress_lock = threading.Lock()
+        _completed = {"count": 0}
+        
+        def _run_endpoint_guarded(idx_ep):
+            idx, ep_info = idx_ep
+            try:
+                _scan_one_endpoint(idx, ep_info)
+            except Exception as exc:  # one bad endpoint must not kill the scan
+                logger.error("Endpoint %s failed, continuing scan: %s", ep_info.get("url"), exc)
+            with _progress_lock:
+                _completed["count"] += 1
+                update_scan_progress(session_obj.id, done=_completed["count"])
+        
+        with ThreadPoolExecutor(
+            max_workers=min(ENDPOINT_CONCURRENCY, max(1, len(discovered_endpoints)))
+        ) as _endpoint_pool:
+            list(_endpoint_pool.map(_run_endpoint_guarded, enumerate(discovered_endpoints, start=1)))
         # Final risk roll-up ------------------------------------------------
         # The single scoring rule (dashboard/results_grouping.py): the stored
         # session numbers are computed from the saved findings exactly like
