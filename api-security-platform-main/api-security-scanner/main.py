@@ -23,6 +23,9 @@ from detection.risk_scorer import RiskScorer
 from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session, get_session_findings, get_session_for_user, set_session_total_endpoints
 from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
+from core.concurrency import (
+    BoundedSlot, SlotTimeout, run_bounded_pool, get_stop_event, release_stop_event,
+)
 from urllib.parse import urlsplit, urlunsplit
 
 ACTIVE_CONCURRENCY = max(1, int(os.getenv("ACTIVE_CONCURRENCY", "8")))
@@ -44,6 +47,22 @@ _DB_WRITE_LOCK = threading.Lock()
 # hang past the per-request timeout (e.g. DNS stalls aren't covered by it);
 # without this cap one wedged probe stalls the whole scan forever.
 ENDPOINT_DISPATCH_TIMEOUT = max(60, int(os.getenv("ENDPOINT_DISPATCH_TIMEOUT", "300")))
+# Max seconds a probe waits for a free in-flight slot. Without a bound, hung
+# probes that keep their permit (DNS stall, etc.) starve every other worker
+# forever. On timeout the probe is skipped with a logged reason.
+SLOT_ACQUIRE_TIMEOUT = max(5, int(os.getenv("SLOT_ACQUIRE_TIMEOUT", "60")))
+# Hard wall-clock budget for ONE endpoint (baselines + probe batch +
+# detection). An endpoint over budget is abandoned and reported, so it can
+# never block the final roll-up. Must exceed ENDPOINT_DISPATCH_TIMEOUT.
+ENDPOINT_WALL_BUDGET = max(
+    ENDPOINT_DISPATCH_TIMEOUT + 60,
+    int(os.getenv("ENDPOINT_WALL_BUDGET", "600")),
+)
+
+
+def _in_flight():
+    """Acquire a global in-flight request slot, or raise SlotTimeout."""
+    return BoundedSlot(_IN_FLIGHT_SEMAPHORE, SLOT_ACQUIRE_TIMEOUT)
 
 
 def _dispatch_bounded(dispatch, prepared_requests, max_workers, timeout):
@@ -789,7 +808,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 # When a time-based probe is queued, take a second baseline and
                 # use the faster of the two: a real delay must beat BOTH samples.
                 # Baselines share the global in-flight cap with probe traffic.
-                with _IN_FLIGHT_SEMAPHORE:
+                with _in_flight():
                     baseline_req = request_engine.send_request(default_method, base_ep_url)
                 _prelim_queue = _select_test_queue(ep_info, active_test_queue)
                 # Any time-based probe (SQL_Injection_Time, Command_Injection_Time,
@@ -798,7 +817,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     str(item.get("type", "")).endswith("_Time") for item in _prelim_queue
                 )
                 if needs_time_baseline:
-                    with _IN_FLIGHT_SEMAPHORE:
+                    with _in_flight():
                         second_baseline = request_engine.send_request(default_method, base_ep_url)
                     try:
                         if float(second_baseline.get("response_time", 0.0)) < float(baseline_req.get("response_time", 0.0)):
@@ -909,17 +928,24 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     # Global in-flight cap: however many endpoint/probe threads
                     # are parked, at most MAX_IN_FLIGHT_REQUESTS HTTP requests
                     # are live at once, so the scan never floods the target.
-                    with _IN_FLIGHT_SEMAPHORE:
-                        req_data = request_engine.send_request(
-                            test_method,
-                            test_url,
-                            payload=payload_str,
-                            custom_headers=custom_headers,
-                            json_payload=json_payload,
-                            query_params=query_params,
-                            form_data=form_data,
-                            follow_redirects=test_item.get("follow_redirects", True)
+                    try:
+                        with _in_flight():
+                            req_data = request_engine.send_request(
+                                test_method,
+                                test_url,
+                                payload=payload_str,
+                                custom_headers=custom_headers,
+                                json_payload=json_payload,
+                                query_params=query_params,
+                                form_data=form_data,
+                                follow_redirects=test_item.get("follow_redirects", True)
+                            )
+                    except SlotTimeout:
+                        logger.warning(
+                            "Probe skipped (no request slot after %ss): [%s] %s type=%s",
+                            SLOT_ACQUIRE_TIMEOUT, test_method, test_url, test_item.get("type"),
                         )
+                        return None
                     return (test_item, test_url, test_method, payload_str, custom_headers,
                             query_params, form_data, json_payload, req_data)
 
@@ -935,6 +961,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     timeout=ENDPOINT_DISPATCH_TIMEOUT,
                 )
 
+                dispatched_requests = [r for r in dispatched_requests if r is not None]
                 for (test_item, test_url, test_method, payload_str, custom_headers,
                      query_params, form_data, json_payload, req_data) in dispatched_requests:
                     current_size = req_data.get("response_size", 0)
@@ -1047,21 +1074,83 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
         # completion order.
         _progress_lock = threading.Lock()
         _completed = {"count": 0}
-        
+        _settled = set()          # endpoint idx values already counted
+        _skipped_endpoints = []   # (url, reason) - reported at the end
+        _total_endpoints = len(discovered_endpoints)
+        _stop_event = get_stop_event(session_obj.id)
+
+        def _count_endpoint_done(idx) -> bool:
+            """Count an endpoint once, whether it finished or was abandoned."""
+            with _progress_lock:
+                if idx in _settled:
+                    return False
+                _settled.add(idx)
+                _completed["count"] += 1
+                done = _completed["count"]
+            update_scan_progress(session_obj.id, done=done)
+            return True
+
         def _run_endpoint_guarded(idx_ep):
             idx, ep_info = idx_ep
+            url = ep_info.get("url")
+            started = time.monotonic()
+            logger.info("Endpoint %d/%d START [%s] %s", idx, _total_endpoints,
+                        ep_info.get("method"), url)
+            outcome = "ok"
             try:
+                if _stop_event.is_set():
+                    outcome = "skipped: scan stopped"
+                    return
                 _scan_one_endpoint(idx, ep_info)
+            except SlotTimeout as exc:
+                outcome = f"skipped: {exc}"
+                _skipped_endpoints.append((url, outcome))
             except Exception as exc:  # one bad endpoint must not kill the scan
-                logger.error("Endpoint %s failed, continuing scan: %s", ep_info.get("url"), exc)
-            with _progress_lock:
-                _completed["count"] += 1
-                update_scan_progress(session_obj.id, done=_completed["count"])
-        
-        with ThreadPoolExecutor(
-            max_workers=min(ENDPOINT_CONCURRENCY, max(1, len(discovered_endpoints)))
-        ) as _endpoint_pool:
-            list(_endpoint_pool.map(_run_endpoint_guarded, enumerate(discovered_endpoints, start=1)))
+                outcome = f"failed: {exc}"
+                logger.error("Endpoint %s failed, continuing scan: %s", url, exc)
+            finally:
+                logger.info("Endpoint %d/%d END   [%s] %s -> %s in %.1fs", idx,
+                            _total_endpoints, ep_info.get("method"), url, outcome,
+                            time.monotonic() - started)
+                _count_endpoint_done(idx)
+
+        def _on_endpoint_abandoned(idx_ep, elapsed):
+            idx, ep_info = idx_ep
+            reason = (f"abandoned after {elapsed:.0f}s "
+                      f"(budget {ENDPOINT_WALL_BUDGET}s)" if not _stop_event.is_set()
+                      else "abandoned: scan stopped")
+            logger.error("Endpoint %d/%d [%s] %s %s", idx, _total_endpoints,
+                         ep_info.get("method"), ep_info.get("url"), reason)
+            _skipped_endpoints.append((ep_info.get("url"), reason))
+            _count_endpoint_done(idx)
+
+        try:
+            _pool_result = run_bounded_pool(
+                list(enumerate(discovered_endpoints, start=1)),
+                _run_endpoint_guarded,
+                concurrency=min(ENDPOINT_CONCURRENCY, max(1, _total_endpoints)),
+                per_item_budget=ENDPOINT_WALL_BUDGET,
+                on_abandon=_on_endpoint_abandoned,
+                stop_event=_stop_event,
+            )
+        finally:
+            _was_stopped = _stop_event.is_set()
+            release_stop_event(session_obj.id)
+        if _was_stopped:
+            # Cancelled by the user or reaped by the watchdog: the session was
+            # already marked failed. Return without the roll-up so a stopped
+            # scan is never resurrected as "complete".
+            logger.warning("Scan %s was stopped; skipping final roll-up.", session_obj.id)
+            return session_obj.id if return_session_id else 0
+        if _skipped_endpoints:
+            logger.warning(
+                "Scan %s finished with %d skipped endpoint(s): %s",
+                session_obj.id, len(_skipped_endpoints),
+                "; ".join(f"{u} ({r})" for u, r in _skipped_endpoints),
+            )
+            print(f"\n[!] {len(_skipped_endpoints)} endpoint(s) were skipped - partial results finalized:")
+            for _u, _r in _skipped_endpoints:
+                print(f"    - {_u}: {_r}")
         # Final risk roll-up ------------------------------------------------
         # The single scoring rule (dashboard/results_grouping.py): the stored
         # session numbers are computed from the saved findings exactly like

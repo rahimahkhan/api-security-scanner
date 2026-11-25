@@ -45,6 +45,7 @@ from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
 from main import run_pipeline, validate_target_url
+from core.concurrency import request_stop
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -136,6 +137,7 @@ def reap_stale_scan(session_obj) -> bool:
     if datetime.utcnow() - heartbeat > timedelta(seconds=STALE_SCAN_AFTER_SECONDS):
         fail_scan_session(session_obj.id,
                           f"no worker heartbeat for >{STALE_SCAN_AFTER_SECONDS}s")
+        request_stop(session_obj.id)
         session_obj.status = "failed"
         session_obj.scan_end_time = datetime.utcnow()
         logger.warning(
@@ -151,6 +153,7 @@ def reap_stale_scan(session_obj) -> bool:
         if datetime.utcnow() - progress_ts > timedelta(seconds=PROGRESS_STALL_AFTER_SECONDS):
             fail_scan_session(session_obj.id,
                               f"no progress for >{PROGRESS_STALL_AFTER_SECONDS}s")
+            request_stop(session_obj.id)  # stop the wedged worker, not just the label
             session_obj.status = "failed"
             session_obj.scan_end_time = datetime.utcnow()
             logger.warning(
@@ -580,6 +583,7 @@ def cancel_scan(session_id):
     # works on the SQL backend (int ids) as well as Firestore (string ids).
     _cancelled_scans.add(str(session_id))
     fail_scan_session(session_id, "Cancelled by user")
+    request_stop(session_id)  # tell the worker to stop launching/continuing endpoints
     return redirect(url_for("dashboard.results", session_id=session_id))
 
 @dashboard_bp.route("/results/<session_id>")
