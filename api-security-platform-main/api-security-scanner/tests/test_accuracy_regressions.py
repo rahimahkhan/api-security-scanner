@@ -1021,7 +1021,13 @@ def test_bola_probe_selected_on_id_bearing_path():
     from main import _select_test_queue
     selected = _select_test_queue(
         {"url": "https://example.test/api/users/123", "method": "GET"}, _d2_queue())
-    assert [item["type"] for item in selected] == ["BOLA_IDOR", "Baseline_Inspection"]
+    # BOLA first, then the generic injection set: path parameters are user
+    # input too, so object routes get injection probes as well (VAmPI's
+    # /users/v1/{username} SQLi was missed when only BOLA was selected).
+    assert [item["type"] for item in selected] == [
+        "BOLA_IDOR", "SQL_Injection_GET", "Cross_Site_Scripting",
+        "Command_Injection", "Baseline_Inspection",
+    ]
 
 
 def test_mass_assignment_selected_on_register_path_not_on_accounts():
@@ -1029,10 +1035,14 @@ def test_mass_assignment_selected_on_register_path_not_on_accounts():
     selected = _select_test_queue(
         {"url": "https://example.test/api/register", "method": "POST"}, _d2_queue())
     assert [item["type"] for item in selected] == ["Mass_Assignment", "Baseline_Inspection"]
-    # The "/account" boundary must not swallow "/accounts/<id>" — that stays BOLA.
+    # The "/account" boundary must not swallow "/accounts/<id>" — that stays BOLA,
+    # plus the generic injection set for its path parameter.
     selected_accounts = _select_test_queue(
         {"url": "https://example.test/api/accounts/7", "method": "GET"}, _d2_queue())
-    assert [item["type"] for item in selected_accounts] == ["BOLA_IDOR", "Baseline_Inspection"]
+    assert [item["type"] for item in selected_accounts] == [
+        "BOLA_IDOR", "SQL_Injection_GET", "Cross_Site_Scripting",
+        "Command_Injection", "Baseline_Inspection",
+    ]
 
 
 def test_mutate_id_path_segment():

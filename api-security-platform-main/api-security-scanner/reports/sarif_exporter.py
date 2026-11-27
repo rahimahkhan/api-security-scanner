@@ -125,6 +125,7 @@ def build_sarif_document(
                     "overall_severity": session_data.get("overall_severity", "Low"),
                     "total_endpoints_found": session_data.get("total_endpoints_found", 0),
                     "total_vulnerabilities_found": session_data.get("total_vulnerabilities_found", 0),
+                    "skipped_endpoints": session_data.get("skipped_endpoints", []),
                 },
             }
         ],

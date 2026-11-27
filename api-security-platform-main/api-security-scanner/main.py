@@ -21,6 +21,7 @@ from detection.ml_model import MLAnomalyDetector
 from detection.deep_learning import DeepLearningDetector
 from detection.risk_scorer import RiskScorer
 from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session, get_session_findings, get_session_for_user, set_session_total_endpoints
+from database.models import parse_skipped_endpoints
 from dashboard.results_grouping import summarize_findings
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from core.concurrency import (
@@ -46,7 +47,12 @@ _DB_WRITE_LOCK = threading.Lock()
 # Total budget for one endpoint's concurrent probe batch. A single probe can
 # hang past the per-request timeout (e.g. DNS stalls aren't covered by it);
 # without this cap one wedged probe stalls the whole scan forever.
-ENDPOINT_DISPATCH_TIMEOUT = max(60, int(os.getenv("ENDPOINT_DISPATCH_TIMEOUT", "300")))
+# Default 120s from evidence, not a guess: the slowest legitimate endpoint
+# in the Nov 25 replica log took 12.5s end-to-end (a time-based SQLi endpoint
+# with real SLEEP probes + re-probes); live DVWA endpoints averaged ~59s of
+# worker time (Nov 27 runs). The only endpoint ever needing more was a
+# wedged one that ate the full old budget twice.
+ENDPOINT_DISPATCH_TIMEOUT = max(60, int(os.getenv("ENDPOINT_DISPATCH_TIMEOUT", "120")))
 # Max seconds a probe waits for a free in-flight slot. Without a bound, hung
 # probes that keep their permit (DNS stall, etc.) starve every other worker
 # forever. On timeout the probe is skipped with a logged reason.
@@ -54,9 +60,12 @@ SLOT_ACQUIRE_TIMEOUT = max(5, int(os.getenv("SLOT_ACQUIRE_TIMEOUT", "60")))
 # Hard wall-clock budget for ONE endpoint (baselines + probe batch +
 # detection). An endpoint over budget is abandoned and reported, so it can
 # never block the final roll-up. Must exceed ENDPOINT_DISPATCH_TIMEOUT.
+# Default 180s = dispatch budget + 60s margin; saves ~7 min per wedged
+# endpoint vs the old 600s while keeping a 3x margin over the slowest
+# legitimate live endpoint observed.
 ENDPOINT_WALL_BUDGET = max(
     ENDPOINT_DISPATCH_TIMEOUT + 60,
-    int(os.getenv("ENDPOINT_WALL_BUDGET", "600")),
+    int(os.getenv("ENDPOINT_WALL_BUDGET", "180")),
 )
 
 
@@ -199,6 +208,46 @@ _UUID_ID_SEGMENT_RE = re.compile(
 )
 
 
+def _append_payload_to_path_segment(url: str, payload: str) -> Optional[str]:
+    """Return a copy of the URL with the payload appended to the last path segment.
+
+    Generic path-parameter probing: REST routes like /users/{id} carry user
+    input in the path, not in a query/form field, so a payload bound to a
+    query parameter never reaches the sink. Appending the payload to the
+    last segment (e.g. /users/v1/name1 -> /users/v1/name1') tests the sink
+    directly. Returns None when there is no value-like last segment
+    (trailing slash, empty path, or a filename-like segment).
+    """
+    if not payload:
+        return None
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    if parts.path.endswith("/"):
+        # Trailing slash: the last segment is a collection/resource, not
+        # a value — appending to it would probe the wrong thing.
+        return None
+    segments = [seg for seg in parts.path.split("/") if seg]
+    if not segments:
+        return None
+    last = segments[-1]
+    if "." in last and not last.startswith("."):
+        # Looks like a filename (api.json, index.html) — not a path param.
+        return None
+    segments[-1] = last + payload
+    return urlunsplit((parts.scheme, parts.netloc, "/" + "/".join(segments),
+                       parts.query, parts.fragment))
+
+
+# Injection probe types that also get a path-segment variant when the
+# endpoint has no query/form/json field to bind to (see _scan_one_endpoint).
+_PATH_INJECTION_TYPES = {
+    "SQL_Injection_GET", "SQL_Injection_Error",
+    "Cross_Site_Scripting", "Command_Injection",
+}
+
+
 def _mutate_id_path_segment(url: str) -> Optional[str]:
     """Return a copy of the URL with the first ID-like path segment swapped
     for a sibling ID (numeric 123 -> 124, UUID -> last nibble flipped).
@@ -259,6 +308,16 @@ def _endpoint_priority(ep: Dict[str, Any]) -> int:
     return score
 
 
+# Last path segments that mark a database seed/setup endpoint. These rewrite
+# shared state on every call, so they get baseline-only treatment (see
+# _select_test_queue): active probes would race the seed and the resulting
+# database errors would masquerade as injection evidence.
+_SEED_ENDPOINT_SEGMENTS = {
+    "createdb", "seed", "seed-db", "reset-db", "init-db",
+    "populate", "migrate", "truncate",
+}
+
+
 def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str, Any]]):
     """Select a bounded, non-destructive probe set for an endpoint/module."""
     path = urlsplit(ep_info.get("url", "")).path.lower()
@@ -268,6 +327,14 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
 
     if "graphql" in path or "graphiql" in path:
         selected = [by_type["GraphQL_Introspection"]]
+    elif path.rsplit("/", 1)[-1] in _SEED_ENDPOINT_SEGMENTS:
+        # Baseline only. A seed/setup endpoint (createdb, seed, migrate,
+        # ...) REWRITES the database on every call: active probes hit it
+        # concurrently, race the seed, and the resulting error (a database
+        # lock or duplicate-key traceback) looks like injection evidence
+        # even though the payload caused nothing. Probing it is both unsafe
+        # (it mutates shared state) and noisy, so observe it, don't attack it.
+        selected = [by_type["Baseline_Inspection"]]
     elif "application/xml" in content_types or "text/xml" in content_types or "xml" in path or "xxe" in path:
         selected = [by_type["XXE"]]
     elif _is_csrf_candidate(ep_info):
@@ -293,7 +360,20 @@ def _select_test_queue(ep_info: Dict[str, Any], active_test_queue: List[Dict[str
         selected = [by_type.get("Mass_Assignment", by_type["Baseline_Inspection"])]
     elif any(token in path for token in ("/users/", "/accounts/", "/profiles/")):
         bola_items = [item for item in active_test_queue if item.get("type") == "BOLA_IDOR"]
-        selected = bola_items[:2] if bola_items else [by_type["Baseline_Inspection"]]
+        selected = bola_items[:2] if bola_items else []
+        # Path parameters are user input too: an object route can hide an
+        # injection sink in the path itself (VAmPI's /users/v1/{username}
+        # SQLi was missed entirely because these routes got BOLA probes
+        # only). Append the generic injection set so object routes get
+        # injection coverage, not just BOLA. The probes bind to the path
+        # segment (see _append_payload_to_path_segment) when the endpoint
+        # has no query/form fields to bind to.
+        for inj_type in ("SQL_Injection_GET", "SQL_Injection_Error",
+                         "Cross_Site_Scripting", "Command_Injection"):
+            if inj_type in by_type:
+                selected.append(by_type[inj_type])
+        if not selected:
+            selected = [by_type["Baseline_Inspection"]]
     elif "exec" in path:
         selected = [by_type["Command_Injection"]]
         if "Command_Injection_Time" in by_type:
@@ -912,6 +992,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     # Probe every injectable field (bounded), not just the first:
                     # vulnerabilities often hide in the 2nd or 3rd parameter.
                     targets = _probe_targets(ep_info, test_method, fixed_json is not None) or [None]
+                    bound_any = False
                     for target_field in targets:
                         query_params, form_data = _bind_payload_to_endpoint(ep_info, test_method, payload_str, target_field)
                         if fixed_json is not None:
@@ -921,7 +1002,28 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                         headers = dict(custom_headers) if custom_headers else None
                         if json_payload is not None and headers is None:
                             headers = {"Content-Type": "application/json"}
+                        if query_params is not None or form_data is not None or json_payload is not None:
+                            bound_any = True
                         prepared_requests.append((test_item, test_url, test_method, payload_str, headers, query_params, form_data, json_payload))
+                    # Path-parameter variant: when the endpoint has no field
+                    # to bind the payload to, the standard request carries
+                    # it as a query parameter — which never reaches a sink
+                    # that interpolates the PATH segment (VAmPI's
+                    # /users/v1/{username} SQLi). Also send the payload
+                    # appended to the last path segment, so path-param sinks
+                    # get tested on every route, not just object routes.
+                    # SAFETY: GET only. A path-appended payload must never
+                    # be sent with a state-changing method — DELETE (or
+                    # POST/PUT/PATCH) with a mutated path segment could
+                    # change or delete real data. (Endpoints WITH fields
+                    # keep field binding only; a field-plus-path-param
+                    # combo is not covered yet.)
+                    if (not bound_any and test_item.get("type") in _PATH_INJECTION_TYPES
+                            and test_method == "GET"):
+                        path_url = _append_payload_to_path_segment(test_url, payload_str)
+                        if path_url and path_url != test_url:
+                            headers = dict(custom_headers) if custom_headers else None
+                            prepared_requests.append((test_item, path_url, test_method, payload_str, headers, None, None, None))
 
                 def dispatch(prepared):
                     test_item, test_url, test_method, payload_str, custom_headers, query_params, form_data, json_payload = prepared
@@ -1170,7 +1272,11 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
             session_id=session_obj.id,
             overall_risk_score=summary["risk_score"],
             overall_severity=summary["severity"],
-            total_vulnerabilities=summary["vulnerabilities"]
+            total_vulnerabilities=summary["vulnerabilities"],
+            # Persist the abandoned endpoints on the session: a completed
+            # scan with skips is partial coverage, and the UI/report must
+            # say so instead of showing a bare "COMPLETE 50/50".
+            skipped_endpoints=[{"url": u, "reason": r} for u, r in _skipped_endpoints],
         )
 
         if sarif_output:
@@ -1184,6 +1290,8 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                 "overall_severity": persisted_session.overall_severity,
                 "total_endpoints_found": persisted_session.total_endpoints_found,
                 "total_vulnerabilities_found": persisted_session.total_vulnerabilities_found,
+                "skipped_endpoints": parse_skipped_endpoints(
+                    getattr(persisted_session, "skipped_endpoints", None)),
             }
             findings_data = [
                 {

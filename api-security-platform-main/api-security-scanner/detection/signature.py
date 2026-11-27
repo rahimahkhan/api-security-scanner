@@ -119,7 +119,28 @@ class SignatureDetector:
         r"(?i)PostgreSQL.*ERROR",
         r"(?i)PG::SyntaxError",
         r"(?i)Microsoft OLE DB Provider for SQL Server",
-        r"(?i)unclosed quotation mark after the character string"
+        r"(?i)unclosed quotation mark after the character string",
+        # Generic driver-level error text, across ecosystems (Manus,
+        # 2026-11-27): the old list needed exact words like
+        # "SQLAlchemyError", but real Python tracebacks say
+        # "sqlalchemy.exc.OperationalError" and "sqlite3.OperationalError ...
+        # unrecognized token", which matched nothing — a real SQL error in
+        # the response was invisible to the detector. All of these are
+        # still baseline-gated (AUDIT-1): they only count when NEW in the
+        # probe response, so a page that always shows such text is not proof.
+        # Scoping note: the SQLAlchemy class is enumerated, NOT \w+ —
+        # IntegrityError (a constraint violation, e.g. a duplicate seed
+        # from the scan's own concurrent requests to a /createdb endpoint)
+        # is a state error, not injection evidence, and must not Confirm.
+        r"(?i)sqlalchemy\.exc\.(Operational|Programming|Data|Database|Interface)Error",
+        r"(?i)sqlite3\.(Operational|Programming)Error",
+        r"(?i)unrecognized token",
+        r"(?i)near \".*\": syntax error",
+        r"(?i)psycopg2\.\w*Error",
+        r"(?i)pymysql\.err\.\w+",
+        r"(?i)java\.sql\.SQLException",
+        r"(?i)SQLSTATE\[",
+        r"(?i)quoted string not properly terminated"
     ]
 
     CMD_OUTPUT_PATTERNS = [

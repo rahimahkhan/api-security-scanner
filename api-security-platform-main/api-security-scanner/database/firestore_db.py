@@ -326,17 +326,22 @@ def get_finding_by_id(finding_id):
 
 
 def complete_scan_session(session_id, overall_risk_score: float,
-                          overall_severity: str, total_vulnerabilities: int):
+                          overall_severity: str, total_vulnerabilities: int,
+                          skipped_endpoints=None):
     doc_ref = _fs().collection("scan_sessions").document(str(session_id))
     if not doc_ref.get().exists:
         return None
-    doc_ref.update({
+    updates = {
         "overall_risk_score": overall_risk_score,
         "overall_severity": overall_severity,
         "total_vulnerabilities_found": total_vulnerabilities,
         "scan_end_time": _now(),
         "status": "complete",
-    })
+    }
+    if skipped_endpoints is not None:
+        from database.models import normalize_skipped_endpoints
+        updates["skipped_endpoints"] = normalize_skipped_endpoints(skipped_endpoints)
+    doc_ref.update(updates)
     return _doc_to_ns(doc_ref.get())
 
 

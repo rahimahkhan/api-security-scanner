@@ -108,6 +108,18 @@
 </div>
 {% endif %}
 
+{% if session_data.status == "complete" and skipped_endpoints %}
+<div class="card scan-skipped-banner">
+    <h3>Completed, {{ skipped_endpoints|length }} endpoint(s) skipped</h3>
+    <p>These endpoints were abandoned (per-endpoint time budget or stop) and were not fully tested &mdash; coverage is partial, not complete.</p>
+    <ul>
+    {% for skipped in skipped_endpoints %}
+        <li><code>{{ skipped.url }}</code> &mdash; {{ skipped.reason }}</li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
 <div class="summary-strip">
     <div class="summary-card">
         <div class="k"><span class="label-full">Endpoints scanned</span><span class="label-short">Scanned</span></div>

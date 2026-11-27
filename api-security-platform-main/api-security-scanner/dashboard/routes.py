@@ -25,6 +25,7 @@ from database.db import (
     get_user_by_username, get_user_by_firebase_uid,
     get_or_create_firebase_user, update_user_name,
 )
+from database.models import parse_skipped_endpoints
 from dashboard.auth_validators import (
     validate_signup_email, password_strength_error, EMAIL_RE)
 from dashboard.firebase_auth import (
@@ -631,6 +632,7 @@ def results(session_id):
     return render_template(
         "results.html",
         session_data=session_data,
+        skipped_endpoints=parse_skipped_endpoints(getattr(session_data, "skipped_endpoints", None)),
         findings=findings,
         severity_counts=severity_counts,
         attack_counts=attack_counts,
@@ -711,7 +713,8 @@ def export_report(session_id):
         "overall_risk_score": session_obj.overall_risk_score,
         "overall_severity": session_obj.overall_severity,
         "total_endpoints_found": session_obj.total_endpoints_found,
-        "total_vulnerabilities_found": session_obj.total_vulnerabilities_found
+        "total_vulnerabilities_found": session_obj.total_vulnerabilities_found,
+        "skipped_endpoints": parse_skipped_endpoints(getattr(session_obj, "skipped_endpoints", None))
     }
 
     endpoints_list = [{"url": ep.url, "method": ep.method} for ep in session_obj.endpoints]
@@ -1155,7 +1158,8 @@ def api_get_session(session_id):
             "progress_done": int(session_obj.progress_done or 0),
             "progress_total": int(session_obj.progress_total or 0),
             "progress_stage": session_obj.progress_stage or "",
-            "progress_eta": format_scan_eta(session_obj)
+            "progress_eta": format_scan_eta(session_obj),
+            "skipped_endpoints": parse_skipped_endpoints(getattr(session_obj, "skipped_endpoints", None))
         },
         "endpoints": endpoints_data,
         "findings": findings_data

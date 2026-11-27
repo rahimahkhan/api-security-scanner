@@ -109,3 +109,62 @@ def test_passive_exposure_confirms_even_with_identical_baseline(det):
     assert r["attack_type"] == "Sensitive_Data_Exposure"
     assert r["finding_status"] == "Confirmed"
     assert r["points"] == 35
+
+
+def test_real_sqlalchemy_traceback_confirms_but_not_from_baseline(det):
+    """Layer 1 gap (Manus, 2026-11-27): VAmPI's SQLi returns a full
+    SQLAlchemy traceback, but the detector only graded it Suspected — the
+    old SQL patterns needed the exact word 'SQLAlchemyError', while real
+    text is 'sqlalchemy.exc.OperationalError' / 'sqlite3.OperationalError
+    ... unrecognized token'. With generic driver patterns, real error text
+    Confirms; the same text already in the baseline is still not proof
+    (AUDIT-1)."""
+    traceback = (
+        "Traceback (most recent call last):\n"
+        "  File \"sqlalchemy/engine/base.py\", line 1964, in _exec_single_context\n"
+        "sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) "
+        "unrecognized token: \"'\"\n"
+        "[SQL: SELECT * FROM users WHERE username = ''']\n"
+        "(Background on this error at: https://sqlalche.me/e/20/e3q8)"
+    )
+    probe = dict(url="http://t/users/v1/name1'", payload="'",
+                 attack_category="SQL_Injection", status_code=500,
+                 response_size=len(traceback), response_headers=JSON,
+                 response_body=traceback)
+    healthy = _base("http://t/users/v1/name1",
+                    '{"username": "name1", "email": "n@example.com"}')
+    r = det.analyze(probe, healthy)
+    assert r["attack_type"] == "SQL_Injection"
+    assert r["finding_status"] == "Confirmed"
+    # Same traceback already in the baseline: the error text is not
+    # probe-caused, so it must not Confirm as SQLi. (It may still Confirm
+    # as Verbose_Error_Exposure — a traceback on every request IS passive
+    # exposure — but that is a different claim from SQL injection proof.)
+    r2 = det.analyze(probe, _base("http://t/users/v1/name1", traceback, status=500))
+    assert not (r2["attack_type"] == "SQL_Injection"
+                and r2["finding_status"] == "Confirmed")
+
+
+def test_integrity_error_is_not_sql_injection_proof(det):
+    """Scoping guard for the generic driver patterns (2026-11-27): a
+    SQLAlchemy IntegrityError is a constraint violation, not injection
+    evidence. VAmPI's /createdb returns one when the scan's own concurrent
+    requests race the seed — the error is self-inflicted state, and it must
+    not Confirm as SQLi. (It may still grade Suspected via the 5xx
+    differential, which is the honest grade for 'it errored, unproven'.)"""
+    traceback = (
+        "Traceback (most recent call last):\n"
+        "sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) "
+        "UNIQUE constraint failed: books.book_title\n"
+        "[SQL: INSERT INTO books (book_title, secret_content, user_id) "
+        "VALUES (?, ?, ?)]\n"
+        "[parameters: ('bookTitle85', 'secret for bookTitle85', 2)]"
+    )
+    probe = dict(url="http://t/createdb", payload="'",
+                 attack_category="SQL_Injection", status_code=500,
+                 response_size=len(traceback), response_headers=JSON,
+                 response_body=traceback)
+    healthy = _base("http://t/createdb", '{"message": "Database populated."}')
+    r = det.analyze(probe, healthy)
+    assert not (r["attack_type"] == "SQL_Injection"
+                and r["finding_status"] == "Confirmed")

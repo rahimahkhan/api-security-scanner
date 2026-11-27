@@ -1,9 +1,58 @@
+import json
 import os
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
+
+
+def parse_skipped_endpoints(value):
+    """Normalize the stored skipped-endpoints value to a list of dicts.
+
+    The SQL backend stores JSON text, Firestore stores a native list, and
+    old rows have neither (None). Returns [] for anything unparseable.
+    """
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [item for item in value
+                if isinstance(item, dict) and item.get("url")]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return []
+        if isinstance(parsed, list):
+            return [item for item in parsed
+                    if isinstance(item, dict) and item.get("url")]
+    return []
+
+
+def normalize_skipped_endpoints(skipped):
+    """Normalize skipped endpoints to [{"url": ..., "reason": ...}].
+
+    Accepts (url, reason) tuples (the pipeline's in-memory form) or dicts
+    (already-normalized), and drops anything without a URL.
+    """
+    items = []
+    for entry in (skipped or []):
+        if isinstance(entry, dict):
+            url, reason = entry.get("url"), entry.get("reason", "")
+        else:
+            try:
+                url, reason = entry
+            except (TypeError, ValueError):
+                continue
+        if url:
+            items.append({"url": str(url), "reason": str(reason or "")})
+    return items
+
+
+def dump_skipped_endpoints(skipped):
+    """Serialize skipped endpoints for the SQL Text column (JSON text)."""
+    items = normalize_skipped_endpoints(skipped)
+    return json.dumps(items) if items else None
 
 class ScanSession(Base):
     __tablename__ = "scan_sessions"
@@ -35,6 +84,11 @@ class ScanSession(Base):
     # worker is stuck and the scan is reaped as failed instead of hanging
     # on "Scan in progress..." forever.
     progress_updated_at = Column(DateTime, nullable=True)
+    # Endpoints abandoned mid-scan (per-endpoint wall-clock budget or stop),
+    # stored as JSON [{"url": ..., "reason": ...}]. A completed scan with
+    # entries here is partial coverage, not full coverage — the UI and
+    # reports say so instead of showing a bare "COMPLETE 50/50".
+    skipped_endpoints = Column(Text, nullable=True)
 
     endpoints = relationship("Endpoint", back_populates="session", cascade="all, delete-orphan")
     findings = relationship("Finding", back_populates="session", cascade="all, delete-orphan")

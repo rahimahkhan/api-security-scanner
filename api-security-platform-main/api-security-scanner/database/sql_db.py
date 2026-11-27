@@ -96,6 +96,14 @@ def init_db():
                 conn.execute(text("UPDATE scan_sessions SET progress_updated_at = updated_at WHERE progress_updated_at IS NULL"))
                 conn.commit()
                 logger.info("Migrated scan_sessions table: added progress_updated_at column.")
+            # Skipped endpoints (abandoned mid-scan): JSON list, shown in the
+            # UI/report so a completed scan with skips is honest about coverage.
+            result = conn.execute(text("PRAGMA table_info(scan_sessions)"))
+            columns = [row[1] for row in result.fetchall()]
+            if columns and "skipped_endpoints" not in columns:
+                conn.execute(text("ALTER TABLE scan_sessions ADD COLUMN skipped_endpoints TEXT"))
+                conn.commit()
+                logger.info("Migrated scan_sessions table: added skipped_endpoints column.")
             # Email + Google OAuth columns for dashboard accounts.
             result = conn.execute(text("PRAGMA table_info(users)"))
             columns = [row[1] for row in result.fetchall()]
@@ -372,7 +380,8 @@ def complete_scan_session(
     session_id: int,
     overall_risk_score: float,
     overall_severity: str,
-    total_vulnerabilities: int
+    total_vulnerabilities: int,
+    skipped_endpoints=None
 ) -> Optional[ScanSession]:
     db = SessionLocal()
     try:
@@ -383,6 +392,9 @@ def complete_scan_session(
             session_obj.total_vulnerabilities_found = total_vulnerabilities
             session_obj.scan_end_time = datetime.utcnow()
             session_obj.status = "complete"
+            if skipped_endpoints is not None:
+                from database.models import dump_skipped_endpoints
+                session_obj.skipped_endpoints = dump_skipped_endpoints(skipped_endpoints)
             db.commit()
             db.refresh(session_obj)
             return session_obj
