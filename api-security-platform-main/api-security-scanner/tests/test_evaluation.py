@@ -84,3 +84,55 @@ def test_missing_input_is_not_replaced_with_fake_numbers(tmp_path):
     with pytest.raises(FileNotFoundError):
         score(str(tmp_path / "missing-gt.yaml"),
               _write(tmp_path, "findings.txt", ""))
+
+
+# --- label_dataset.py -------------------------------------------------------
+GT_LABEL = """
+items:
+  - id: T-01
+    template: /users/v1/{username}
+    parameter: username
+    category: SQL_Injection
+    modes: [vulnerable]
+    date: "2026-11-27"
+  - id: T-02
+    template: /users/v1/_debug
+    parameter: ""
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable, secure]
+    date: "2026-11-27"
+"""
+
+
+def _rec(url, parameter, probe_type, mode):
+    return {"endpoint_url": url, "parameter": parameter,
+            "probe_type": probe_type, "mode": mode,
+            "finding": {"attack_type": None}}
+
+
+def test_labeler_joins_to_ground_truth_not_the_scanner_verdict(tmp_path):
+    """The label comes from the ground-truth join, never from the
+    scanner's verdict: a path-appended SQLi probe on a real sink is
+    positive; the same probe in secure mode is negative (the item is
+    mode-scoped); a probe on a clean endpoint is negative."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                           / "evaluation"))
+    from label_dataset import label
+
+    gt = _write(tmp_path, "gt.yaml", GT_LABEL)
+    records = [
+        _rec("http://127.0.0.1:5000/users/v1/name1'", "path",
+             "SQL_Injection_Error", "vulnerable"),
+        _rec("http://127.0.0.1:5000/users/v1/name1'", "path",
+             "SQL_Injection_Error", "secure"),
+        _rec("http://127.0.0.1:5000/users/v1/_debug", "",
+             "Sensitive_Data_Exposure", "secure"),
+        _rec("http://127.0.0.1:5000/users/v1/other", "path",
+             "XSS", "vulnerable"),
+    ]
+    labeled, stats = label(records, gt)
+    assert [r["label"] for r in labeled] == [1, 0, 1, 0]
+    assert labeled[0]["matched_item"] == "T-01"
+    assert labeled[2]["matched_item"] == "T-02"
+    assert stats["positive"] == 2 and stats["negative"] == 2

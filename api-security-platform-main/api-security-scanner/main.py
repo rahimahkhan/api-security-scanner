@@ -566,21 +566,90 @@ def _balanced_quote_control(payload):
     return "''"
 
 
-# --- Dataset logging (2026-11-27) -------------------------------------------
+# --- Dataset logging (2026-11-27, fixed 2026-11-27) ------------------------
 # When DATASET_LOG_DIR is set, every dispatched (baseline, probe) response
 # pair is appended as one JSON line to dataset-session-<id>.jsonl in that
-# directory. That file IS the dataset record the ML work is trained on:
-# raw bodies for the response-body LSTM, the 17-feature dict for the
-# tabular models, and a label from the proof-based rule in
-# ml_pipeline/telemetry_schema (a row is "confirmed" only with proof,
-# never from payload text). Off by default; logging never breaks a scan.
+# directory. That file IS the dataset record the ML work is trained on.
+#
+# DESIGN (corrected 2026-11-27): the log carries NO training label. A label
+# taken from the scanner's own verdict would be circular — a model trained
+# to predict "Confirmed" just copies the signature layer and learns nothing
+# about the Suspected cases, which are the ones that need ranking. Instead
+# the log carries the fields needed to JOIN to ground truth offline
+# (target app, run id, mode, endpoint template, parameter, probe type),
+# and the labeling script (evaluation/label_dataset.py) fills the label
+# from the ground-truth YAML. The scanner's verdict is stored as a
+# separate feature column (scanner_label), never as the label.
+#
+# Features: the logged dict is the live extractor's output — the 15
+# differential keys the tabular models consume (ml_pipeline/feature_extractor
+# FEATURE_KEYS). The autoencoder's 17 raw features are NOT in that dict;
+# they are recomputed offline from the raw bodies, which is why the raw
+# logs matter. (An earlier comment wrongly said "17-feature dict".)
+#
+# SECRETS: raw responses can contain secrets (VAmPI returns plaintext
+# passwords). Logs are gitignored (dataset-logs/, dataset-session-*.jsonl)
+# and must never be committed. Never log a real third-party target without
+# consent, and never log a held-out app (Juice Shop, crAPI) — the guard
+# below refuses those targets outright.
 _DATASET_LOG_LOCK = threading.Lock()
 _DATASET_BODY_CAP = 100_000
+_DATASET_HELD_OUT = tuple(
+    p.strip().lower()
+    for p in os.getenv("DATASET_HELD_OUT", "juice-shop,crapi").split(",")
+    if p.strip()
+)
 
 
-def _dataset_log_path(session_id):
+def _dataset_target_app(target_url):
+    """Explicit DATASET_TARGET_APP, else the target hostname."""
+    app = os.getenv("DATASET_TARGET_APP", "").strip()
+    if app:
+        return app
+    try:
+        return urlsplit(target_url).netloc or target_url
+    except Exception:
+        return target_url
+
+
+def _normalize_template(url):
+    """Best-effort endpoint template: value-like path segments -> {param}.
+
+    Numeric segments, UUIDs and long hex strings are values, not routes.
+    The labeling script matches the raw endpoint_url against the
+    ground-truth templates too, so this field is a join convenience, not
+    the only key.
+    """
+    try:
+        path = urlsplit(url).path
+    except Exception:
+        return url
+    out = []
+    for seg in path.split("/"):
+        if not seg:
+            out.append(seg)
+        elif seg.isdigit():
+            out.append("{param}")
+        elif re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", seg, re.I):
+            out.append("{param}")
+        elif re.fullmatch(r"[0-9a-f]{16,}", seg, re.I):
+            out.append("{param}")
+        else:
+            out.append(seg)
+    return "/".join(out)
+
+
+def _dataset_log_path(session_id, target_url):
     directory = os.getenv("DATASET_LOG_DIR", "")
     if not directory:
+        return None
+    # The guard keys on both the URL and the declared app name: a local
+    # Juice Shop runs on 127.0.0.1:3000, which carries no marker in the URL.
+    lowered = ((target_url or "") + " " + _dataset_target_app(target_url)).lower()
+    if any(p in lowered for p in _DATASET_HELD_OUT):
+        logger.warning(
+            "Dataset logging refused for a held-out target (%s): "
+            "held-out apps are never training data.", target_url)
         return None
     os.makedirs(directory, exist_ok=True)
     return os.path.join(directory, f"dataset-session-{session_id}.jsonl")
@@ -595,14 +664,17 @@ def _cap_body(body):
 
 def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
                      payload_str, baseline_telemetry, req_data, features,
-                     sig_res, risk_summary):
+                     sig_res, risk_summary, parameter=""):
     """Append one raw (baseline, probe) pair to the dataset log.
 
     Called for EVERY dispatched probe, not just findings — clean pairs are
-    the negative class. Never raises: a logging failure is warned, never
-    fatal to the scan.
+    the negative class. The record carries the join fields for the offline
+    labeling script and the scanner's verdict as a feature column; the
+    training label is None until the labeling script fills it from ground
+    truth. Never raises: a logging failure is warned, never fatal to the
+    scan.
     """
-    path = _dataset_log_path(session_id)
+    path = _dataset_log_path(session_id, target_url)
     if path is None:
         return
     try:
@@ -616,15 +688,31 @@ def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
             endpoint_id=test_url,
             payload_family=test_item.get("type", ""),
         )
+        # The scanner's verdict is a feature, never the label. A model
+        # trained on the scanner's own verdict would just copy Layer 1.
+        row["label_name"] = None
+        row["label"] = None
+        row["label_source"] = "ground_truth_join (pending)"
+        row["scanner_finding_status"] = risk_summary.get("finding_status")
+        row["scanner_has_proof"] = bool(sig_res.get("has_proof"))
+        row["scanner_score"] = risk_summary.get("total_score")
+        row["scanner_label"] = (
+            1 if risk_summary.get("finding_status") == "Confirmed" else 0)
         baseline_body, baseline_truncated = _cap_body(
             baseline_telemetry.get("response_body", ""))
         probe_body, probe_truncated = _cap_body(req_data.get("response_body", ""))
         record = {
+            # Join fields for the offline labeling script.
+            "target_app": _dataset_target_app(target_url),
+            "run_id": session_id,
+            "mode": os.getenv("DATASET_MODE", ""),
+            "endpoint_template": _normalize_template(test_url),
+            "parameter": parameter,
+            "probe_type": test_item.get("type", ""),
             "session_id": session_id,
             "target_url": target_url,
             "endpoint_url": test_url,
             "http_method": test_method,
-            "probe_type": test_item.get("type", ""),
             "payload": payload_str,
             "baseline": {
                 "status_code": baseline_telemetry.get("status_code"),
@@ -1366,10 +1454,24 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     # Dataset record: log the raw (baseline, probe) pair for
                     # every dispatched probe (clean pairs are the negative
                     # class). Gated by DATASET_LOG_DIR; never breaks a scan.
+                    # The parameter is the field the payload was bound to
+                    # ("path" for the path-appended variant, "" if unknown).
+                    _bound_param = ""
+                    for _bound in (query_params, form_data, json_payload):
+                        if isinstance(_bound, dict):
+                            for _k, _v in _bound.items():
+                                if _v == payload_str:
+                                    _bound_param = _k
+                                    break
+                            if _bound_param:
+                                break
+                    if not _bound_param and payload_str and payload_str in test_url:
+                        _bound_param = "path"
                     log_dataset_pair(
                         session_obj.id, target_url, test_item, test_method,
                         test_url, payload_str, baseline_telemetry, req_data,
-                        features, sig_res, risk_summary)
+                        features, sig_res, risk_summary,
+                        parameter=_bound_param)
 
                     # Print Console Breakdown
                     print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")

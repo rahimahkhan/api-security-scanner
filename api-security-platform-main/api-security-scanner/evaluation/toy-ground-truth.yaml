@@ -1,0 +1,23 @@
+# Ground truth for the toy ground-truth app (~/workspace/tmp/ground_truth/app.py).
+# Written 2026-11-27 from the app's own source, before labeling any data.
+# 3 planted vulnerabilities; /clean and /search are clean by design.
+# Used by evaluation/label_dataset.py to label development data.
+items:
+  - id: TOY-01
+    template: /xss_r
+    parameter: name
+    category: XSS
+    how_verified: "app.py xss_r(): unescaped reflection of the name query param"
+    date: "2026-11-27"
+  - id: TOY-02
+    template: /sqli
+    parameter: id
+    category: SQL_Injection
+    how_verified: "app.py sqli(): simulated SQL error leak on an unbalanced quote"
+    date: "2026-11-27"
+  - id: TOY-03
+    template: /open_redirect
+    parameter: url
+    category: Open_Redirect
+    how_verified: "app.py open_redirect(): unvalidated redirect of the url query param"
+    date: "2026-11-27"

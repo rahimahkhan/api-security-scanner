@@ -18,7 +18,6 @@ EXPECTED_ARTIFACTS = [
     "response_lstm.pt",
     "response_char_vocab.json",
     "model_manifest.json",
-    "metrics.json",
 ]
 
 

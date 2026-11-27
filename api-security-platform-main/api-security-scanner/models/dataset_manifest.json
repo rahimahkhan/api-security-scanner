@@ -1,8 +1,0 @@
-{
-  "dataset": "csic_database.csv",
-  "total_records": 600,
-  "features_schema": "runtime-http-17-v1",
-  "feature_count": 17,
-  "train_samples": 480,
-  "test_samples": 120
-}

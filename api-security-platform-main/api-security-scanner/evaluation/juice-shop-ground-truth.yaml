@@ -363,3 +363,197 @@ items:
     how_verified: "Juice Shop challenge: overwrite the /ftp/legal.md file. The file-upload handler writes the uploaded file using its supplied filename, so a traversal filename reaches /ftp. Endpoint POST /file-upload in server.ts. No scanner check exists."
     date: 2026-11-27
     added_after_scan: false
+
+# Scope rule (2026-11-27, Manus): recall is reported ONLY over the
+# 38 in-scope items (56 of the 118 challenges). In scope iff the bug
+# is exercisable through the REST API without browser interaction AND
+# a generic API scanner could in principle test it. The 62 excluded
+# challenges are listed below with the reason each is out of scope.
+# A later fix becomes v2 and is tested on a different untouched app.
+excluded:
+  - key: accessLogDisclosureChallenge
+    category: Observability Failures
+    reason: "log disclosure / DLP — not exercisable through the API as a probe"
+  - key: aiDebuggingChallenge
+    category: Broken Access Control
+    reason: "CSRF, AI debugging, or easter egg — not an API probe"
+  - key: captchaBypassChallenge
+    category: Broken Anti Automation
+    reason: "CAPTCHA bypass, timing attack or anti-automation"
+  - key: chatbotGreedyInjectionChallenge
+    category: Injection
+    reason: "LLM/chatbot prompt injection or business-logic easter egg"
+  - key: chatbotPromptInjectionChallenge
+    category: Injection
+    reason: "LLM/chatbot prompt injection or business-logic easter egg"
+  - key: christmasSpecialChallenge
+    category: Injection
+    reason: "LLM/chatbot prompt injection or business-logic easter egg"
+  - key: closeNotificationsChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: continueCodeChallenge
+    category: Cryptographic Issues
+    reason: "crypto puzzle / forged token puzzle"
+  - key: csafChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: csrfChallenge
+    category: Broken Access Control
+    reason: "CSRF, AI debugging, or easter egg — not an API probe"
+  - key: dlpPasswordSprayingChallenge
+    category: Observability Failures
+    reason: "log disclosure / DLP — not exercisable through the API as a probe"
+  - key: easterEggLevelOneChallenge
+    category: Broken Access Control
+    reason: "CSRF, AI debugging, or easter egg — not an API probe"
+  - key: easterEggLevelTwoChallenge
+    category: Cryptographic Issues
+    reason: "crypto puzzle / forged token puzzle"
+  - key: exposedCredentialsChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: extraLanguageChallenge
+    category: Broken Anti Automation
+    reason: "CAPTCHA bypass, timing attack or anti-automation"
+  - key: forgedCouponChallenge
+    category: Cryptographic Issues
+    reason: "crypto puzzle / forged token puzzle"
+  - key: freeDeluxeChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: geoStalkingMetaChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: geoStalkingVisualChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: hiddenImageChallenge
+    category: Security through Obscurity
+    reason: "steganography / hidden file — not an API probe"
+  - key: knownVulnerableComponentChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: leakedApiKeyChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: lfrChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: localXssChallenge
+    category: XSS
+    reason: "client-side/DOM XSS — needs browser interaction, not an API probe"
+  - key: loginAmyChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: loginRapperChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: manipulateClockChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: missingEncodingChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: negativeOrderChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: nftMintChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: nftUnlockChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: oauthUserPasswordChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: passkeyCredentialOverwriteChallenge
+    category: Broken Access Control
+    reason: "CSRF, AI debugging, or easter egg — not an API probe"
+  - key: passkeySignatureChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: passwordRepeatChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"
+  - key: premiumPaywallChallenge
+    category: Cryptographic Issues
+    reason: "crypto puzzle / forged token puzzle"
+  - key: privacyPolicyChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: privacyPolicyProofChallenge
+    category: Security through Obscurity
+    reason: "steganography / hidden file — not an API probe"
+  - key: resetPasswordBenderChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: resetPasswordBjoernChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: resetPasswordBjoernOwaspChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: resetPasswordJimChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: resetPasswordMortyChallenge
+    category: Broken Anti Automation
+    reason: "CAPTCHA bypass, timing attack or anti-automation"
+  - key: resetPasswordUvoginChallenge
+    category: Sensitive Data Exposure
+    reason: "needs a specific victim credential or is a data leak outside the API surface"
+  - key: scoreBoardChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: securityPolicyChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: supplyChainAttackChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: svgInjectionChallenge
+    category: Security Misconfiguration
+    reason: "client-side SVG injection — needs browser rendering"
+  - key: systemPromptExtractionChallenge
+    category: Injection
+    reason: "LLM/chatbot prompt injection or business-logic easter egg"
+  - key: timingAttackChallenge
+    category: Broken Anti Automation
+    reason: "CAPTCHA bypass, timing attack or anti-automation"
+  - key: tokenSaleChallenge
+    category: Security through Obscurity
+    reason: "steganography / hidden file — not an API probe"
+  - key: typosquattingAngularChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: typosquattingNpmChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: usernameXssChallenge
+    category: XSS
+    reason: "client-side/DOM XSS — needs browser interaction, not an API probe"
+  - key: videoXssChallenge
+    category: XSS
+    reason: "client-side/DOM XSS — needs browser interaction, not an API probe"
+  - key: vulnerableDockerImageChallenge
+    category: Vulnerable Components
+    reason: "component advisory / typosquatting — a dependency question, not a probe"
+  - key: weakPasswordChallenge
+    category: Broken Authentication
+    reason: "password-reset flow (needs victim answers), passkeys, or credential guessing"
+  - key: web3SandboxChallenge
+    category: Broken Access Control
+    reason: "CSRF, AI debugging, or easter egg — not an API probe"
+  - key: web3WalletChallenge
+    category: Miscellaneous
+    reason: "policy file, UI quirk, or web3 — not an API security bug"
+  - key: weirdCryptoChallenge
+    category: Cryptographic Issues
+    reason: "crypto puzzle / forged token puzzle"
+  - key: xssBonusChallenge
+    category: XSS
+    reason: "client-side/DOM XSS — needs browser interaction, not an API probe"
+  - key: zeroStarsChallenge
+    category: Improper Input Validation
+    reason: "business-logic easter egg, not a security bug an API scanner tests"

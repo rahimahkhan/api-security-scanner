@@ -1,0 +1,38 @@
+# Ground truth for the DVWA-faithful replica (~/workspace/tmp/dvwa_like/app.py).
+# Written 2026-11-27 from the app's own source, before labeling any data.
+# 5 planted vulnerabilities. /flaky_slow/ is deliberately NOT listed: it is
+# a negative control for time-based false positives — it sleeps 8s on
+# sleep/benchmark keywords but is not a vulnerability, so any time-based
+# probe on it must label 0. /clean is clean by design.
+# Used by evaluation/label_dataset.py to label development data.
+items:
+  - id: REP-01
+    template: /vulnerabilities/sqli/
+    parameter: id
+    category: SQL_Injection
+    how_verified: "app.py sqli(): error-based SQLi sink, Submit-gated form"
+    date: "2026-11-27"
+  - id: REP-02
+    template: /vulnerabilities/sqli_time/
+    parameter: id
+    category: SQL_Injection
+    how_verified: "app.py sqli_time(): real SLEEP sink (time.sleep on a sleep() payload)"
+    date: "2026-11-27"
+  - id: REP-03
+    template: /vulnerabilities/exec/
+    parameter: ip
+    category: Command_Injection
+    how_verified: "app.py exec_(): subprocess.run(f'ping -c 1 {ip}', shell=True)"
+    date: "2026-11-27"
+  - id: REP-04
+    template: /vulnerabilities/xss_r/
+    parameter: name
+    category: XSS
+    how_verified: "app.py xss_r(): unescaped reflection of the name query param"
+    date: "2026-11-27"
+  - id: REP-05
+    template: /vulnerabilities/open_redirect/source/low.php
+    parameter: redirect
+    category: Open_Redirect
+    how_verified: "app.py oredirect_low(): unvalidated redirect of the redirect query param"
+    date: "2026-11-27"

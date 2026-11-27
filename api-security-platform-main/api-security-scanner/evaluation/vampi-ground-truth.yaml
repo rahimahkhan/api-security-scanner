@@ -13,6 +13,7 @@ items:
     template: /users/v1/{username}
     parameter: username (path)
     category: SQL_Injection
+    modes: [vulnerable]
     how_verified: "Manual GET /users/v1/name1' -> 500 + Werkzeug traceback (sqlalchemy OperationalError) in vuln mode, 404 in secure; source: user_model.py get_user() builds raw SELECT with the username interpolated."
     date: 2026-11-27
     added_after_scan: false
@@ -20,6 +21,7 @@ items:
     template: /users/v1/{username}/password
     parameter: username (path)
     category: BOLA_IDOR
+    modes: [vulnerable]
     how_verified: "README + api_views/users.py update_password(): vuln=1 changes ANY user's password by path username; vuln=0 scopes to token sub. Scanner canary-verified the password change."
     date: 2026-11-27
     added_after_scan: false
@@ -27,6 +29,7 @@ items:
     template: /books/v1/{book_title}
     parameter: book_title (path)
     category: BOLA_IDOR
+    modes: [vulnerable]
     how_verified: "README + api_views/books.py get_by_title(): vuln=1 returns any user's book + secret by title; vuln=0 scopes to owner."
     date: 2026-11-27
     added_after_scan: false
@@ -34,6 +37,7 @@ items:
     template: /users/v1/register
     parameter: admin (body)
     category: Mass_Assignment
+    modes: [vulnerable]
     how_verified: "api_views/users.py register_user() honors 'admin' in the register body in vuln mode. Verified both ways via _debug (admin:true stored in vuln, admin:false in secure)."
     date: 2026-11-27
     added_after_scan: false
@@ -41,6 +45,7 @@ items:
     template: /users/v1/_debug
     parameter: null
     category: Sensitive_Data_Exposure
+    modes: [vulnerable, secure]
     how_verified: "GET /users/v1/_debug returns all users WITH plaintext passwords + admin flags. NOT gated on vuln — exposes in BOTH modes."
     date: 2026-11-27
     added_after_scan: false
@@ -48,6 +53,7 @@ items:
     template: /users/v1/login
     parameter: username/password (body)
     category: User_Enumeration
+    modes: [vulnerable, secure]
     how_verified: "README + login_user(): vuln=1 returns distinct 'Password is not correct' vs 'Username does not exist'; vuln=0 unifies. No scanner check exists for this category."
     date: 2026-11-27
     added_after_scan: false
@@ -55,6 +61,7 @@ items:
     template: /users/v1/{username}/email
     parameter: email (body)
     category: Regex_DoS
+    modes: [vulnerable, secure]
     how_verified: "README + update_email(): vuln=1 uses a catastrophic email regex; vuln=0 uses a safe regex. Endpoint path inferred from api_views/users.py. No scanner check exists for this category."
     date: 2026-11-27
     added_after_scan: false
@@ -62,6 +69,7 @@ items:
     template: "*"
     parameter: null
     category: Rate_Limiting
+    modes: [vulnerable, secure]
     how_verified: "README 'Lack of Resources & Rate Limiting': no rate limiting anywhere, both modes. No scanner check exists for this category."
     date: 2026-11-27
     added_after_scan: false
@@ -69,6 +77,7 @@ items:
     template: /users/v1/login
     parameter: null
     category: JWT_Weak_Key
+    modes: [vulnerable, secure]
     how_verified: "config.py SECRET_KEY='random', HS256; NOT gated on vuln. Anyone can forge a token with key 'random'. No scanner check exists for this category."
     date: 2026-11-27
     added_after_scan: false
@@ -76,6 +85,7 @@ items:
     template: "*"
     parameter: null
     category: Verbose_Error_Exposure
+    modes: [vulnerable, secure]
     how_verified: "App runs with the Werkzeug debugger, so any 500 returns a full traceback. Seen on /createdb (duplicate-seed IntegrityError) and on /users/v1/login (SQL error path). Verified independently by re-hitting /createdb twice and reading the traceback."
     date: 2026-11-27
     added_after_scan: true

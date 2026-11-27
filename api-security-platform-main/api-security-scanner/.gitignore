@@ -38,6 +38,10 @@ datasets/processed/
 datasets/self_generated/
 datasets/evaluation_results.json
 
+# Dataset logs (raw baseline/probe responses — may contain secrets; never commit)
+dataset-logs/
+dataset-session-*.jsonl
+
 # Generated Export Reports
 reports/*.pdf
 reports/*.json
@@ -67,3 +71,11 @@ ml_artifacts/*_backup*/
 *.sqlite3
 .pytest_cache/
 __pycache__/
+
+# Packaging caches (folded in from the repo-root .gitignore)
+*.egg-info/
+.cache/
+
+# Dataset logs (raw baseline/probe responses — may contain secrets; never commit)
+dataset-logs/
+dataset-session-*.jsonl
