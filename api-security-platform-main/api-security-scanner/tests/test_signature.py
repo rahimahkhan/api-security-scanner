@@ -146,11 +146,16 @@ def test_bola_verification_rules():
     assert res_unverified["finding_status"] == "Suspected"
     assert res_unverified["has_proof"] is False
 
+    # AUDIT-5 (2026-11-27): unauthenticated sensitive data is disclosure,
+    # not a proven cross-identity access failure — the endpoint may be
+    # public. Confirmed BOLA requires the canary-verified cross-identity
+    # proof above; without it the finding is Suspected.
     unauthenticated_bola = dict(sample_bola_confirmed, request_headers={}, cross_identity_probe=False)
     res_unauthenticated = detector.analyze(unauthenticated_bola)
     assert res_unauthenticated["attack_type"] == "BOLA_IDOR"
-    assert res_unauthenticated["finding_status"] == "Confirmed"
-    assert res_unauthenticated["points"] == 40
+    assert res_unauthenticated["finding_status"] == "Suspected"
+    assert res_unauthenticated["has_proof"] is False
+    assert res_unauthenticated["points"] == 15
 
     mass_assignment = detector.analyze(
         {

@@ -135,10 +135,11 @@ class SignatureDetector:
         r"\[boot loader\]"
     ]
 
-    XXE_OUTPUT_PATTERNS = LFI_OUTPUT_PATTERNS + [
-        r"(?i)localhost",
-        r"(?i)hostname"
-    ]
+    # AUDIT-4: the words 'localhost'/'hostname' are NOT file-content proof.
+    # They appear in ordinary XML (a <host> element, a config dump). XXE
+    # proof needs real file content (the LFI patterns above) or a unique
+    # canary value — anything weaker confirms XML that was never exploited.
+    XXE_OUTPUT_PATTERNS = LFI_OUTPUT_PATTERNS
 
     REQUIRED_SECURITY_HEADERS = [
         "Content-Security-Policy",
@@ -184,6 +185,19 @@ class SignatureDetector:
                         if line_clean and not line_clean.startswith("#"):
                             patterns[category].append(line_clean)
         return patterns
+
+    @staticmethod
+    def _evidence_is_new(pattern: str, response_body: str, baseline_body: str) -> bool:
+        """True when `pattern` matches the probe response but NOT the baseline.
+
+        AUDIT-1: a signature already present in the baseline (a docs page
+        showing an SQL error example, a page that always prints /etc/passwd
+        content) is not evidence the probe caused it. With no baseline any
+        match counts, so direct analyze() callers keep the old behaviour.
+        """
+        if not re.search(pattern, response_body or ""):
+            return False
+        return not re.search(pattern, baseline_body or "")
 
     @staticmethod
     def _body_difference_ratio(baseline_body: str, response_body: str) -> float:
@@ -430,9 +444,9 @@ class SignatureDetector:
         response_evidence_category = None
         response_evidence_detail = ""
         if payload:
-            _sql_err = next((err for err in self.SQL_ERROR_PATTERNS if re.search(err, resp_body)), None)
-            _cmd_out = next((pat for pat in self.CMD_OUTPUT_PATTERNS if re.search(pat, resp_body)), None)
-            _lfi_sig = next((sig for sig in self.LFI_OUTPUT_PATTERNS if re.search(sig, resp_body)), None)
+            _sql_err = next((err for err in self.SQL_ERROR_PATTERNS if self._evidence_is_new(err, resp_body, baseline_body)), None)
+            _cmd_out = next((pat for pat in self.CMD_OUTPUT_PATTERNS if self._evidence_is_new(pat, resp_body, baseline_body)), None)
+            _lfi_sig = next((sig for sig in self.LFI_OUTPUT_PATTERNS if self._evidence_is_new(sig, resp_body, baseline_body)), None)
             if _sql_err:
                 response_evidence_category, response_evidence_detail = "SQL_Injection", f"SQL Error signature matched: {_sql_err}"
             elif _cmd_out:
@@ -456,15 +470,32 @@ class SignatureDetector:
                     candidate_rule = response_evidence_detail
                     attack_type = candidate_category
 
+        # AUDIT-6: error-differential SQLi. A quote-bearing SQLi probe that
+        # errors with a generic 5xx while the baseline is healthy is a
+        # differential signal even with no database-error text (real VAmPI
+        # behaviour: generic 500, no SQL error). Route it into the
+        # SQL_Injection branch so its differential logic can grade it
+        # Suspected. Requires a real differential (probe-only 5xx), so a
+        # clean 200 response still yields no SQLi finding.
+        if (not candidate_category and expected_category == "SQL_Injection"
+                and payload and ("'" in payload or '"' in payload)
+                and baseline_telemetry
+                and int(resp_status or 0) >= 500
+                and int((baseline_telemetry or {}).get("status_code") or 0) < 500):
+            candidate_category = "SQL_Injection"
+            candidate_rule = "error-differential (probe-only 5xx vs healthy baseline)"
+
         # Strict Proof Verifiers Criteria (Section 3)
         if candidate_category:
             attack_type = candidate_category
             pattern_matched = candidate_rule
 
             if candidate_category == "XSS":
-                # Verbatim unescaped Reflection check in text/html or application/xml
+                # Verbatim unescaped Reflection check in text/html or application/xml.
+                # AUDIT-1: the payload must not already be in the baseline — a
+                # page that always prints the literal string is not reflection.
                 is_html_xml = any(ct in content_type for ct in ["text/html", "application/xml"])
-                if payload and payload in resp_body and is_html_xml and resp_size > 0 and 200 <= resp_status < 300:
+                if payload and payload in resp_body and payload not in baseline_body and is_html_xml and resp_size > 0 and 200 <= resp_status < 300:
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -482,8 +513,10 @@ class SignatureDetector:
             elif candidate_category == "SQL_Injection":
                 # Error-based SQL trace verification OR Time-based SQLi
                 # (tightened gate: delay must be proportional to the injected
-                # sleep AND reproduce on a re-probe).
-                matched_sql_err = next((err for err in self.SQL_ERROR_PATTERNS if re.search(err, resp_body)), None)
+                # sleep AND reproduce on a re-probe). AUDIT-1: the error
+                # text must be new in the probe response, not already in
+                # the baseline.
+                matched_sql_err = next((err for err in self.SQL_ERROR_PATTERNS if self._evidence_is_new(err, resp_body, baseline_body)), None)
                 if matched_sql_err:
                     matched = True
                     has_proof = True
@@ -545,7 +578,16 @@ class SignatureDetector:
                 resolved_hostname = (resolved_location.hostname or "").lower() if resolved_location else ""
                 base_hostname = (base_location.hostname or "").lower()
                 is_external = bool(resolved_hostname and resolved_hostname != base_hostname)
-                if 300 <= int(resp_status or 0) < 400 and is_external:
+                # AUDIT-2: the redirect must go to the host we injected, and
+                # the baseline must not already redirect there (e.g. a login
+                # page that always sends users to its SSO site). Any external
+                # redirect — even to an unrelated host — is not proof.
+                injected_hostname = (urlsplit(payload).hostname or "").lower() if payload else ""
+                baseline_location = next((str(value) for key, value in (baseline_telemetry or {}).get("response_headers", {}).items() if str(key).lower() == "location"), "")
+                baseline_hostname = (urlsplit(urljoin(url, baseline_location)).hostname or "").lower() if baseline_location else ""
+                goes_to_injected = bool(injected_hostname and resolved_hostname == injected_hostname)
+                already_in_baseline = bool(baseline_hostname and baseline_hostname == resolved_hostname)
+                if 300 <= int(resp_status or 0) < 400 and is_external and goes_to_injected and not already_in_baseline:
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -561,7 +603,7 @@ class SignatureDetector:
                     proof_of_concept = "Redirect payload matched without an external 3xx Location response"
 
             elif candidate_category == "XXE":
-                matched_xxe_sig = next((pattern for pattern in self.XXE_OUTPUT_PATTERNS if re.search(pattern, resp_body)), None)
+                matched_xxe_sig = next((pattern for pattern in self.XXE_OUTPUT_PATTERNS if self._evidence_is_new(pattern, resp_body, baseline_body)), None)
                 is_xml_probe = bool(re.search(r"(?is)<!DOCTYPE[^>]+(?:<!ENTITY|SYSTEM)", payload)) and "xml" in content_type
                 if matched_xxe_sig and is_xml_probe and 200 <= resp_status < 300 and resp_size > 0:
                     matched = True
@@ -579,7 +621,7 @@ class SignatureDetector:
                     proof_of_concept = "XXE entity syntax matched without XML content type and local canary proof"
 
             elif candidate_category == "Local_File_Inclusion":
-                matched_lfi_sig = next((pattern for pattern in self.LFI_OUTPUT_PATTERNS if re.search(pattern, resp_body)), None)
+                matched_lfi_sig = next((pattern for pattern in self.LFI_OUTPUT_PATTERNS if self._evidence_is_new(pattern, resp_body, baseline_body)), None)
                 if matched_lfi_sig and 200 <= resp_status < 300 and resp_size > 0:
                     matched = True
                     has_proof = True
@@ -599,7 +641,7 @@ class SignatureDetector:
                 # Shell output signature OR Time-based delay
                 # (tightened gate: delay must be proportional to the injected
                 # sleep AND reproduce on a re-probe).
-                matched_cmd_sig = next((cmd_pat for cmd_pat in self.CMD_OUTPUT_PATTERNS if re.search(cmd_pat, resp_body)), None)
+                matched_cmd_sig = next((cmd_pat for cmd_pat in self.CMD_OUTPUT_PATTERNS if self._evidence_is_new(cmd_pat, resp_body, baseline_body)), None)
                 if matched_cmd_sig:
                     matched = True
                     has_proof = True
@@ -643,7 +685,12 @@ class SignatureDetector:
                 auth_hdr = telemetry_data.get("request_headers", {}).get("Authorization", "")
                 is_jwt_alg_none = bool(re.search(r"(?i)alg\s*:\s*\"?none\"?", target_string))
                 has_sensitive_data = any(re.search(pat, resp_body, re.I) for pat in [r"\"email\":", r"\"password\":", r"\"admin\":", r"\"token\":"])
-                if (resp_status in [200, 201] and (has_sensitive_data or not auth_hdr or is_jwt_alg_none)):
+                # AUDIT-3: a public endpoint returning 200 with no auth header
+                # is not proof of an auth weakness — the probe must differ
+                # from the baseline (e.g. baseline 401 vs probe 200 with
+                # data). Without a differential the endpoint is public by
+                # default, not vulnerable.
+                if (resp_status in [200, 201] and differential_signal and (has_sensitive_data or not auth_hdr or is_jwt_alg_none)):
                     matched = True
                     has_proof = True
                     finding_status = "Confirmed"
@@ -678,12 +725,16 @@ class SignatureDetector:
                     auth_header = telemetry_data.get("request_headers", {}).get("Authorization", "")
                     has_sensitive_data = any(re.search(pat, resp_body, re.I) for pat in [r"\"email\":", r"\"ssn\":", r"\"password\":", r"\"role\":", r"\"token\":", r"\"username\":"])
                     if resp_status in [200, 201] and has_sensitive_data and not auth_header:
+                        # AUDIT-5: unauthenticated sensitive data is disclosure,
+                        # not proof of a cross-identity access failure — the
+                        # endpoint may be public. Confirmed requires the
+                        # canary-verified cross-identity proof above.
                         matched = True
-                        has_proof = True
-                        finding_status = "Confirmed"
-                        confidence = "High"
-                        points = 40
-                        proof_of_concept = "Unauthorized object access returned sensitive object properties in 200 OK body"
+                        has_proof = False
+                        finding_status = "Suspected"
+                        confidence = "Low"
+                        points = 15
+                        proof_of_concept = "Unauthenticated access returned sensitive object properties, but no cross-identity access failure was proven; the endpoint may be public — Confirmed requires a canary-verified cross-identity proof"
                     else:
                         matched = True
                         has_proof = False
@@ -727,19 +778,22 @@ class SignatureDetector:
             has_sensitive_data = any(re.search(pat, resp_body, re.I) for pat in [r"\"email\":", r"\"ssn\":", r"\"password\":", r"\"role\":", r"\"token\":", r"\"username\":"])
 
             if has_bola_pattern and has_sensitive_data and not auth_header:
+                # AUDIT-5: same as the branch above — unauthenticated
+                # disclosure is not a proven cross-identity failure.
                 matched = True
-                has_proof = True
+                has_proof = False
                 attack_type = "BOLA_IDOR"
                 pattern_matched = "Unauthenticated object access returned sensitive user data"
-                finding_status = "Confirmed"
-                confidence = "High"
-                points = 40
-                proof_of_concept = "Unauthorized object access returned sensitive object properties in 200 OK body"
+                finding_status = "Suspected"
+                confidence = "Low"
+                points = 15
+                proof_of_concept = "Unauthenticated access returned sensitive object properties, but no cross-identity access failure was proven; the endpoint may be public — Confirmed requires a canary-verified cross-identity proof"
 
-        # Verbose Stack Traces Verification
+        # Verbose Stack Traces Verification (AUDIT-1: the trace must be new
+        # in the probe response, not already in the baseline).
         if not matched and resp_status not in [404, 401, 403, 405, 429, 502, 503, 504]:
             for err_pat in self.VERBOSE_ERROR_PATTERNS:
-                if re.search(err_pat, resp_body):
+                if self._evidence_is_new(err_pat, resp_body, baseline_body):
                     matched = True
                     has_proof = True
                     attack_type = "Verbose_Error_Exposure"
@@ -750,10 +804,11 @@ class SignatureDetector:
                     proof_of_concept = f"Verbose stack trace trace exposed in response: {err_pat}"
                     break
 
-        # Sensitive Data Exposure Verification
+        # Sensitive Data Exposure Verification (AUDIT-1: the value must be
+        # new in the probe response, not already in the baseline).
         if not matched and resp_status not in [404, 401, 403, 405, 429, 502, 503, 504]:
             for sens_pat in self.SENSITIVE_DATA_PATTERNS:
-                if re.search(sens_pat, resp_body):
+                if self._evidence_is_new(sens_pat, resp_body, baseline_body):
                     matched = True
                     has_proof = True
                     attack_type = "Sensitive_Data_Exposure"

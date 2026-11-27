@@ -92,7 +92,11 @@ def test_suspected_signature_is_not_reported_as_vulnerability():
     assert "verified" not in result["proof_of_concept"].lower()
 
 
-def test_confirmed_bola_still_requires_sensitive_unauthorized_data():
+def test_unauthenticated_sensitive_data_is_suspected_not_confirmed_bola():
+    # AUDIT-5 (2026-11-27): sensitive data returned without auth is
+    # disclosure, not proof of an authorization failure — the endpoint may
+    # be public. Confirmed BOLA requires a canary-verified cross-identity
+    # proof; without it the finding is Suspected, not a vulnerability.
     result = SignatureDetector().analyze(
         {
             "url": "http://example.test/users/2",
@@ -105,8 +109,9 @@ def test_confirmed_bola_still_requires_sensitive_unauthorized_data():
         }
     )
     assert result["attack_type"] == "BOLA_IDOR"
-    assert result["finding_status"] == "Confirmed"
-    assert result["is_vulnerable"] is True
+    assert result["finding_status"] == "Suspected"
+    assert result["has_proof"] is False
+    assert result["is_vulnerable"] is False
 
 
 def test_missing_dataset_is_not_replaced_with_fake_labels(tmp_path):
