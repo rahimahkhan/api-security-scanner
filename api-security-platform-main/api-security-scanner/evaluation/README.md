@@ -71,6 +71,90 @@ negative — toy app 49 (5+), DVWA replica 60 (13+), VAmPI vulnerable
 160 (11+), VAmPI secure 160 (1+; only the _debug exposure, which
 persists by design).
 
+**This is a pilot / pipeline-validation set, not the real dataset.**
+30 positives are ~10 unique bugs; rows are correlated (the same
+endpoint probed many times) and there are only 3 independent groups
+(VAmPI's two modes are one app — one group when splitting; training on
+vulnerable mode and testing on secure mode is leakage). Leave-one-app-out
+is unstable. Report confidence intervals and call every result on it
+preliminary.
+
+Each labeled pair also carries `probe_effective` (a response-based
+rule, NOT the scanner's verdict: status changed, body diff > 0.1, an
+error keyword appeared, the payload was reflected, or a time-based
+probe whose injected delay fired). "The endpoint has this bug" is not
+the same as "this probe's response shows it" — results are reported on
+all positives and on effective-only positives. `scanner_label` is
+excluded from every "ML alone" experiment (it is useful for ranking
+Suspected findings, but a model using it just copies Layer 1).
+
+### Shipped models, measured (2026-11-27, preliminary)
+
+`evaluation/measure_models.py` — PR-AUC + recall at FPR 0.01/0.05/0.10
+for the ML anomaly score, LSTM probability and autoencoder error,
+against a simple rule baseline and the scanner's own verdict, plus the
+ablation (signature only, +ML, +DL). Pooled (n=429, 30 positives,
+base rate 0.07): **ML anomaly 0.225 [0.088, 0.362], LSTM 0.339 [0.199,
+0.517], autoencoder 0.119 [0.051, 0.218] (near chance), signature
+0.797 [0.655, 0.908], rule baseline 0.452, scanner verdict 0.721.
+Ablation: signature + ML 0.730, shipped total 0.769 — adding ML/DL
+LOWERS the score vs signature alone, in every group.** Effective-only
+positives: signature 0.921, total 0.883. The models were trained on the
+old data (not this pilot), so this measures generalization. The
+signature number is optimistic — the signature layer was tuned on
+these same development apps, so it is not a fair estimate for a new
+app; the models' weak scores are the fairer comparison, but the sample
+is still tiny. Full output: `~/workspace/dataset-logs/measurement-2026-11-27.txt`.
+
+**Consequence (2026-11-27, commit `ca6d3ea`): ML/DL are experimental
+advisory signals, weight 0 in the risk score.** Their points are
+recorded (points_breakdown, ml_result, dl_result) but do not
+contribute to `total_score`, and their agreement no longer discounts
+the signature score. A Confirmed finding scores 40 + 30 proof bonus =
+70 (CRITICAL) instead of 100. Until a model passes the ablation test,
+no ML/DL claim stronger than "experimental advisory signal" belongs in
+the README, the report, or the website.
+
+### Retraining plan (2026-11-27)
+
+Do NOT retrain on the 429 pairs — not credible. Retraining needs the
+DynaST-Bench data (see below). When it exists: compare Logistic
+Regression, Random Forest and a gradient-boosted model against the rule
+baseline, using group-based splits; for text, test TF-IDF + Logistic
+Regression against the LSTM. Success = beating the baseline, and
+specifically ranking Suspected findings better, measured WITHIN the
+Suspected group. If the autoencoder is still near chance, remove it and
+say why.
+
+### DynaST-Bench — training data (not the held-out test)
+
+`j3ssie/dynast-bench` (MIT) — 19 apps, 559 planted vulns, 155
+near-misses, 556 runnable PoCs, 634 endpoints; each app has a vuln/ +
+safe/ twin and a machine-checkable answer key
+(`VULNERABILITIES.yaml` + `SURFACE.yaml`). Prepared files:
+`~/workspace/dynast-codespace/` (devcontainer + setup + README). Rules:
+training data only (crAPI stays the final held-out test); ground truth
+first, before scanning any app; one app at a time in `--solo` mode on a
+2-core codespace (4-core only if an app fails for lack of resources);
+stop the codespace when not in use; download the logs before deleting a
+codespace (raw logs are gitignored by design, so they are lost with it).
+Best first: graphql, fastapi, swagger, nextjs. Skip: network,
+llmagent/llmchat, websocket, weirdproxy.
+
+**Labeling rules for the DynaST data (2026-11-27):**
+- Join by endpoint, parameter AND category. A SQLi probe on an
+  endpoint that only has an SSTI bug is a negative for SQLi.
+- Never label an unprobed category as negative. If the scanner has no
+  check for a category, that vulnerability is out of scope, not a
+  negative example.
+- Group each vulnerable app with its patched twin as ONE group when
+  splitting. Training on one and testing on the other is the same
+  leakage as VAmPI's two modes.
+- Write the mapping from DynaST's vulnerability types to the scanner's
+  categories BEFORE scanning, and save it with a date.
+- Note in the report that DynaST-Bench is new, from one author, and not
+  peer-reviewed.
+
 ## Ground-truth files
 
 - `vampi-ground-truth.yaml` — VAmPI, 10 items (2026-11-27). VAmPI is a

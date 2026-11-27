@@ -29,7 +29,7 @@ def _sigmoid(z: float) -> float:
 
 class MLAnomalyDetector:
     """
-    Layer 2 — ML Anomaly Detection Engine (response-differential).
+    Layer 2 — ML Anomaly advisory signals (experimental, response-differential).
 
     Uses a trained Isolation Forest to score how anomalous a probe's *HTTP
     response* is relative to benign response telemetry (schema documented in

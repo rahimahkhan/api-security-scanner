@@ -24,13 +24,16 @@ from detection.models import FeatureAutoencoder
 
 class DeepLearningDetector:
     """
-    Layer 3 — Deep Learning Detection Engine
-    Integrates a character-level LSTM trained on real TARGET RESPONSE
-    BODIES (exploit-effect responses vs normal responses — see
+    Layer 3 — Deep Learning advisory signals (experimental).
+    A character-level LSTM trained on real TARGET RESPONSE BODIES
+    (exploit-effect responses vs normal responses — see
     ml_pipeline/train_response_lstm.py) and a PyTorch Autoencoder
     (reconstruction error over the canonical response-differential
     features). Both models measure the target's behavior, never our own
-    payload text.
+    payload text. Their scores are advisory only: they are recorded
+    alongside findings but contribute 0 to the risk score (weight 0
+    since 2026-11-27 — the labeled pilot measurement showed they lower
+    the score's quality; see evaluation/README.md).
     """
 
     FEATURE_KEYS = FEATURE_KEYS

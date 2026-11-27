@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/rahimahkhan/api-security-scanner/actions/workflows/ci.yml/badge.svg)](https://github.com/rahimahkhan/api-security-scanner/actions/workflows/ci.yml)
 
-A standalone AI-powered API security testing, structure inspection, and anomaly detection platform built with **Python 3.11**, **Flask**, **scikit-learn (Isolation Forest)**, **PyTorch (LSTM + Autoencoder)**, and **SQLAlchemy**.
+A standalone API security testing, structure inspection, and anomaly detection platform built with **Python 3.11**, **Flask**, **scikit-learn (Isolation Forest)**, **PyTorch (LSTM + Autoencoder)**, and **SQLAlchemy**. Detection is signature-based (Layer 1); the ML/DL layers (Layers 2–3) are **experimental advisory signals** — they are shown alongside findings but do not contribute to the risk score (measured 2026-11-27 on a labeled pilot set: adding them lowered the score's quality, so their weight is 0 until a model passes the ablation test; see `evaluation/README.md`).
 
 The platform analyzes live API target URLs without requiring OpenAPI specification documents.
 
@@ -11,8 +11,8 @@ The platform analyzes live API target URLs without requiring OpenAPI specificati
 ## Detection Architecture
 
 1. **Layer 1 — Signature Engine**: Evaluates HTTP request/response headers, parameters, and bodies against deterministic regex rules, missing security header patterns, stack trace error exposures, and PII leaks.
-2. **Layer 2 — ML Anomaly Detection**: Extracts 15 response-differential features (`response-diff-14-v1`) — how each probe's response deviates from its baseline: status/size/time changes, error-keyword deltas, reflection checks, content-type changes — and scores them with a trained **Isolation Forest** plus a calibrated tabular ranker. Both models are trained on **686 real (baseline, probe) response pairs** in `ml_pipeline/datasets/response_diff_v1.csv` (live benign traffic + locally collected safe-echo responses); never on payload text.
-3. **Layer 3 — Deep Learning**: A PyTorch **Autoencoder** trained on benign response-differential features flags responses that reconstruct poorly; a character-level **LSTM** trained on real response bodies (exploit-effect vs normal) classifies the target's response and contributes up to 15 points. Both models measure the target's behavior — no model in the scoring path is trained on payload text.
+2. **Layer 2 — ML Anomaly Detection (experimental advisory signal)**: Extracts 15 response-differential features (`response-diff-14-v1`) — how each probe's response deviates from its baseline: status/size/time changes, error-keyword deltas, reflection checks, content-type changes — and scores them with a trained **Isolation Forest** plus a calibrated tabular ranker. Both models are trained on **686 real (baseline, probe) response pairs** in `ml_pipeline/datasets/response_diff_v1.csv` (live benign traffic + locally collected safe-echo responses); never on payload text. Their scores are shown as advisory signals only and do **not** contribute to the risk score (weight 0 since 2026-11-27 — see the measurement note in `evaluation/README.md`).
+3. **Layer 3 — Deep Learning (experimental advisory signal)**: A PyTorch **Autoencoder** trained on benign response-differential features flags responses that reconstruct poorly; a character-level **LSTM** trained on real response bodies (exploit-effect vs normal) classifies the target's response. Both models measure the target's behavior — no model in the scoring path is trained on payload text. Like Layer 2, their scores are advisory only and do **not** contribute to the risk score (weight 0 since 2026-11-27).
 
 ---
 

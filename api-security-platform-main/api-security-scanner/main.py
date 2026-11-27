@@ -1688,7 +1688,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
 def main():
     parser = argparse.ArgumentParser(
-        description="AI-Powered API Security & Anomaly Detection Platform"
+        description="API Security & Anomaly Detection Platform (signature-based detection; ML/DL layers are experimental advisory signals)"
     )
     parser.add_argument(
         "--url",
