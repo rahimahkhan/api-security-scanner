@@ -41,7 +41,12 @@ class _Handler(BaseHTTPRequestHandler):
             )
         elif parsed.path == "/sqli":
             uid = qs.get("id", ["1"])[0]
-            if "'" in uid or '"' in uid:
+            # Error only on an UNBALANCED quote (odd count) — the way a
+            # real database behaves. A balanced quote ('') is a valid empty
+            # string literal and must NOT error: the SQL-error verification
+            # sends '' as its control, and a fixture that errors on any
+            # quote would make every real SQLi look like a control failure.
+            if uid.count("'") % 2 == 1 or uid.count('"') % 2 == 1:
                 body = "You have an error in your SQL syntax near ''"
             else:
                 body = '{"id": "1"}'

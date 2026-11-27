@@ -312,6 +312,12 @@ def _endpoint_priority(ep: Dict[str, Any]) -> int:
 # shared state on every call, so they get baseline-only treatment (see
 # _select_test_queue): active probes would race the seed and the resulting
 # database errors would masquerade as injection evidence.
+# LIMITATION (not a complete fix): a skip list also hides any real
+# vulnerability on an endpoint with such a name. The principled protection
+# is the SQL-error verification (verify_sql_error_proof: sequential repeat
+# + balanced-quote control), which rules out transient errors wherever
+# they occur; the skip list stays as a safety rule for state-changing
+# endpoints, not as the proof.
 _SEED_ENDPOINT_SEGMENTS = {
     "createdb", "seed", "seed-db", "reset-db", "init-db",
     "populate", "migrate", "truncate",
@@ -538,6 +544,119 @@ def verify_time_based_proof(request_engine, signature_detector, test_item, test_
     req_data["time_proof_repro_delta"] = repro_delta
     req_data["time_proof_repro_failed"] = repro_failed
     return signature_detector.analyze(req_data, baseline_telemetry=baseline_telemetry)
+
+
+def _response_has_sql_error(signature_detector, response_body):
+    """True when any SQL error pattern matches the response body."""
+    body = response_body or ""
+    return any(re.search(pat, body) for pat in signature_detector.SQL_ERROR_PATTERNS)
+
+
+def _balanced_quote_control(payload):
+    """Balanced-quote control payload for a quote-bearing SQLi probe.
+
+    A syntactically valid quoted string ('' is an empty string literal)
+    that must NOT break the query. If the endpoint errors on this too,
+    the error is not caused by the injected quote. Returns None when the
+    payload has no quote to balance (then only the repeat gate applies).
+    """
+    if not payload or ("'" not in payload and '"' not in payload):
+        return None
+    return "''"
+
+
+def _control_request(test_url, payload_str, query_params, form_data, json_payload, control_payload):
+    """Rebuild a probe request with the control payload in place of the original.
+
+    The payload may live in the URL path (path-appended variant), in a query
+    param, in form data, or in a JSON body — replace it wherever it was bound
+    so the control request is identical in shape to the original.
+    """
+    control_url = test_url
+    if payload_str and test_url.endswith(payload_str):
+        control_url = test_url[: -len(payload_str)] + control_payload
+
+    def _swap(mapping):
+        if mapping is None:
+            return None
+        return {k: (control_payload if v == payload_str else v)
+                for k, v in mapping.items()}
+
+    control_json = None
+    if isinstance(json_payload, dict):
+        control_json = {k: (control_payload if v == payload_str else v)
+                        for k, v in json_payload.items()}
+    elif json_payload is not None:
+        control_json = json_payload
+    return control_url, _swap(query_params), _swap(form_data), control_json
+
+
+def verify_sql_error_proof(request_engine, signature_detector, sig_res, test_item, test_method,
+                           test_url, payload_str, custom_headers, query_params,
+                           form_data, json_payload, req_data, baseline_telemetry):
+    """Re-verify an error-based SQLi Confirmed finding before it stands (2026-11-27).
+
+    A database error in one probe response is not proof the payload caused
+    it — a transient error (a "database is locked" race, a wedged seed)
+    produces the same text. Two gates, both required:
+    1. Reproduce: re-send the identical probe sequentially; the SQL error
+       text must appear again. A one-off transient error fails this.
+    2. Control: send the same request with a balanced-quote payload ('').
+       The SQL error text must be ABSENT. If the endpoint errors on a
+       syntactically valid quoted string too, the error is not caused by
+       the injected quote.
+    Either gate failing downgrades the finding to Suspected (differential
+    without proof) with the reason in the proof text. The repeat/control
+    requests are sequential and bounded by the engine's own request timeout,
+    so they cannot wedge the scan; a failed repeat/control downgrades
+    outright. Returns the final signature result (the original dict
+    unchanged when both gates pass).
+    """
+    if not (sig_res.get("has_proof") and sig_res.get("finding_status") == "Confirmed"
+            and sig_res.get("attack_type") == "SQL_Injection"
+            and "SQL Error signature matched" in str(sig_res.get("proof_of_concept", ""))):
+        return sig_res
+
+    def _send(url, payload, qparams, fdata, jpayload):
+        try:
+            return request_engine.send_request(
+                test_method, url, payload=payload, custom_headers=custom_headers,
+                json_payload=jpayload, query_params=qparams, form_data=fdata,
+                follow_redirects=test_item.get("follow_redirects", True),
+            )
+        except Exception as exc:
+            logger.warning("SQL-error verification request failed for %s: %s", url, exc)
+            return None
+
+    def _downgrade(reason):
+        downgraded = dict(sig_res)
+        downgraded["finding_status"] = "Suspected"
+        downgraded["has_proof"] = False
+        downgraded["is_vulnerable"] = False
+        downgraded["confidence"] = "Medium"
+        downgraded["points"] = 15
+        downgraded["proof_of_concept"] = (
+            f"SQL error did not verify ({reason}); graded Suspected, "
+            "differential without proof"
+        )
+        return downgraded
+
+    # Gate 1: the error must reproduce on a sequential identical repeat.
+    repeat = _send(test_url, payload_str, query_params, form_data, json_payload)
+    if repeat is None or not _response_has_sql_error(signature_detector, repeat.get("response_body", "")):
+        return _downgrade("error did not reproduce on sequential repeat")
+
+    # Gate 2: the error must be absent on the balanced-quote control.
+    control_payload = _balanced_quote_control(payload_str)
+    if control_payload is not None:
+        control_url, control_q, control_f, control_j = _control_request(
+            test_url, payload_str, query_params, form_data, json_payload, control_payload)
+        control = _send(control_url, control_payload, control_q, control_f, control_j)
+        if control is None:
+            return _downgrade("balanced-quote control request failed")
+        if _response_has_sql_error(signature_detector, control.get("response_body", "")):
+            return _downgrade("error also present on balanced-quote control")
+    return sig_res
 
 
 def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: bool = False, session_id: int = None,
@@ -1115,6 +1234,23 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                             request_engine, signature_detector, test_item, test_method,
                             test_url, payload_str, custom_headers, query_params,
                             form_data, json_payload, req_data, baseline_telemetry)
+
+                    # SQL error proof margin (2026-11-27): a database error in
+                    # one probe response is not proof the payload caused it —
+                    # a transient error (a lock, a race, a wedged seed) shows
+                    # the same text. When the signature layer Confirms SQLi
+                    # on an error signature, require the error to reproduce
+                    # on a sequential repeat AND to be absent on a
+                    # balanced-quote control before the finding stands.
+                    if (sig_res.get("has_proof")
+                            and sig_res.get("finding_status") == "Confirmed"
+                            and sig_res.get("attack_type") == "SQL_Injection"
+                            and "SQL Error signature matched" in str(sig_res.get("proof_of_concept", ""))):
+                        sig_res = verify_sql_error_proof(
+                            request_engine, signature_detector, sig_res, test_item,
+                            test_method, test_url, payload_str, custom_headers,
+                            query_params, form_data, json_payload, req_data,
+                            baseline_telemetry)
 
                     # Layer 2 - ML Anomaly Detection (Isolation Forest)
                     ml_res = ml_detector.predict(features)
