@@ -789,11 +789,14 @@ class SignatureDetector:
                 points = 15
                 proof_of_concept = "Unauthenticated access returned sensitive object properties, but no cross-identity access failure was proven; the endpoint may be public — Confirmed requires a canary-verified cross-identity proof"
 
-        # Verbose Stack Traces Verification (AUDIT-1: the trace must be new
-        # in the probe response, not already in the baseline).
+        # Verbose Stack Traces Verification. NOT baseline-scoped: this is a
+        # passive exposure check, not a probe-caused claim — a traceback in
+        # the response is exposure whether or not the baseline shows it too
+        # (the baseline is the same endpoint's normal response). Scoping
+        # AUDIT-1 here suppressed real exposure (VAmPI _debug passwords).
         if not matched and resp_status not in [404, 401, 403, 405, 429, 502, 503, 504]:
             for err_pat in self.VERBOSE_ERROR_PATTERNS:
-                if self._evidence_is_new(err_pat, resp_body, baseline_body):
+                if re.search(err_pat, resp_body):
                     matched = True
                     has_proof = True
                     attack_type = "Verbose_Error_Exposure"
@@ -804,11 +807,12 @@ class SignatureDetector:
                     proof_of_concept = f"Verbose stack trace trace exposed in response: {err_pat}"
                     break
 
-        # Sensitive Data Exposure Verification (AUDIT-1: the value must be
-        # new in the probe response, not already in the baseline).
+        # Sensitive Data Exposure Verification. NOT baseline-scoped, same
+        # reason as above: plaintext credentials in the response are
+        # exposure as a property of the response, not of the probe.
         if not matched and resp_status not in [404, 401, 403, 405, 429, 502, 503, 504]:
             for sens_pat in self.SENSITIVE_DATA_PATTERNS:
-                if self._evidence_is_new(sens_pat, resp_body, baseline_body):
+                if re.search(sens_pat, resp_body):
                     matched = True
                     has_proof = True
                     attack_type = "Sensitive_Data_Exposure"

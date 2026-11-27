@@ -95,3 +95,17 @@ def test_real_reflected_xss_is_confirmed(det):
     probe = dict(url="http://t/x?name=" + p, payload=p, attack_category="XSS", status_code=200,
                  response_size=len(body), response_headers=HTML, response_body=body)
     assert det.analyze(probe, _base("http://t/x?name=a", "<html>Hello a</html>"))["finding_status"] == "Confirmed"
+
+
+def test_passive_exposure_confirms_even_with_identical_baseline(det):
+    """Regression (found 2026-11-27 on VAmPI _debug): passive exposure is a
+    property of the response, not of the probe. Plaintext credentials in
+    the body must Confirm even when the baseline shows the same body —
+    AUDIT-1's baseline exclusion applies to injection proof only."""
+    body = '{"users": [{"username": "alice", "password": "secret123"}]}'
+    probe = dict(url="http://t/users/v1/_debug", payload="", status_code=200,
+                 response_size=len(body), response_headers=JSON, response_body=body)
+    r = det.analyze(probe, _base("http://t/users/v1/_debug", body))
+    assert r["attack_type"] == "Sensitive_Data_Exposure"
+    assert r["finding_status"] == "Confirmed"
+    assert r["points"] == 35
