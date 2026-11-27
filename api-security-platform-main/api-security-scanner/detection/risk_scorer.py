@@ -20,6 +20,22 @@ class RiskScorer:
     MAX_AE_POINTS = 20.0
     MAX_SUPERVISED_POINTS = 10.0
     MAX_TOTAL_POINTS = 100.0
+
+    # ML/DL weights in the aggregate score — 0.0 since 2026-11-27.
+    # Measured on the labeled pilot set (n=429 pairs, 30 positives;
+    # evaluation/measure_models.py): adding ML/DL points to the signature
+    # score LOWERS pooled PR-AUC (0.797 signature alone -> 0.769 shipped
+    # total). The autoencoder is near chance (0.119 vs 0.07 base rate) and
+    # the ML anomaly score (0.225) and LSTM (0.339) both lose to a simple
+    # rule baseline (0.452). Until a model passes the ablation test, ML/DL
+    # are separate advisory signals, not part of the score: their points
+    # are still recorded (points_breakdown, ml_result, dl_result) so the
+    # UI and exports can show them, but they contribute 0 to total_score.
+    # This also fixes the "score exaggerates" problem: a Confirmed finding
+    # no longer reaches 100 by stacking statistical points on top of a
+    # 40-point signature — it scores 40 + 30 proof bonus = 70.
+    ML_WEIGHT = 0.0
+    DL_WEIGHT = 0.0
     # Bonus added to the raw total when exploit proof is verified. A lone
     # confirmed signature scores 40; with this bonus it reaches 70 (CRITICAL),
     # which is the documented meaning of "CRITICAL is reserved for findings
@@ -209,13 +225,26 @@ class RiskScorer:
             1 if ml_is_anomaly else 0,
             1 if dl_is_suspicious else 0
         ])
+        # ML/DL are advisory (weight 0) — their agreement must not discount
+        # the signature score either. The old hybrid multiplier shrank a
+        # signature-only finding to 0.35x, which is part of why the shipped
+        # total underperformed raw signature points in the ablation. The
+        # multiplier is now 1.0 whenever the signature layer fired;
+        # layers_triggered is still counted (all three layers) for display.
         if has_proof:
             confidence, layers_triggered = 1.0, max(layers_triggered, 1)
         else:
-            confidence, layers_triggered = self.calculate_hybrid_confidence(signature_triggered, ml_is_anomaly, dl_is_suspicious)
+            confidence = 1.0 if signature_triggered else 0.0
 
-        # Calculate combined total score with confidence weighting
-        raw_total = sig_points + ml_points + lstm_points + ae_points + supervised_points
+        # Calculate combined total score with confidence weighting.
+        # ML/DL points carry weight 0 (see ML_WEIGHT/DL_WEIGHT above): the
+        # aggregate is the signature score (+ proof bonus). Their points are
+        # recorded in points_breakdown as advisory signals.
+        raw_total = (
+            sig_points
+            + self.ML_WEIGHT * (ml_points + supervised_points)
+            + self.DL_WEIGHT * (lstm_points + ae_points)
+        )
         if has_proof:
             # Verified exploit proof is the strongest possible signal. A lone
             # confirmed signature (40 pts) could otherwise never reach CRITICAL
@@ -253,9 +282,10 @@ class RiskScorer:
         # D3: a passive observation the signature layer deliberately labeled
         # "Informational" (e.g. missing security headers — a hygiene note, not
         # an attack signal) must stay Informational when there is no verified
-        # proof. ML/DL anomaly points still contribute to the numeric score,
-        # but the status — which is what vulnerability counts are driven by —
-        # must not be promoted to "Suspected" by statistical signal alone.
+        # proof. ML/DL anomaly points are advisory (weight 0) and no longer
+        # contribute to the numeric score, but the status — which is what
+        # vulnerability counts are driven by — must not be promoted to
+        # "Suspected" by statistical signal alone.
         sig_status = str(signature_result.get("finding_status") or "").lower()
         if signature_triggered and not has_proof and sig_status == "informational":
             finding_status = "Informational"
@@ -270,7 +300,9 @@ class RiskScorer:
         elif signature_triggered:
             proof_poc = signature_result.get("proof_of_concept", "") or signature_result.get("pattern_matched", "Signature matched without proof")
         elif final_risk_score > 0.0:
-            proof_poc = f"Multi-layer anomaly score ({final_risk_score}/100) triggered by {layers_triggered}/3 detection layers; exploit proof not established"
+            proof_poc = f"Signature score ({final_risk_score}/100); exploit proof not established"
+            if layers_triggered > 1:
+                proof_poc += f" (ML/DL advisory signals also fired: {layers_triggered}/3 layers)"
         else:
             proof_poc = "No vulnerability or anomaly criteria met"
 
@@ -298,6 +330,8 @@ class RiskScorer:
                 "lstm_points": lstm_points,
                 "autoencoder_points": ae_points,
                 "supervised_points": supervised_points,
+                "ml_weight": self.ML_WEIGHT,
+                "dl_weight": self.DL_WEIGHT,
                 "raw_total_points": raw_total,
                 "confidence_multiplier": confidence
             },

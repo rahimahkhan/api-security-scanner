@@ -10,7 +10,10 @@ def test_risk_scorer_calculations():
 
     res = scorer.calculate_risk(mock_sig, mock_ml, mock_dl, "http://localhost/api", "GET")
     
-    assert res["total_score"] == 100.0  # 70 raw + 30 verified-proof bonus, capped at 100
+    # ML/DL are advisory (weight 0, 2026-11-27 measurement): 40 signature
+    # + 30 verified-proof bonus = 70. The ML (12.5) + LSTM (7.5) + AE (10)
+    # points are recorded in the breakdown but contribute 0 to the score.
+    assert res["total_score"] == 70.0
     assert res["severity"] == "CRITICAL"
     assert res["confidence_level"] == 3
     assert res["finding_status"] == "Confirmed"
@@ -29,7 +32,9 @@ def test_risk_scorer_layer_caps_and_boundaries():
     assert res_cap["points_breakdown"]["ml_points"] == 25.0
     assert res_cap["points_breakdown"]["lstm_points"] == 15.0
     assert res_cap["points_breakdown"]["autoencoder_points"] == 20.0
-    assert res_cap["total_score"] == 100.0
+    # Layer caps still apply to the recorded (advisory) points, but the
+    # score is signature-only: 40 + 30 proof bonus = 70.
+    assert res_cap["total_score"] == 70.0
     assert res_cap["severity"] == "CRITICAL"
 
     # Updated severity boundaries: 0=NONE, 0-15=LOW, 15-39=MEDIUM, 40-69=HIGH, 70+=CRITICAL
@@ -41,7 +46,11 @@ def test_risk_scorer_layer_caps_and_boundaries():
     assert RiskScorer.classify_severity(69.0) == "HIGH"
     assert RiskScorer.classify_severity(70.0) == "CRITICAL"
 
-def test_ml_dl_independent_contribution_and_zero_baseline():
+def test_ml_dl_advisory_only_no_signature_match():
+    """2026-11-27 measurement (pilot set, n=429): ML/DL points are advisory
+    (weight 0). A pure ML/DL anomaly with NO signature match creates no
+    scored finding — it is recorded as an Informational advisory, not a
+    Suspected vulnerability."""
     scorer = RiskScorer()
     
     # 1. Clean request with zero signature/ML/DL points -> Total score 0.0
@@ -54,15 +63,21 @@ def test_ml_dl_independent_contribution_and_zero_baseline():
     assert res_clean["severity"] == "NONE"
     assert res_clean["is_vulnerable"] is False
 
-    # 2. Signature has no proof, ML + DL detect anomalies -> 2 layers -> conf=0.75 -> Score = (12.5 + 7.5 + 10) * 0.75 = 22.5
+    # 2. ML + DL detect anomalies but the signature did not match: the
+    # advisory points are recorded in the breakdown, but the score is 0
+    # and the status is Informational — statistical signal alone is not a
+    # vulnerability.
     mock_sig_no_proof = {"matched": False, "has_proof": False, "attack_type": "SQL_Injection", "points": 40.0}
     mock_ml = {"is_anomaly": True, "points": 12.5}
     mock_dl = {"lstm_points": 7.5, "autoencoder_points": 10.0}
 
     res_anom = scorer.calculate_risk(mock_sig_no_proof, mock_ml, mock_dl, "http://localhost/api", "GET")
-    assert res_anom["total_score"] == 22.5
-    assert res_anom["severity"] == "MEDIUM"
-    assert res_anom["confidence_level"] == 2
+    assert res_anom["total_score"] == 0.0
+    assert res_anom["severity"] == "NONE"
+    assert res_anom["finding_status"] == "Informational"
+    assert res_anom["points_breakdown"]["ml_points"] == 12.5
+    assert res_anom["points_breakdown"]["lstm_points"] == 7.5
+    assert res_anom["points_breakdown"]["autoencoder_points"] == 10.0
 
 
 def test_confirmed_proof_gets_full_confidence_without_layer_agreement():
@@ -83,8 +98,11 @@ def test_confirmed_proof_gets_full_confidence_without_layer_agreement():
 
 
 def test_suspected_findings_capped_below_critical():
-    """A strong multi-layer anomaly WITHOUT exploit proof is capped at HIGH;
-    CRITICAL is reserved for confirmed (proof-backed) findings."""
+    """A signature match WITHOUT exploit proof is capped at HIGH; CRITICAL
+    is reserved for confirmed (proof-backed) findings. With ML/DL advisory
+    (weight 0), the highest possible non-proof score is the signature cap
+    (40), so the cap is unreachable by construction — but the rule stays
+    as a safety net."""
     scorer = RiskScorer()
     mock_sig = {"matched": True, "has_proof": False, "attack_type": "XSS", "points": 40.0}
     mock_ml = {"is_anomaly": True, "points": 20.0}
@@ -94,8 +112,8 @@ def test_suspected_findings_capped_below_critical():
         mock_sig, mock_ml, mock_dl, "http://localhost/api", "GET",
         telemetry_data={"status_code": 200, "response_size": 100, "response_time": 0.1},
     )
-    assert res["total_score"] >= 70.0  # raw strength would be CRITICAL
-    assert res["severity"] == "HIGH"   # ...but proof-gating caps it
+    assert res["total_score"] == 40.0  # signature only; ML/DL weight 0
+    assert res["severity"] == "HIGH"   # ...and proof-gating caps it there
     assert res["is_vulnerable"] is False
     assert res["finding_status"] == "Suspected"
 
@@ -112,9 +130,9 @@ def test_suspected_findings_capped_below_critical():
 def test_passive_informational_note_stays_informational():
     """D3: the signature layer labels missing security headers as
     Informational (a hygiene note, no exploit proof). ML/DL anomaly points
-    still contribute to the numeric score, but the status must not be
-    promoted to Suspected — status is what vulnerability counts are
-    driven by."""
+    are advisory (weight 0) and no longer contribute to the numeric score,
+    but the status must not be promoted to Suspected — status is what
+    vulnerability counts are driven by."""
     scorer = RiskScorer()
     sig = {
         "matched": True,
@@ -147,10 +165,10 @@ def test_passive_informational_note_stays_informational():
     assert s["informational"] == 1
 
 
-def test_signature_suspected_without_match_still_suspected():
-    """Sanity on the D3 boundary: a pure ML anomaly lead with NO signature
-    match (signature status absent) keeps the intended Suspected status —
-    only signature-labeled Informational notes are pinned down."""
+def test_ml_only_anomaly_is_informational_advisory():
+    """A pure ML anomaly lead with NO signature match is now Informational
+    (advisory only) — statistical signal alone is not a vulnerability.
+    The advisory points are still recorded in the breakdown."""
     scorer = RiskScorer()
     res = scorer.calculate_risk(
         {"matched": False, "has_proof": False, "points": 0.0},
@@ -159,7 +177,9 @@ def test_signature_suspected_without_match_still_suspected():
         "http://localhost/api", "GET",
         telemetry_data={"status_code": 200, "response_size": 500, "response_time": 0.2},
     )
-    assert res["finding_status"] == "Suspected"
+    assert res["total_score"] == 0.0
+    assert res["finding_status"] == "Informational"
+    assert res["points_breakdown"]["ml_points"] == 22.0
 
 
 def test_confirmed_note_not_pinned_to_informational():
