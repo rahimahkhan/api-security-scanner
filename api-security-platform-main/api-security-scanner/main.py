@@ -23,6 +23,7 @@ from detection.risk_scorer import RiskScorer
 from database.db import init_db, save_scan_session, save_endpoint, save_finding, complete_scan_session, fail_scan_session, update_scan_progress, get_session, get_session_findings, get_session_for_user, set_session_total_endpoints
 from database.models import parse_skipped_endpoints
 from dashboard.results_grouping import summarize_findings
+from ml_pipeline.telemetry_schema import build_telemetry_record
 from config.settings import MAX_ENDPOINTS, SCAN_TIMEOUT
 from core.concurrency import (
     BoundedSlot, SlotTimeout, run_bounded_pool, get_stop_event, release_stop_event,
@@ -563,6 +564,96 @@ def _balanced_quote_control(payload):
     if not payload or ("'" not in payload and '"' not in payload):
         return None
     return "''"
+
+
+# --- Dataset logging (2026-11-27) -------------------------------------------
+# When DATASET_LOG_DIR is set, every dispatched (baseline, probe) response
+# pair is appended as one JSON line to dataset-session-<id>.jsonl in that
+# directory. That file IS the dataset record the ML work is trained on:
+# raw bodies for the response-body LSTM, the 17-feature dict for the
+# tabular models, and a label from the proof-based rule in
+# ml_pipeline/telemetry_schema (a row is "confirmed" only with proof,
+# never from payload text). Off by default; logging never breaks a scan.
+_DATASET_LOG_LOCK = threading.Lock()
+_DATASET_BODY_CAP = 100_000
+
+
+def _dataset_log_path(session_id):
+    directory = os.getenv("DATASET_LOG_DIR", "")
+    if not directory:
+        return None
+    os.makedirs(directory, exist_ok=True)
+    return os.path.join(directory, f"dataset-session-{session_id}.jsonl")
+
+
+def _cap_body(body):
+    body = body or ""
+    if len(body) > _DATASET_BODY_CAP:
+        return body[:_DATASET_BODY_CAP], True
+    return body, False
+
+
+def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
+                     payload_str, baseline_telemetry, req_data, features,
+                     sig_res, risk_summary):
+    """Append one raw (baseline, probe) pair to the dataset log.
+
+    Called for EVERY dispatched probe, not just findings — clean pairs are
+    the negative class. Never raises: a logging failure is warned, never
+    fatal to the scan.
+    """
+    path = _dataset_log_path(session_id)
+    if path is None:
+        return
+    try:
+        row = build_telemetry_record(
+            dict(features or {}),
+            finding_status=risk_summary.get("finding_status"),
+            has_proof=bool(sig_res.get("has_proof")),
+            response_status=req_data.get("status_code"),
+            attack_type=sig_res.get("attack_type") or "None",
+            target_id=target_url,
+            endpoint_id=test_url,
+            payload_family=test_item.get("type", ""),
+        )
+        baseline_body, baseline_truncated = _cap_body(
+            baseline_telemetry.get("response_body", ""))
+        probe_body, probe_truncated = _cap_body(req_data.get("response_body", ""))
+        record = {
+            "session_id": session_id,
+            "target_url": target_url,
+            "endpoint_url": test_url,
+            "http_method": test_method,
+            "probe_type": test_item.get("type", ""),
+            "payload": payload_str,
+            "baseline": {
+                "status_code": baseline_telemetry.get("status_code"),
+                "response_time": baseline_telemetry.get("response_time"),
+                "response_size": baseline_telemetry.get("response_size"),
+                "response_body": baseline_body,
+                "truncated": baseline_truncated,
+            },
+            "probe": {
+                "status_code": req_data.get("status_code"),
+                "response_time": req_data.get("response_time"),
+                "response_size": req_data.get("response_size"),
+                "response_body": probe_body,
+                "truncated": probe_truncated,
+            },
+            "finding": {
+                "attack_type": sig_res.get("attack_type"),
+                "finding_status": risk_summary.get("finding_status"),
+                "has_proof": bool(sig_res.get("has_proof")),
+                "score": risk_summary.get("total_score"),
+                "severity": risk_summary.get("severity"),
+            },
+            "telemetry": row,
+        }
+        with _DATASET_LOG_LOCK:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+    except Exception as exc:
+        logger.warning("Dataset logging failed for %s: %s", test_url, exc)
 
 
 def _control_request(test_url, payload_str, query_params, form_data, json_payload, control_payload):
@@ -1271,6 +1362,14 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
 
                     score = risk_summary["total_score"]
                     severity = risk_summary["severity"]
+
+                    # Dataset record: log the raw (baseline, probe) pair for
+                    # every dispatched probe (clean pairs are the negative
+                    # class). Gated by DATASET_LOG_DIR; never breaks a scan.
+                    log_dataset_pair(
+                        session_obj.id, target_url, test_item, test_method,
+                        test_url, payload_str, baseline_telemetry, req_data,
+                        features, sig_res, risk_summary)
 
                     # Print Console Breakdown
                     print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")

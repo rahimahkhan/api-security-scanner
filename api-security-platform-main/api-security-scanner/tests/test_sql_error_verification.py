@@ -123,3 +123,41 @@ def test_sql_error_control_rebinds_query_param_payload():
     url, q, f, j = _control_request(
         "http://t/users/v1/name1'", "'", None, None, None, "''")
     assert url == "http://t/users/v1/name1''"
+
+
+def test_dataset_logging_records_baseline_probe_pair(tmp_path, monkeypatch):
+    """Dataset work (2026-11-27): with DATASET_LOG_DIR set, every probe
+    writes one JSON line with the raw baseline + probe bodies and a
+    proof-based label. Off by default (no dir set -> no file, no error)."""
+    import json
+    import main as main_mod
+
+    monkeypatch.setenv("DATASET_LOG_DIR", str(tmp_path))
+    main_mod.log_dataset_pair(
+        session_id=7, target_url="http://t", test_item={"type": "SQL_Injection_Error"},
+        test_method="GET", test_url="http://t/sqli?id=1", payload_str="'",
+        baseline_telemetry={"status_code": 200, "response_time": 0.1,
+                            "response_size": 12, "response_body": '{"id": "1"}'},
+        req_data={"status_code": 500, "response_time": 0.12,
+                  "response_size": 40, "response_body": "SQL syntax error"},
+        features={"payload_length": 1},
+        sig_res={"attack_type": "SQL_Injection", "has_proof": True},
+        risk_summary={"finding_status": "Confirmed", "total_score": 100.0,
+                      "severity": "CRITICAL"})
+    path = tmp_path / "dataset-session-7.jsonl"
+    assert path.exists()
+    rec = json.loads(path.read_text().splitlines()[0])
+    assert rec["baseline"]["response_body"] == '{"id": "1"}'
+    assert rec["probe"]["response_body"] == "SQL syntax error"
+    assert rec["telemetry"]["label_name"] == "confirmed"
+    assert rec["telemetry"]["label"] == 1
+    assert rec["finding"]["finding_status"] == "Confirmed"
+
+    # Off by default: no env var -> no file, no exception.
+    monkeypatch.delenv("DATASET_LOG_DIR")
+    main_mod.log_dataset_pair(
+        session_id=8, target_url="http://t", test_item={"type": "XSS"},
+        test_method="GET", test_url="http://t/x", payload_str="<x>",
+        baseline_telemetry={}, req_data={}, features={},
+        sig_res={}, risk_summary={})
+    assert not (tmp_path / "dataset-session-8.jsonl").exists()
