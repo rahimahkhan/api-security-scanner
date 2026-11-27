@@ -38,7 +38,7 @@ import torch
 import torch.nn as nn
 
 from config.settings import MODELS_DIR
-from training.train_lstm import PayloadLSTM, build_char_vocab, encode_text
+from detection.models import PayloadLSTM, build_char_vocab, encode_text
 
 DATA_PATH = ROOT_DIR / "ml_pipeline" / "datasets" / "response_bodies_v1.csv"
 MAX_LEN = 512

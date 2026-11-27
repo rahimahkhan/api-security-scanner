@@ -19,8 +19,8 @@ from config.settings import MODELS_DIR, RESPONSE_LSTM_PATH, AUTOENCODER_PATH
 # (ml_pipeline/feature_extractor.py). The autoencoder is retrained on this
 # schema; its input_dim follows FEATURE_KEYS instead of a hardcoded 17.
 from ml_pipeline.feature_extractor import FEATURE_KEYS
-from training.train_lstm import PayloadLSTM, encode_text
-from training.train_autoencoder import FeatureAutoencoder
+from detection.models import PayloadLSTM, encode_text
+from detection.models import FeatureAutoencoder
 
 class DeepLearningDetector:
     """

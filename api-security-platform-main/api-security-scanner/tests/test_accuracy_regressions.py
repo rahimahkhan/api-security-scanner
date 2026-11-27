@@ -114,17 +114,6 @@ def test_unauthenticated_sensitive_data_is_suspected_not_confirmed_bola():
     assert result["is_vulnerable"] is False
 
 
-def test_missing_dataset_is_not_replaced_with_fake_labels(tmp_path):
-    from training.evaluate_models import PlatformEvaluator
-
-    evaluator = PlatformEvaluator(test_csv_path=str(tmp_path / "missing.csv"))
-    results = evaluator.evaluate_test_set()
-    assert results["evaluation_status"] == "dataset_missing"
-    assert results["combined_pipeline"]["precision"] is None
-    assert results["combined_pipeline"]["recall"] is None
-    assert results["combined_pipeline"]["f1_score"] is None
-
-
 def test_endpoint_payload_binding_uses_discovered_form_field():
     from main import _bind_payload_to_endpoint
 

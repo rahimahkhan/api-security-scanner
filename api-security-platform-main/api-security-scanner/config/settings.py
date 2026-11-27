@@ -16,7 +16,7 @@ DATASETS_DIR = str(BASE_DIR / "datasets")
 # NOTE: Layer 3 (detection/deep_learning.py) loads these with torch.load() on a
 # state_dict. The response-body LSTM is written by
 # ml_pipeline/train_response_lstm.py and the autoencoder by
-# training/train_autoencoder.py (see models/model_manifest.json).
+# ml_pipeline/train_csic.py train_pipeline() (see models/model_manifest.json).
 ISOLATION_FOREST_PATH = os.path.join(MODELS_DIR, "isolation_forest.pkl")
 TABULAR_RANKER_PATH = os.path.join(MODELS_DIR, "tabular_ranker.pkl")
 RESPONSE_LSTM_PATH = os.path.join(MODELS_DIR, "response_lstm.pt")

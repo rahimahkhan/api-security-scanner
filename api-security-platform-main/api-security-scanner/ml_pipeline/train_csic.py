@@ -41,7 +41,7 @@ sys.path.insert(0, str(ROOT_DIR))
 from config.settings import MODELS_DIR
 from ml_pipeline.feature_extractor import FEATURE_KEYS, SCHEMA_VERSION
 from ml_pipeline.train_response_lstm import train_response_lstm
-from training.train_autoencoder import FeatureAutoencoder
+from detection.models import FeatureAutoencoder
 
 DEFAULT_DATA = ROOT_DIR / "ml_pipeline" / "datasets" / "response_diff_v1.csv"
 

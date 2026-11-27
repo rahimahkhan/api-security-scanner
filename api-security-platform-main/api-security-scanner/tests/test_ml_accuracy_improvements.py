@@ -2,7 +2,7 @@ import numpy as np
 
 from detection.ml_model import MLAnomalyDetector
 from detection.risk_scorer import RiskScorer
-from training.telemetry_schema import build_telemetry_record, label_from_result
+from ml_pipeline.telemetry_schema import build_telemetry_record, label_from_result
 
 
 def test_telemetry_label_requires_proof_for_confirmation():
