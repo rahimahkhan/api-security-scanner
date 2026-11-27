@@ -8,10 +8,17 @@ username values are ONE bug, not four.
 
 Input:
   --ground-truth  YAML with items: id, template, parameter, category,
-                  how_verified, date, added_after_scan
+                  how_verified, date, added_after_scan, modes
   --findings      findings .txt from a scan run (lines like
                   "[Confirmed] CRITICAL SQL_Injection :: <url> (score=100.0)")
   --run-name      label for this run (e.g. vampi-vuln-2026-11-27)
+  --mode          run mode to score in (e.g. vulnerable, safe). Items whose
+                  `modes` list does not contain it are excluded — a safe
+                  twin has none of the vulnerable-mode bugs, so scoring it
+                  against the full list reports phantom "TP" matches on
+                  findings that are false alarms by construction. Items
+                  with no `modes` list match any mode. Omit for the old
+                  behaviour (all items apply).
   --out-dir       where to store the dated result files (default: alongside
                   the findings file)
 
@@ -74,14 +81,21 @@ def load_findings(path):
     return findings
 
 
-def score(ground_truth_path, findings_path):
+def score(ground_truth_path, findings_path, mode=None):
     """Score one findings file against a ground-truth YAML.
 
     Returns the report dict (also written to disk by main()). Counts
     unique bugs by (template, parameter, category), never raw rows.
+    When `mode` is given, only ground-truth items whose `modes` list
+    contains it (or that have no `modes` list) are scored — a safe-twin
+    run scored without this reports phantom TP matches on findings that
+    are false alarms by construction.
     """
     gt = yaml.safe_load(Path(ground_truth_path).read_text())
     items = gt["items"]
+    if mode:
+        items = [it for it in items
+                 if not it.get("modes") or mode in it["modes"]]
     for item in items:
         item["_regex"] = template_regex(item["template"])
     findings = load_findings(findings_path)
@@ -166,6 +180,7 @@ def score(ground_truth_path, findings_path):
     return {
         "ground_truth": str(ground_truth_path),
         "findings_file": str(findings_path),
+        "mode": mode,
         "ground_truth_items": total,
         "raw_findings": len(findings),
         "confirmed": {
@@ -197,10 +212,14 @@ def main():
     ap.add_argument("--ground-truth", required=True)
     ap.add_argument("--findings", required=True)
     ap.add_argument("--run-name", required=True)
+    ap.add_argument("--mode", default=None,
+                    help="run mode to score in (e.g. vulnerable, safe); "
+                         "ground-truth items not listed for this mode "
+                         "are excluded")
     ap.add_argument("--out-dir", default=None)
     args = ap.parse_args()
 
-    report = score(args.ground_truth, args.findings)
+    report = score(args.ground_truth, args.findings, mode=args.mode)
     today = date.today().isoformat()
     report["run"] = args.run_name
     report["date"] = today
@@ -236,6 +255,16 @@ def main():
         "",
         f"Ground truth: {total} items ({args.ground_truth})",
         f"Findings file: {args.findings} ({raw_findings} raw rows)",
+    ]
+    if args.mode:
+        md.append(f"Mode: {args.mode} (ground-truth items filtered to this mode)")
+    if args.mode and total == 0:
+        md.append("")
+        md.append("**No ground-truth items apply in this mode — every "
+                  "Confirmed/Suspected finding is a false alarm by "
+                  "construction. Recall is meaningless here; the FP "
+                  "counts below are the false-alarm rate.**")
+    md += [
         "",
         "## Confirmed only (unique bugs)",
         f"- TP: {tp_confirmed} / {total} — recall **{recall_confirmed:.0%}**",
@@ -285,6 +314,9 @@ def main():
 
     print(f"Run: {args.run_name} ({today})")
     print(f"Ground truth: {total} items; raw findings: {raw_findings}")
+    if args.mode and total == 0:
+        print(f"No ground-truth items apply in mode '{args.mode}' — "
+              f"every finding is a false alarm by construction.")
     print(f"Confirmed: TP {tp_confirmed}, FP {fp_c}, "
           f"recall {recall_confirmed:.0%}, precision {precision_confirmed:.0%} "
           f"(n={n_precision_c})")

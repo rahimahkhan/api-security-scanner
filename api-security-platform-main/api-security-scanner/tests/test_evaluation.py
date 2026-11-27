@@ -86,6 +86,83 @@ def test_missing_input_is_not_replaced_with_fake_numbers(tmp_path):
               _write(tmp_path, "findings.txt", ""))
 
 
+# --- scorer --mode ----------------------------------------------------------
+GT_MODED = """items:
+  - id: M-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "manual"
+    date: 2026-11-27
+    added_after_scan: false
+  - id: M-02
+    template: /api/error
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable, safe]
+    how_verified: "manual"
+    date: 2026-11-27
+    added_after_scan: false
+"""
+
+
+def test_scorer_mode_filters_ground_truth(tmp_path):
+    """Mode-scoped items only score in their mode: a safe-twin run must
+    not report phantom TP matches on findings that are false alarms by
+    construction (the 2026-11-27 fastapi safe run printed 'TP 4, recall
+    44%' against vuln-only ground truth)."""
+    gt = _write(tmp_path, "gt.yaml", GT_MODED)
+    findings = _write(tmp_path, "findings.txt",
+        "[Confirmed] CRITICAL SQL_Injection :: "
+        "http://127.0.0.1:13312/api/posts/search?q=x (score=70.0)\n"
+        "[Suspected] HIGH Verbose_Error_Exposure :: "
+        "http://127.0.0.1:13312/api/error (score=40.0)\n")
+    # Vulnerable mode: both items apply.
+    report = score(gt, findings, mode="vulnerable")
+    assert report["ground_truth_items"] == 2
+    assert report["confirmed"]["tp_unique_bugs"] == 1
+    assert report["confirmed_plus_suspected"]["tp_unique_bugs"] == 2
+    # Safe mode: only the shared item applies; the SQLi finding is an FP.
+    report = score(gt, findings, mode="safe")
+    assert report["ground_truth_items"] == 1
+    assert report["confirmed"]["tp_unique_bugs"] == 0
+    assert report["confirmed"]["fp_unique_pairs"] == 1
+    assert report["confirmed_plus_suspected"]["tp_unique_bugs"] == 1
+    assert report["confirmed_plus_suspected"]["fp_unique_pairs"] == 1
+    assert report["missed_bugs"] == []
+    # No mode: old behaviour — all items apply.
+    report = score(gt, findings)
+    assert report["ground_truth_items"] == 2
+    assert report["mode"] is None
+
+
+def test_scorer_safe_mode_with_no_applicable_items(tmp_path):
+    """When no ground-truth item applies in the mode, the run scores
+    zero items and every finding is an FP — never a phantom recall."""
+    gt_vuln_only = """items:
+  - id: GT-01
+    template: /users/v1/{username}
+    parameter: username (path)
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "manual"
+    date: 2026-11-27
+    added_after_scan: false
+"""
+    gt = _write(tmp_path, "gt.yaml", gt_vuln_only)
+    findings = _write(tmp_path, "findings.txt",
+        "[Confirmed] CRITICAL SQL_Injection :: "
+        "http://127.0.0.1:5000/users/v1/name1' (score=70.0)\n")
+    report = score(gt, findings, mode="safe")
+    assert report["ground_truth_items"] == 0
+    assert report["confirmed"]["tp_unique_bugs"] == 0
+    assert report["confirmed"]["fp_unique_pairs"] == 1
+    assert report["confirmed"]["recall"] == 0.0
+    assert report["confirmed"]["precision"] == 0.0
+    assert report["mode"] == "safe"
+
+
 # --- label_dataset.py -------------------------------------------------------
 GT_LABEL = """
 items:
