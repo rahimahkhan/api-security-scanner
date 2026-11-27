@@ -1,0 +1,365 @@
+# Juice Shop ground truth — written BEFORE any scan (2026-11-27).
+#
+# Source: the app's own challenge list (GET /api/Challenges, 118 challenges,
+# fetched 2026-11-27) plus the route handlers in server.ts / routes/*.ts that
+# prove each vulnerability's endpoint. A challenge is IN SCOPE iff it is
+# exercisable through the REST API without browser interaction AND is a
+# security bug a generic API scanner could in principle test. 38 of 118
+# challenges are in scope below; the rest are excluded by rule, not by
+# difficulty:
+#   - UI/DOM-only XSS (localXss, videoXss, usernameXss, xssBonus, svgInjection)
+#   - Business logic / easter eggs (coupons, NFTs, web3, deluxe, clock, codes)
+#   - LLM / chatbot prompt injection (4 challenges; need the optional LLM)
+#   - Crypto puzzles, component advisories, typosquatting (report, not probe)
+#   - CSRF, CAPTCHA bypass, timing attacks (need a browser / statistics)
+#   - Credential guessing (loginAmy/Rapper/Support, weakPassword, dlpPasswordSpraying)
+#   - Password-reset flows (need the victim's security answers)
+#   - Passkeys / WebAuthn, policy files, steganography
+# Items sharing one (template, parameter, category) are ONE bug — several
+# challenges can document the same sink (e.g. the /ftp exposure enables six
+# challenges). Categories with no scanner check (NoSQL_Injection, JWT_Weak_Key,
+# SSTI, Insecure_Deserialization, File_Upload, Security_Misconfiguration,
+# Improper_Input_Validation, Arbitrary_File_Write, Broken_Authentication) are
+# honest coverage gaps and count as missed until a check exists.
+items:
+  - id: JS-01
+    template: /rest/products/search
+    parameter: q (query)
+    category: SQL_Injection
+    challenges: [unionSqlInjectionChallenge, dbSchemaChallenge]
+    how_verified: "Juice Shop challenges: retrieve all user credentials via SQLi; exfiltrate the DB schema via SQLi. Endpoint GET /rest/products/search in server.ts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-02
+    template: /rest/user/login
+    parameter: email (form)
+    category: SQL_Injection
+    challenges: [loginAdminChallenge, loginBenderChallenge, loginJimChallenge, ephemeralAccountantChallenge]
+    how_verified: "Juice Shop challenges: log in as admin / Bender / Jim, or as the non-existing accountant, via SQLi. Endpoint POST /rest/user/login in server.ts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-03
+    template: /rest/basket/{id}
+    parameter: id (path)
+    category: NoSQL_Injection
+    challenges: [noSqlOrdersChallenge]
+    how_verified: "Juice Shop challenge: retrieve all orders (NoSQL exfiltration). routes/basket.ts passes req.params.id straight into BasketModel.findOne({ where: { id } }). No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-04
+    template: /rest/products/{id}/reviews
+    parameter: id (path)
+    category: NoSQL_Injection
+    challenges: [noSqlReviewsChallenge]
+    how_verified: "Juice Shop challenge: update multiple product reviews at once (NoSQL manipulation). routes/createProductReviews.ts takes the product id from req.params.id. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-05
+    template: /rest/products/search
+    parameter: q (query)
+    category: NoSQL_Injection
+    challenges: [noSqlCommandChallenge]
+    how_verified: "Juice Shop challenge: make the server sleep via a NoSQL command (DoS). Same search endpoint as JS-01; the NoSQL operator reaches the query layer. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-06
+    template: /api/Products
+    parameter: name/description (JSON)
+    category: XSS
+    challenges: [restfulXssChallenge]
+    how_verified: "Juice Shop challenge: persisted XSS with <iframe src=\"javascript:alert(`xss`)\"> via the API only (create a product through the REST API). Endpoint POST /api/Products."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-07
+    template: /api/Users
+    parameter: email/username (JSON)
+    category: XSS
+    challenges: [persistedXssUserChallenge]
+    how_verified: "Juice Shop challenge: persisted XSS via user registration, bypassing client-side protection. Endpoint POST /api/Users."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-08
+    template: /api/Feedbacks
+    parameter: comment (JSON)
+    category: XSS
+    challenges: [persistedXssFeedbackChallenge]
+    how_verified: "Juice Shop challenge: persisted XSS via customer feedback, bypassing server-side protection. Endpoint POST /api/Feedbacks."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-09
+    template: /rest/products/search
+    parameter: q (query)
+    category: XSS
+    challenges: [reflectedXssChallenge]
+    how_verified: "Juice Shop challenge: reflected XSS via the search query. Endpoint GET /rest/products/search in server.ts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-10
+    template: /rest/user/login
+    parameter: True-Client-IP (header)
+    category: XSS
+    challenges: [httpHeaderXssChallenge]
+    how_verified: "Juice Shop challenge: persisted XSS through an HTTP header. routes/saveLoginIp.ts stores req.headers['true-client-ip'] as lastLoginIp without sanitizing when the challenge is enabled; the value is displayed later. Login endpoint POST /rest/user/login."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-11
+    template: /rest/basket/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    challenges: [basketAccessChallenge, basketManipulateChallenge]
+    how_verified: "Juice Shop challenges: view another user's shopping basket; put a product into another user's basket. Endpoint GET/POST /rest/basket/:id (routes/basket.ts, no ownership check on the id)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-12
+    template: /rest/products/{id}/reviews
+    parameter: userId (JSON)
+    category: BOLA_IDOR
+    challenges: [forgedReviewChallenge]
+    how_verified: "Juice Shop challenge: post a product review as another user or edit any user's review. Endpoint POST /rest/products/:id/reviews."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-13
+    template: /api/Feedbacks
+    parameter: userId (JSON)
+    category: BOLA_IDOR
+    challenges: [forgedFeedbackChallenge, feedbackChallenge]
+    how_verified: "Juice Shop challenges: post feedback in another user's name; delete all 5-star feedback. Endpoint /api/Feedbacks (POST/DELETE)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-14
+    template: /api/Users
+    parameter: id (path)
+    category: BOLA_IDOR
+    challenges: [adminSectionChallenge]
+    how_verified: "Juice Shop challenge: access the administration section (the user list) without admin rights. Endpoint GET /api/Users."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-15
+    template: /rest/user/data-export
+    parameter: userId (JSON)
+    category: BOLA_IDOR
+    challenges: [dataExportChallenge]
+    how_verified: "Juice Shop challenge: steal someone else's personal data without using injection. Endpoint POST /rest/user/data-export in server.ts (routes/dataExport.ts)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-16
+    template: /api/Products/{id}
+    parameter: href (JSON)
+    category: BOLA_IDOR
+    challenges: [changeProductChallenge]
+    how_verified: "Juice Shop challenge: change the href link of a product (product tampering). Endpoint PUT /api/Products/:id."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-17
+    template: /api/Users
+    parameter: role (JSON)
+    category: Mass_Assignment
+    challenges: [registerAdminChallenge]
+    how_verified: "Juice Shop challenge: register as a user with administrator privileges. Endpoint POST /api/Users accepts a role field."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-18
+    template: /api/Users
+    parameter: password (hash)
+    category: Sensitive_Data_Exposure
+    challenges: [passwordHashLeakChallenge]
+    how_verified: "Juice Shop challenge: obtain the password hash of the currently logged-in user directly from a REST API endpoint. Endpoint GET /api/Users returns the hash."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-19
+    template: /ftp/{file}
+    parameter: file (path)
+    category: Sensitive_Data_Exposure
+    challenges: [directoryListingChallenge, forgottenBackupChallenge, forgottenDevBackupChallenge, misplacedSignatureFileChallenge, retrieveBlueprintChallenge, loginSupportChallenge]
+    how_verified: "Juice Shop challenges: confidential document, sales + developer backup files, misplaced SIEM signature file, product blueprint, support-team key database (incident-support.kdbx). One root cause: the /ftp folder is served (routes/fileServer.ts sends any file under ftp/; lib/antiCheat.ts maps these challenges to /ftp). One bug, six challenges."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-20
+    template: /metrics
+    parameter: null
+    category: Sensitive_Data_Exposure
+    challenges: [exposedMetricsChallenge]
+    how_verified: "Juice Shop challenge: find the endpoint serving usage data to be scraped by Prometheus. Endpoint GET /metrics in server.ts (the source even tags the line exposedMetricsChallenge)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-21
+    template: /infrastructure
+    parameter: null
+    category: Sensitive_Data_Exposure
+    challenges: [misplacedIacFiles, iacLeakedKeyChallenge]
+    how_verified: "Juice Shop challenges: access misplaced Infrastructure as Code files; log in as the cloud admin with the leaked key from them. lib/antiCheat.ts maps misplacedIacFiles to /infrastructure."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-22
+    template: /api/Products
+    parameter: null
+    category: Sensitive_Data_Exposure
+    challenges: [dlpPastebinDataLeakChallenge]
+    how_verified: "Juice Shop challenge: identify an unsafe product removed from the shop — it is still listed through the API. Endpoint GET /api/Products."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-23
+    template: /api/Users
+    parameter: totpSecret (JSON)
+    category: Sensitive_Data_Exposure
+    challenges: [twoFactorAuthUnsafeSecretStorageChallenge]
+    how_verified: "Juice Shop challenge: solve the 2FA challenge for user wurstbrot — the TOTP secret is stored on the user record (routes/2fa.ts uses user.totpSecret) and retrievable through the user API. Endpoint GET /api/Users."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-24
+    template: /rest/user/whoami
+    parameter: null
+    category: Sensitive_Data_Exposure
+    challenges: [emailLeakChallenge]
+    how_verified: "Juice Shop challenge: unwanted information disclosure by accessing data cross-domain. routes/currentUser.ts solves emailLeakChallenge on the current-user endpoint. Endpoint GET /rest/user/whoami in server.ts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-25
+    template: "*"
+    parameter: null
+    category: Verbose_Error_Exposure
+    challenges: [errorHandlingChallenge]
+    how_verified: "Juice Shop challenge: provoke an error that is neither gracefully nor consistently handled (verbose error leak). App-wide; any endpoint that errors verbosely counts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-26
+    template: "*"
+    parameter: null
+    category: JWT_Weak_Key
+    challenges: [jwtUnsignedChallenge, jwtForgedChallenge]
+    how_verified: "Juice Shop challenges: forge an unsigned JWT impersonating jwtn3d@juice-sh.op; forge an RSA-signed JWT impersonating rsa_lord@juice-sh.op. routes/verify.ts jwtChallenges() checks both. The token is used on every authenticated endpoint. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-27
+    template: /rest/user/change-password
+    parameter: current/new password (JSON)
+    category: Broken_Authentication
+    challenges: [changePasswordBenderChallenge]
+    how_verified: "Juice Shop challenge: change Bender's password into slurmCl4ssic without SQLi or Forgot Password. Endpoint POST /rest/user/change-password (routes/changePassword.ts). No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-28
+    template: /rest/user/login
+    parameter: email (form)
+    category: Broken_Authentication
+    challenges: [ghostLoginChallenge]
+    how_verified: "Juice Shop challenge: log in with Chris' erased user account (GDPR erasure did not actually delete it). Endpoint POST /rest/user/login. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-29
+    template: /redirect
+    parameter: to (query)
+    category: Open_Redirect
+    challenges: [redirectChallenge, redirectCryptoCurrencyChallenge]
+    how_verified: "Juice Shop challenges: enforce a redirect to a page not on the allowlist; redirect to a de-listed crypto address. Endpoint GET /redirect in server.ts (routes/redirect.ts)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-30
+    template: /file-upload
+    parameter: file (XML)
+    category: XXE
+    challenges: [xxeFileDisclosureChallenge, xxeDosChallenge]
+    how_verified: "Juice Shop challenges: retrieve /etc/passwd via XXE; XXE denial of service. Endpoint POST /file-upload in server.ts runs handleXmlUpload on the uploaded file. lib/antiCheat.ts couples uploadType/uploadSize with the XXE challenges (same /file-upload surface)."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-31
+    template: /profile/image/url
+    parameter: imageUrl (JSON)
+    category: SSRF
+    challenges: [ssrfChallenge]
+    how_verified: "Juice Shop challenge: request a hidden resource on the server through the server. routes/profileImageUrlUpload.ts fetches req.body.imageUrl with the server (fetch(url)) and flags abused_ssrf_bug. Endpoint POST /profile/image/url in server.ts."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-32
+    template: /api/Users/{id}
+    parameter: username (JSON)
+    category: SSTI
+    challenges: [sstiChallenge]
+    how_verified: "Juice Shop challenge: infect the server via server-side template injection. routes/userProfile.ts evals a username matching #{...} (abused_ssti_bug). The username is set through PUT /api/Users/:id. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-33
+    template: /b2b/v2/orders
+    parameter: order (JSON/XML body)
+    category: Insecure_Deserialization
+    challenges: [rceChallenge, rceOccupyChallenge]
+    how_verified: "Juice Shop challenges: remote code execution (blocked RCE DoS / successful RCE DoS) via the B2B order endpoint. lib/antiCheat.ts maps both challenges to /b2b/v2/orders. Endpoint POST /b2b/v2/orders in server.ts. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-34
+    template: /file-upload
+    parameter: file (YAML)
+    category: Insecure_Deserialization
+    challenges: [yamlBombChallenge]
+    how_verified: "Juice Shop challenge: drop a YAML bomb into a vulnerable file-handling endpoint (memory bomb). Endpoint POST /file-upload in server.ts runs handleYamlUpload. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-35
+    template: /file-upload
+    parameter: file (multipart)
+    category: File_Upload
+    challenges: [uploadTypeChallenge, uploadSizeChallenge, nullByteChallenge]
+    how_verified: "Juice Shop challenges: upload a file with no .pdf/.zip extension; upload a file larger than 100 kB; bypass a control with a poison null byte. Endpoint POST /file-upload in server.ts (checkUploadSize, checkFileType). No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-36
+    template: /b2b/v2/orders
+    parameter: null
+    category: Security_Misconfiguration
+    challenges: [deprecatedInterfaceChallenge]
+    how_verified: "Juice Shop challenge: use a deprecated B2B interface that was not properly shut down. Endpoint POST /b2b/v2/orders in server.ts (behind /b2b/v2 auth). No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-37
+    template: /api/Users
+    parameter: email/password (JSON)
+    category: Improper_Input_Validation
+    challenges: [emptyUserRegistration]
+    how_verified: "Juice Shop challenge: register a user with an empty email and password. Endpoint POST /api/Users. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
+
+  - id: JS-38
+    template: /file-upload
+    parameter: file (filename traversal)
+    category: Arbitrary_File_Write
+    challenges: [fileWriteChallenge]
+    how_verified: "Juice Shop challenge: overwrite the /ftp/legal.md file. The file-upload handler writes the uploaded file using its supplied filename, so a traversal filename reaches /ftp. Endpoint POST /file-upload in server.ts. No scanner check exists."
+    date: 2026-11-27
+    added_after_scan: false
