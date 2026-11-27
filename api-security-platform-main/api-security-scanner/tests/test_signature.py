@@ -55,6 +55,45 @@ def test_signature_xss_detection():
     assert res_refl["confidence"] == "High"
     assert res_refl["points"] == 40
 
+
+def test_signature_xss_not_stolen_by_sql_error_evidence():
+    """An XSS payload that ALSO triggers a SQL error must stay XSS when
+    the reflection proof holds. The cross-category sweep's guard omitted
+    XSS, so the finding was stolen by SQL_Injection (php DynaST PH-06,
+    2026-11-27: the XSS payload's quote broke the query, the response
+    showed both reflection and a SQL error, and the Confirmed XSS never
+    reached the findings file)."""
+    detector = SignatureDetector()
+    payload = "<script>alert('xss')</script>"
+    baseline = {
+        "response_body": "<html><body>Search results</body></html>",
+        "status_code": 200,
+        "response_size": 100,
+    }
+    sample = {
+        "url": "http://127.0.0.1:13323/search.php?q=Acme",
+        "payload": payload,
+        "attack_category": "Cross_Site_Scripting",
+        "status_code": 200,
+        "response_size": 300,
+        "response_headers": {"Content-Type": "text/html"},
+        "response_body": "<html><body>Search: <script>alert('xss')</script> "
+                         "You have an error in your SQL syntax near ''</body></html>",
+    }
+    res = detector.analyze(sample, baseline)
+    assert res["attack_type"] == "XSS"
+    assert res["finding_status"] == "Confirmed"
+    assert res["points"] == 40
+
+    # Control: reflection absent, only the SQL error — the steal still
+    # applies, and the finding is SQL_Injection.
+    sample_no_refl = dict(sample)
+    sample_no_refl["response_body"] = (
+        "<html><body>You have an error in your SQL syntax near ''</body></html>")
+    res2 = detector.analyze(sample_no_refl, baseline)
+    assert res2["attack_type"] == "SQL_Injection"
+    assert res2["finding_status"] == "Confirmed"
+
 def test_waf_status_code_filter():
     detector = SignatureDetector()
     # NOTE: (202, 0) was removed from this list: a 202 Accepted with an empty

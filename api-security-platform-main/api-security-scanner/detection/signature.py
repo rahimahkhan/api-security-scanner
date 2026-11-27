@@ -485,6 +485,16 @@ class SignatureDetector:
                     or (candidate_category == "Command_Injection" and _cmd_out is not None)
                     or (candidate_category == "Local_File_Inclusion" and _lfi_sig is not None)
                     or (candidate_category == "XXE" and _lfi_sig is not None)
+                    # XSS was missing from this guard (2026-11-27): an XSS
+                    # payload whose quote also breaks the query returns BOTH
+                    # reflection and a SQL error, and the sweep stole the
+                    # finding to SQL_Injection even though the XSS proof
+                    # held (php DynaST PH-06). The check mirrors the XSS
+                    # branch's own proof condition.
+                    or (candidate_category == "XSS" and payload and payload in resp_body
+                        and payload not in baseline_body
+                        and any(ct in content_type for ct in ("text/html", "application/xml"))
+                        and resp_size > 0 and 200 <= resp_status < 300)
                 )
                 if not _candidate_has_evidence:
                     candidate_category = response_evidence_category
