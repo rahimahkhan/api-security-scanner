@@ -664,15 +664,19 @@ def _cap_body(body):
 
 def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
                      payload_str, baseline_telemetry, req_data, features,
-                     sig_res, risk_summary, parameter=""):
+                     sig_res, risk_summary, parameter="", ml_res=None,
+                     dl_res=None):
     """Append one raw (baseline, probe) pair to the dataset log.
 
     Called for EVERY dispatched probe, not just findings — clean pairs are
     the negative class. The record carries the join fields for the offline
-    labeling script and the scanner's verdict as a feature column; the
-    training label is None until the labeling script fills it from ground
-    truth. Never raises: a logging failure is warned, never fatal to the
-    scan.
+    labeling script, the per-layer shipped-model scores (so the models can
+    be measured on the labeled set without re-running the scan), and the
+    scanner's verdict as a feature column; the training label is None
+    until the labeling script fills it from ground truth. `group` is the
+    target app — VAmPI's vulnerable and secure modes are ONE group for
+    splitting (training on one mode and testing on the other is leakage).
+    Never raises: a logging failure is warned, never fatal to the scan.
     """
     path = _dataset_log_path(session_id, target_url)
     if path is None:
@@ -701,9 +705,11 @@ def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
         baseline_body, baseline_truncated = _cap_body(
             baseline_telemetry.get("response_body", ""))
         probe_body, probe_truncated = _cap_body(req_data.get("response_body", ""))
+        target_app = _dataset_target_app(target_url)
         record = {
             # Join fields for the offline labeling script.
-            "target_app": _dataset_target_app(target_url),
+            "target_app": target_app,
+            "group": target_app,
             "run_id": session_id,
             "mode": os.getenv("DATASET_MODE", ""),
             "endpoint_template": _normalize_template(test_url),
@@ -714,6 +720,20 @@ def log_dataset_pair(session_id, target_url, test_item, test_method, test_url,
             "endpoint_url": test_url,
             "http_method": test_method,
             "payload": payload_str,
+            # Per-layer shipped-model scores, for measuring the models on
+            # the labeled set (PR-AUC, recall at fixed FPR, ablation).
+            # These are the models as shipped — measuring them changes
+            # nothing; retraining is a separate, later step.
+            "layer_scores": {
+                "signature_points": sig_res.get("points"),
+                "ml_anomaly_score": (ml_res or {}).get("anomaly_score"),
+                "ml_points": (ml_res or {}).get("points"),
+                "lstm_probability": (dl_res or {}).get("lstm_probability"),
+                "lstm_points": (dl_res or {}).get("lstm_points"),
+                "autoencoder_error": (dl_res or {}).get("autoencoder_error"),
+                "autoencoder_points": (dl_res or {}).get("autoencoder_points"),
+                "total_score": risk_summary.get("total_score"),
+            },
             "baseline": {
                 "status_code": baseline_telemetry.get("status_code"),
                 "response_time": baseline_telemetry.get("response_time"),
@@ -1471,7 +1491,7 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                         session_obj.id, target_url, test_item, test_method,
                         test_url, payload_str, baseline_telemetry, req_data,
                         features, sig_res, risk_summary,
-                        parameter=_bound_param)
+                        parameter=_bound_param, ml_res=ml_res, dl_res=dl_res)
 
                     # Print Console Breakdown
                     print(f"  [{test_item['type']}] -> Layer 1: {sig_res['points']} pts | ML: {ml_res['points']} pts | DL: {dl_res['total_layer3_points']} pts | SCORE: {score} [{severity}]")

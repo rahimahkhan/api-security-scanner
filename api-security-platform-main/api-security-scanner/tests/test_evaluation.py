@@ -104,10 +104,11 @@ items:
 """
 
 
-def _rec(url, parameter, probe_type, mode):
+def _rec(url, parameter, probe_type, mode, telemetry=None):
     return {"endpoint_url": url, "parameter": parameter,
             "probe_type": probe_type, "mode": mode,
-            "finding": {"attack_type": None}}
+            "finding": {"attack_type": None},
+            "telemetry": telemetry or {}}
 
 
 def test_labeler_joins_to_ground_truth_not_the_scanner_verdict(tmp_path):
@@ -123,11 +124,13 @@ def test_labeler_joins_to_ground_truth_not_the_scanner_verdict(tmp_path):
     gt = _write(tmp_path, "gt.yaml", GT_LABEL)
     records = [
         _rec("http://127.0.0.1:5000/users/v1/name1'", "path",
-             "SQL_Injection_Error", "vulnerable"),
+             "SQL_Injection_Error", "vulnerable",
+             {"status_changed": True}),
         _rec("http://127.0.0.1:5000/users/v1/name1'", "path",
              "SQL_Injection_Error", "secure"),
         _rec("http://127.0.0.1:5000/users/v1/_debug", "",
-             "Sensitive_Data_Exposure", "secure"),
+             "Sensitive_Data_Exposure", "secure",
+             {"body_diff_ratio": 0.5}),
         _rec("http://127.0.0.1:5000/users/v1/other", "path",
              "XSS", "vulnerable"),
     ]
@@ -136,3 +139,11 @@ def test_labeler_joins_to_ground_truth_not_the_scanner_verdict(tmp_path):
     assert labeled[0]["matched_item"] == "T-01"
     assert labeled[2]["matched_item"] == "T-02"
     assert stats["positive"] == 2 and stats["negative"] == 2
+    # probe_effective is a response-based rule, not the verdict: the
+    # first and third probes visibly changed the response, the second
+    # (secure mode, no error) did not.
+    assert [r["probe_effective"] for r in labeled] == [1, 0, 1, 0]
+    assert stats["positive_effective"] == 2
+    assert stats["positive_not_effective"] == 0
+    # VAmPI's modes are one group for splitting.
+    assert all(r["group"] == "" for r in labeled)  # no target_app here

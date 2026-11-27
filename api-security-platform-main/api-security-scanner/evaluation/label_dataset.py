@@ -67,6 +67,46 @@ def probe_category(record):
     return record.get("finding", {}).get("attack_type") or probe_type
 
 
+def probe_effective(record):
+    """Did this probe's response show the bug? A response-based rule on
+    the logged differential features — NOT the scanner's verdict, so it
+    is not circular.
+
+    "The endpoint has this bug" is not the same as "this probe's response
+    shows it": a probe that never triggered the bug looks like a normal
+    response, and no model can detect it. A pair is effective when the
+    probe visibly changed the response vs the baseline: the status
+    changed, the body differs materially, an error keyword appeared, or
+    the payload was reflected. Report results on both the full positives
+    and the effective-only positives.
+    """
+    feats = record.get("telemetry", {}) or {}
+    if feats.get("status_changed"):
+        return 1
+    try:
+        if float(feats.get("body_diff_ratio") or 0) > 0.1:
+            return 1
+    except (TypeError, ValueError):
+        pass
+    try:
+        if float(feats.get("error_keyword_delta") or 0) > 0:
+            return 1
+    except (TypeError, ValueError):
+        pass
+    if feats.get("payload_reflected"):
+        return 1
+    # A time-based probe whose injected delay fired: the response took
+    # much longer than the baseline. Only for delay payloads — a plain
+    # slow response on another probe type is not a visible bug effect.
+    if record.get("probe_type") == "SQL_Injection_Time":
+        try:
+            if float(feats.get("time_delta_ratio") or 0) > 1.0:
+                return 1
+        except (TypeError, ValueError):
+            pass
+    return 0
+
+
 def _item_parameter(item):
     """The item's parameter name, without a ' (path)'/' (body)' suffix."""
     param = (item.get("parameter") or "").strip()
@@ -114,18 +154,28 @@ def match_item(record, items):
 def label(records, ground_truth_path):
     items = yaml.safe_load(Path(ground_truth_path).read_text())["items"]
     labeled = []
-    stats = {"total": 0, "positive": 0, "negative": 0, "by_category": {}}
+    stats = {"total": 0, "positive": 0, "negative": 0,
+             "positive_effective": 0, "positive_not_effective": 0,
+             "by_category": {}}
     for record in records:
         item = match_item(record, items)
         category = probe_category(record)
         bucket = stats["by_category"].setdefault(
             category, {"positive": 0, "negative": 0})
+        record["probe_effective"] = probe_effective(record)
+        # VAmPI's vulnerable and secure modes are ONE group for splitting
+        # (training on one mode and testing on the other is leakage).
+        record["group"] = record.get("group") or record.get("target_app", "")
         if item is not None:
             record["label"] = 1
             record["label_source"] = f"ground_truth:{item.get('id', '?')}"
             record["matched_item"] = item.get("id")
             stats["positive"] += 1
             bucket["positive"] += 1
+            if record["probe_effective"]:
+                stats["positive_effective"] += 1
+            else:
+                stats["positive_not_effective"] += 1
         else:
             record["label"] = 0
             record["label_source"] = "ground_truth:no_match"
@@ -153,7 +203,10 @@ def main():
         for record in labeled:
             fh.write(json.dumps(record) + "\n")
     print(f"labeled {stats['total']} pairs -> {out}")
-    print(f"  positive: {stats['positive']}  negative: {stats['negative']}")
+    print(f"  positive: {stats['positive']} "
+          f"(effective {stats['positive_effective']}, "
+          f"not-effective {stats['positive_not_effective']})  "
+          f"negative: {stats['negative']}")
     for category in sorted(stats["by_category"]):
         b = stats["by_category"][category]
         print(f"  {category}: +{b['positive']} / -{b['negative']}")
