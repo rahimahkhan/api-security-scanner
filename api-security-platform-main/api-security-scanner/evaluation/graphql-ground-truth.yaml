@@ -1,0 +1,25 @@
+# Ground truth for the DynaST-Bench graphql app (vuln variant).
+# Written 2026-11-27 from the app's own VULNERABILITIES.yaml
+# (rahimahkhan/dynast-bench fork), before any scan.
+# CORRECTIONS 2026-11-27 (after the report-only scan ran):
+# - GQL-03 (CORS) REMOVED: the scanner's CORS check is passive-only and
+#   fires solely on a literal `Access-Control-Allow-Origin: *` with
+#   credentials in a response. The app's bug reflects the request's Origin
+#   on OPTIONS /graphql (LOCK_CORS off) — the scanner never sends OPTIONS
+#   or an Origin header, and a reflected origin is not `*`, so the check
+#   cannot detect it. CORS is a coverage gap, not a scorable item.
+# - GQL-INTROSPECT-001 is NOT listed: the scanner DOES send an
+#   introspection query (main.py GraphQL_Introspection probe) and the scan
+#   returned schema metadata, but the detector grades that Informational
+#   with 0 points by design, so it can never count as Confirmed/Suspected.
+#   Documented in mapping-graphql-2026-11-27.md, not scored here.
+# Only 1 scorable item remains. Scan result 2026-11-27: 0/1 (the
+# /auth/callback endpoint was never discovered, so the redirect check
+# never ran). This app is REPORT-ONLY, not training data.
+items:
+  - id: GQL-02
+    template: /auth/callback
+    parameter: next
+    category: Open_Redirect
+    how_verified: "VULNERABILITIES.yaml GQL-REDIRECT-001: auth callback redirects to arbitrary next URL"
+    date: "2026-11-27"

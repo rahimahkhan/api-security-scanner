@@ -1,0 +1,101 @@
+# Ground truth for the DynaST-Bench fastapi app (vuln variant).
+# Written 2026-11-27 from the app's own VULNERABILITIES.yaml, via
+# ~/workspace/dynast-codespace/mapping-fastapi-php-2026-11-27.md — BEFORE
+# fastapi was started or scanned (graphql is still the running app).
+# Only the 9 in-scope items are listed. The other 27 bugs are out of
+# scope — 7 need new probing, 20 have no scanner check — so they are
+# coverage gaps, never negatives. See the mapping file.
+# The two signup items are pre-auth but discovery=flow (multi-step
+# signup wizard): whether the scanner's discovery finds those endpoints
+# is unproven until the scan runs; they stay in scope with that caveat.
+# All items are modes: [vulnerable] — the patched safe twin has none of
+# these bugs, so a safe-twin run must not label them (run it with
+# DATASET_MODE=safe). fastapi vuln + safe twin are ONE group for
+# splitting. DynaST-Bench is new, from one author, not peer-reviewed.
+# CORRECTION 2026-11-27: FA-04 (CORS, /api/posts/search) REMOVED after the
+# GraphQL scan proved the CORS check cannot detect reflection. The check
+# (detection/signature.py, passive CORS policy check) fires solely on a
+# literal `Access-Control-Allow-Origin: *` with credentials in a response,
+# and the scanner never sends an Origin header or an OPTIONS request. The
+# fastapi bug reflects the request's Origin (middleware reflected_cors) —
+# a reflected origin is not `*`, so the check cannot fire even in
+# principle. CORS is a coverage gap ("needs new probing": active Origin
+# header + OPTIONS preflight + reflection check), not a scorable item.
+# 9 items remain (FA-04 removed, other IDs kept for traceability).
+# Fields follow vamp-ground-truth.yaml: template, parameter (null =
+# any parameter on the template — used where the mapping names no exact
+# field, rather than guessing one), category, modes, how_verified, date.
+items:
+  - id: FA-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: query-param SQLi on GET /api/posts/search?q; error-based + time-based checks apply. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-02
+    template: /api/reports/export
+    parameter: null
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: field-bound command injection on POST /api/reports/export. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-03
+    template: /api/import/xml
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: POST /api/import/xml; scanner check requires XML content type + canary proof. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-05
+    template: /goto
+    parameter: null
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: GET /goto redirects to an unvalidated URL; proof requires the Location host to match the injected host. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-06
+    template: /api/attachments/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: route GET /api/attachments/download?name=, match params [name]. Pre-auth. CORRECTED 2026-11-27: parameter was 'filename' (misread from the notes' prose 'user filename'); the answer key, the app's OpenAPI spec, and the scan all say the parameter is 'name' — the LFI probe bound to 'name' produced the Confirmed finding, and the labeler correctly rejected the 'filename' join."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-07
+    template: /api/error
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml DEBUG-001: GET /api/error returns a stack trace + hardcoded secret; passive check. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+    also_detected_by: [Sensitive_Data_Exposure]
+  - id: FA-08
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: reflected XSS on GET /search?q. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-09
+    template: /api/signup/profile
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: POST /api/signup/profile; scanner check exists, generically Suspected only. Pre-auth, discovery=flow (signup wizard) — whether discovery finds it is unproven until the scan."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: FA-10
+    template: /api/signup/draft/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow — same caveat as FA-09."
+    date: "2026-11-27"
+    added_after_scan: false

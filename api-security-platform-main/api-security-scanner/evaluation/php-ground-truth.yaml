@@ -1,0 +1,94 @@
+# Ground truth for the DynaST-Bench php app (vuln variant).
+# Written 2026-11-27 from the app's own VULNERABILITIES.yaml, via
+# ~/workspace/dynast-codespace/mapping-fastapi-php-2026-11-27.md — BEFORE
+# php was started or scanned. Only the 9 in-scope items are listed. The
+# other 20 bugs are out of scope — 5 need new probing, 15 have no scanner
+# check — so they are coverage gaps, never negatives. See the mapping file.
+# CORS-001 is NOT listed: the scanner's CORS check is passive-only and
+# fires solely on a literal `Access-Control-Allow-Origin: *` with
+# credentials; the php bug reflects the request's Origin
+# (bootstrap.php), so the check cannot fire even in principle — same
+# correction as FA-04 in the fastapi ground truth.
+# The two signup items are pre-auth but discovery=flow (multi-step
+# signup wizard): whether the scanner's discovery finds those endpoints
+# is unproven until the scan runs; they stay in scope with that caveat.
+# All items are modes: [vulnerable] — the patched safe twin has none of
+# these bugs, so a safe-twin run must not label them (run it with
+# DATASET_MODE=safe). php vuln + safe twin are ONE group for splitting.
+# DynaST-Bench is new, from one author, not peer-reviewed.
+# Fields follow fastapi-ground-truth.yaml: template, parameter (null =
+# any parameter on the template — used where the mapping names no exact
+# field, rather than guessing one), category, modes, how_verified, date.
+items:
+  - id: PH-01
+    template: /page.php
+    parameter: page
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml LFI-001: GET /page.php, `page` passed to include(). Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-02
+    template: /search.php
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: query-param SQLi on GET /search.php?q; error-based + time-based checks apply. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-03
+    template: /export.php
+    parameter: format
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: `format` interpolated into shell_exec() on /export.php. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-04
+    template: /import.php
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: POST /import.php; scanner check requires XML content type + canary proof. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-05
+    template: /download.php
+    parameter: file
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: GET /download.php, `file` passed to readfile(). Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-06
+    template: /search.php
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: reflected XSS on GET /search.php?q. Pre-auth. Same endpoint as PH-02, different category."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-07
+    template: /redirect.php
+    parameter: null
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: GET /redirect.php redirects to an unvalidated URL; proof requires the Location host to match the injected host. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-08
+    template: /api/signup/profile.php
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: POST /api/signup/profile.php; scanner check exists, generically Suspected only. Pre-auth, discovery=flow (signup wizard) — whether discovery finds it is unproven until the scan."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: PH-09
+    template: /api/signup/draft.php
+    parameter: null
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft on GET /api/signup/draft.php; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow — same caveat as PH-08. Parameter left null: the mapping names no draft-identifier field, so none is guessed."
+    date: "2026-11-27"
+    added_after_scan: false
