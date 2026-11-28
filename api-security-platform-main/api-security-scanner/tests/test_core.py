@@ -106,6 +106,25 @@ def test_fallback_query_params_prefers_existing_param():
     assert len(_fallback_query_params("http://example.test/?a=1&b=2", "PAY")) == 1
 
 
+def test_dataset_bound_param_records_fallback_query_name():
+    from core.request_engine import dataset_bound_param
+    # Bare GET endpoint: the engine carries the payload as ?q=, so the
+    # logged parameter must be "q" (nestjs session 8: the XSS pair on
+    # /search logged "" and failed to join NE-02).
+    assert dataset_bound_param(None, None, None, "GET", "http://example.test/search", "PAY") == "q"
+    # A parameter the URL already uses wins over the common name.
+    assert dataset_bound_param(None, None, None, "GET", "http://example.test/search?query=x", "PAY") == "query"
+    # A field-bound probe reports the bound field.
+    assert dataset_bound_param({"q": "PAY"}, None, None, "GET", "http://example.test/search", "PAY") == "q"
+    assert dataset_bound_param(None, {"name": "PAY"}, None, "POST", "http://example.test/submit", "PAY") == "name"
+    # Path-appended variant.
+    assert dataset_bound_param(None, None, None, "GET", "http://example.test/searchPAY", "PAY") == "path"
+    # POST raw body: no parameter carried the payload.
+    assert dataset_bound_param(None, None, None, "POST", "http://example.test/submit", "PAY") == ""
+    # Empty payload (baseline / BOLA): no parameter.
+    assert dataset_bound_param(None, None, None, "GET", "http://example.test/search", "") == ""
+
+
 def test_read_capped_truncates_large_body():
     from core.request_engine import _read_capped, MAX_RESPONSE_BODY_BYTES
     class _Resp:

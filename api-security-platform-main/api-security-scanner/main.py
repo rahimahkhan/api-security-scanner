@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.logging_config import logger
 from core.target_validation import validate_target_url
 from core.discovery import EndpointDiscovery
-from core.request_engine import RequestEngine
+from core.request_engine import RequestEngine, dataset_bound_param
 from core.response_parser import ResponseParser
 from detection.signature import SignatureDetector
 from detection.ml_model import MLAnomalyDetector
@@ -1475,18 +1475,12 @@ def run_pipeline(target_url: str, sarif_output: str = None, return_session_id: b
                     # every dispatched probe (clean pairs are the negative
                     # class). Gated by DATASET_LOG_DIR; never breaks a scan.
                     # The parameter is the field the payload was bound to
-                    # ("path" for the path-appended variant, "" if unknown).
-                    _bound_param = ""
-                    for _bound in (query_params, form_data, json_payload):
-                        if isinstance(_bound, dict):
-                            for _k, _v in _bound.items():
-                                if _v == payload_str:
-                                    _bound_param = _k
-                                    break
-                            if _bound_param:
-                                break
-                    if not _bound_param and payload_str and payload_str in test_url:
-                        _bound_param = "path"
+                    # ("path" for the path-appended variant, "" only when no
+                    # parameter carried it) — including the GET/DELETE
+                    # fallback query name, so the labeler can join the pair.
+                    _bound_param = dataset_bound_param(
+                        query_params, form_data, json_payload,
+                        test_method, test_url, payload_str)
                     log_dataset_pair(
                         session_obj.id, target_url, test_item, test_method,
                         test_url, payload_str, baseline_telemetry, req_data,

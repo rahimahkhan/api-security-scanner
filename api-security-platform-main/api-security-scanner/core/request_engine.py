@@ -107,6 +107,33 @@ def _fallback_query_params(url: str, payload: str) -> Dict[str, str]:
     return {name: payload}
 
 
+def dataset_bound_param(query_params, form_data, json_payload, method, url, payload_str):
+    """Name of the parameter a probe payload was bound to, for dataset logging.
+
+    The labeler joins pairs to ground truth on (template, parameter,
+    category), so this must name the field that actually carried the
+    payload — including the GET/DELETE fallback, where the request engine
+    carries the payload as a single query parameter (_fallback_query_params)
+    even though no field was bound at dispatch time. Nestjs session 8
+    showed the gap: the XSS pair on /search logged "" and failed to join
+    NE-02, even though the request genuinely went out as /search?q=<script>.
+    Returns "" only when no parameter carried the payload (fixed JSON
+    bodies, raw-body POSTs, BOLA mutations, baselines).
+    """
+    for bound in (query_params, form_data, json_payload):
+        if isinstance(bound, dict):
+            for key, value in bound.items():
+                if value == payload_str:
+                    return key
+    if payload_str and payload_str in url:
+        return "path"
+    if (method.upper() in {"GET", "DELETE"} and payload_str
+            and query_params is None and form_data is None
+            and json_payload is None):
+        return next(iter(_fallback_query_params(url, payload_str)))
+    return ""
+
+
 # --- Redirect SSRF guard (S4 fix) -------------------------------------------
 # Redirects are followed manually (never by httpx itself) so that EVERY hop is
 # validated through the single shared SSRF policy in core/target_validation
