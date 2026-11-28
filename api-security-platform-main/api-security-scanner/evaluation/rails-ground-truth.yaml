@@ -1,0 +1,125 @@
+# DynaST-Bench ground truth: rails (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. Counting note: four DynaST ids
+# (SECRET-001, SECRET-KEY-001, SECRET-COMPOSE-001, SECRET-STANDALONE-001)
+# are four root causes of ONE observable (GET /api/secrets returns the
+# hardcoded signing secret) and count as a single item, RA-03 — the bench's
+# own SURFACE.yaml lists all four as vulns of the same operation. The 2
+# signup items are discovery=flow (multi-step wizard): whether the scanner's
+# discovery finds them is unproven until the scan runs. See
+# ~/workspace/dynast-codespace/mapping-rails-2026-11-28.md.
+items:
+  - id: RA-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: q interpolated into find_by_sql and exposes the Globex draft marker. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-02
+    template: /api/export
+    parameter: name
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: backtick command interpolation executes shell metacharacters in name. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-03
+    template: /api/secrets
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SECRET-001 + SECRET-KEY-001 + SECRET-COMPOSE-001 + SECRET-STANDALONE-001: four root causes, one observable — GET /api/secrets returns the hardcoded secret_key_base. The passive sensitive-data check fires on secrets in a response. Pre-auth; discovery of /api/secrets is unproven until the scan."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-04
+    template: /
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CONFIG-LEAK-001: homepage runtime config script exposes the Rails signing secret and default service credentials. The homepage is always discovered. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-05
+    template: /posts/search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: search query reflected with raw. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-06
+    template: /goto
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: redirect_to follows an arbitrary external next URL. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-07
+    template: /api/attachments/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: user-controlled attachment name reaches send_file without containment check. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-08
+    template: /api/signup/profile
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: the profile step permits role and org_slug, so registration can self-assign admin or join another tenant. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: RA-09
+    template: /api/signup/draft/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: MASSASSIGN-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: PATCH /api/users/me, strong params use permit!, allowing role/is_admin/org_id overposting. reach=user."
+    date: "2026-11-28"
+  - id: AUTHZ-001
+    template: /api/users/{id}/promote
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml AUTHZ-001: POST /api/users/{id}/promote, authenticated non-admin can promote any user; authorization is skipped. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
+  - id: SQLI-002
+    template: /api/reports/{id}/run
+    parameter: id (path)
+    category: SQL_Injection
+    how_verified: "VULNERABILITIES.yaml SQLI-002: second-order — stored report name later interpolated into raw SQL. reach=user."
+    date: "2026-11-28"
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, post lookup not scoped to current_user.org. reach=user."
+    date: "2026-11-28"
+  - id: XSS-STORED-001
+    template: /posts/{id}
+    parameter: id (path)
+    category: XSS
+    how_verified: "VULNERABILITIES.yaml XSS-STORED-001: stored comment body rendered with raw on GET /posts/{id}. reach=user, and stored (store-then-read flow)."
+    date: "2026-11-28"
