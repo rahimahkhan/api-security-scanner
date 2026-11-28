@@ -148,6 +148,13 @@ states plainly that every finding is a false alarm by construction.
 - Zero Confirmed findings on one safe twin is a promising result for
   those test conditions. It is not a claim of zero false positives
   across all safe APIs.
+- **The safe twin is the main source of hard negatives.** The
+  near-miss list is a small bonus. The main source is the matched
+  pair: the same endpoint, probed with the same payload, behaves
+  differently in the vulnerable and patched twins. Mode-scoped
+  labeling captures it — a pair labels 1 in vuln mode and 0 in safe
+  mode on the same template, parameter and category — and the report
+  says so.
 
 ## 6. Dataset and retraining rules
 
@@ -190,3 +197,92 @@ freeze.
   separates proof status (Confirmed / Suspected / Informational),
   severity (Low / Medium / High / Critical), confidence (strength of
   evidence), and the derived risk score into distinct fields.
+
+## 9. Evaluation tiers (2026-11-28)
+
+Fastapi's ground truth changed after its scan results were seen (the
+3 incidental XSS items, 2026-11-28), so fastapi can no longer serve
+as an untouched check. The apps are tiered so one honest check of the
+pipeline survives before the final test.
+
+- **Tier 1 — Development (VAmPI, fastapi):** scanner and rule changes
+  are allowed here. Numbers from these apps are development results,
+  not generalization — DVWA is the tuned target, VAmPI the tuned
+  development target, fastapi the mapped-then-corrected one.
+- **Tier 2 — Validation (php):** scanned with the scanner **frozen**,
+  and its numbers reported, including any new incidental findings,
+  using the written review rule (§5). The php runs (session 6 vuln
+  rerun + session 7 safe) already ran on the current scanner code —
+  zero scanner-code commits since the runs (verified 2026-11-28:
+  `git log b46cfb0..HEAD -- main.py detection/ core/ ml_pipeline/`
+  is empty) — so those runs ARE the frozen-scanner validation runs;
+  what remains is re-scoring and re-labeling them with the current
+  harness. No scanner change before php's numbers are reported.
+  **Checkable evidence (2026-11-28):** the scanner code sessions 6
+  and 7 ran is the code of commit `b46cfb0` (remote `8c2e96b4`),
+  2026-11-27, "Fix XSS findings stolen by SQL_Injection in evidence
+  sweep" — the fix's presence in the runs is proven by the runs
+  themselves (PH-06, reflected XSS, was missed in session 5 and
+  recovered in session 6, which only happens with the fix in the
+  run). That commit is the last scanner-code commit: nothing after
+  it touches `main.py`, `detection/`, `core/` or `ml_pipeline/`.
+  **php results were not used to change the scanner.** The harness
+  changes since (incidental items, near-misses) came from looking at
+  fastapi and are applied to php exactly as written — no
+  php-specific adjustments. If php surfaces new real incidental
+  findings, they are handled with the written review rule (§5), and
+  the counts are reported before and after review, as with fastapi.
+- **Tier 3 — Final held-out (crAPI, Juice Shop):** scored once, at
+  the end, on the final frozen system (§7).
+- **Training apps (nestjs, laravel, rails, springboot, gin, golang,
+  jsp, aspnet):** scanned to build the training dataset. Collection
+  stops at about 5–6 apps or ~60 unique positives (§11), so in
+  practice this means fastapi, php, nestjs, plus one or two of
+  laravel / rails / springboot — each checked with its own mapping
+  first. They are development-tier in effect — scanner changes are
+  allowed while the dataset is being built — but each app's mapping
+  is written and dated BEFORE its scan, and its ground truth is
+  fixed before scanning (except verified incidental findings per
+  §5). No app is scanned before its mapping exists.
+
+## 10. Two separate evaluations
+
+These are easy to confuse, so they are named separately in the
+report. They have different apps, different methods, and different
+success rules.
+
+1. **Scanner evaluation (signature layer).** Does the scanner prove
+   what it claims, and does it find the endpoints? VAmPI and fastapi
+   are development apps, php is the validation app, crAPI and Juice
+   Shop are the final held-out apps (§9). Detection is scored by
+   unique bugs (recall, precision with n); discovery by two-part
+   recall.
+2. **Model evaluation (ML/DL).** Do the ranking models add anything
+   over the rule baseline? Leave-one-app-out cross-validation across
+   the non-held-out apps (`evaluation/PROTOCOL-2026-11-28.md`), with
+   the within-Suspected block as primary. **Any threshold is chosen
+   inside the training folds only** — never on the fold being tested,
+   never on pooled results. The held-out apps (crAPI, Juice Shop)
+   are tested once, at the end, on the final frozen system. The
+   current scripts use fixed FPR levels (0.01 / 0.05 / 0.10) rather
+   than tuned thresholds, so no tuned threshold exists yet; the rule
+   binds any future threshold tuning.
+
+## 11. Data-collection stop rule (2026-11-28)
+
+Collection can go on forever, so the limit is set now, before the
+numbers arrive.
+
+- Collect from **fastapi, php and nestjs**, plus **one or two more
+  REST-style apps** with plenty of in-scope categories. Candidates
+  are laravel, rails and springboot — each checked with its own
+  mapping first, before any scan.
+- Stop at about **5 to 6 apps**, or when there are enough unique
+  bugs: a rough target of **60 or more unique (route, parameter,
+  category) positives, with at least 5 in each of the main
+  categories**.
+- Set expectations now. With this much data, the **tabular models**
+  (Logistic Regression, Random Forest, gradient boosting) are the
+  realistic candidates. The LSTM and autoencoder will probably not
+  clear the bar. Dropping them with the evidence is a valid outcome
+  — it is a result, not a failure.
