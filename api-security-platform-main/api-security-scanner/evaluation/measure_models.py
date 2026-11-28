@@ -81,6 +81,30 @@ def recall_at_fpr(y, s, fpr_target):
     return best
 
 
+def precision_at_k(y, s, k):
+    """Precision among the top-k ranked items (ties keep input order —
+    the same stable sort average_precision uses). k is clipped to n.
+    Returns 0.0 when there are no positives or k <= 0. K is a protocol
+    choice (which top-k a reviewer actually looks at), not a property
+    of the data — see evaluation/METHODOLOGY.md."""
+    order = sorted(range(len(y)), key=lambda i: -s[i])
+    k = max(0, min(int(k), len(y)))
+    if k == 0 or sum(y) == 0:
+        return 0.0
+    return sum(1 for i in order[:k] if y[i]) / k
+
+
+def recall_at_k(y, s, k):
+    """Recall captured in the top-k ranked items. Same tie and
+    clipping rules as precision_at_k."""
+    order = sorted(range(len(y)), key=lambda i: -s[i])
+    k = max(0, min(int(k), len(y)))
+    total_pos = sum(y)
+    if k == 0 or total_pos == 0:
+        return 0.0
+    return sum(1 for i in order[:k] if y[i]) / total_pos
+
+
 def bootstrap_ci(y, s, metric, n_boot=1000, seed=42):
     """Bootstrap 95% CI for a metric function(y, s)."""
     rng = random.Random(seed)
@@ -152,19 +176,22 @@ def report(records, title):
     print(f"n={len(records)}  positives={sum(y_all)}  "
           f"effective positives={sum(y_eff)}  negatives={len(records) - sum(y_all)}")
     print(f"{'score':42s} {'PR-AUC':>7s} {'95% CI':>17s}  "
-          + "  ".join(f"R@{f:.2f}" for f in FPRS))
+          + "  ".join(f"R@{f:.2f}" for f in FPRS)
+          + "   P@10   R@10")
     for name, fn in score_columns(records):
         s = [fn(r) for r in records]
         ap = average_precision(y_all, s)
         lo, hi = bootstrap_ci(y_all, s, average_precision)
         recalls = "  ".join(f"{recall_at_fpr(y_all, s, f):.2f}" for f in FPRS)
-        print(f"{name:42s} {ap:7.3f} [{lo:.3f}, {hi:.3f}]  {recalls}")
+        print(f"{name:42s} {ap:7.3f} [{lo:.3f}, {hi:.3f}]  {recalls}"
+              f"   {precision_at_k(y_all, s, 10):.2f}  {recall_at_k(y_all, s, 10):.2f}")
     print("-- effective-only positives --")
     for name, fn in score_columns(records):
         s = [fn(r) for r in eff_records]
         ap = average_precision(y_eff2, s)
         recalls = "  ".join(f"{recall_at_fpr(y_eff2, s, f):.2f}" for f in FPRS)
-        print(f"{name:42s} {ap:7.3f} {'':17s}  {recalls}")
+        print(f"{name:42s} {ap:7.3f} {'':17s}  {recalls}"
+              f"   {precision_at_k(y_eff2, s, 10):.2f}  {recall_at_k(y_eff2, s, 10):.2f}")
 
 
 def main():
