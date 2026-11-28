@@ -1,0 +1,133 @@
+# DynaST-Bench ground truth: springboot (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. The 2 signup items are discovery=flow
+# (multi-step wizard): whether the scanner's discovery finds them is
+# unproven until the scan runs. See
+# ~/workspace/dynast-codespace/mapping-springboot-2026-11-28.md.
+items:
+  - id: SB-01
+    template: /api/import/xml
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: DocumentBuilderFactory allows external entities and reads local files. Check exists; requires XML content type + canary proof. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-02
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: native SQL concatenates q into a query. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-03
+    template: /api/export
+    parameter: format
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: format interpolated into sh -c command. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-04
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: search query renders through th:utext. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-05
+    template: /api/attachments/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: download resolves user path without containment check. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-06
+    template: /api/errors/boom
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml ERRORS-001: verbose errors include stacktraces/messages. The scanner's passive verbose-error check fires on a stack trace in any probe response on this endpoint. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-07
+    template: /goto
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: RedirectView sends users to an arbitrary external next URL. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-08
+    template: /api/config/public
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SECRETS-001: hardcoded public key and default admin/admin credential are returned. The passive sensitive-data check fires on secrets in a response. Pre-auth; discovery of /api/config/public is unproven until the scan."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-09
+    template: /actuator/env
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml ACTUATOR-001: all Actuator endpoints exposed; env values reveal secrets. The passive sensitive-data check fires on secrets in a response. Pre-auth; discovery of /actuator/env is unproven until the scan."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-10
+    template: /api/tools/report
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CONFIGDUMP-001: hidden endpoint (Advanced panel JS only); for any non-public section it dumps System.getenv() + system properties. The passive sensitive-data check fires if the dump is reached. Pre-auth, discovery=js-runtime."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-11
+    template: /api/signup/profile
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: the profile step copies role and org_slug from the body, so registration can self-assign admin or join another tenant. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: SB-12
+    template: /api/signup/draft/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, authenticated users can read cross-tenant posts by id. reach=user."
+    date: "2026-11-28"
+  - id: MASSASSIGN-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: PATCH /api/users/me, profile update binds role/isAdmin/enabled from request JSON. reach=user."
+    date: "2026-11-28"
+  - id: BFLA-001
+    template: /api/users/{id}/promote
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml BFLA-001: POST /api/users/{id}/promote, privileged promote action lacks a role check. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
