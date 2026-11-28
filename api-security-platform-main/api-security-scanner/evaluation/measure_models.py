@@ -42,28 +42,50 @@ FPRS = (0.01, 0.05, 0.10)
 
 
 def average_precision(y, s):
-    """Average precision (PR-AUC) for binary labels y and scores s."""
+    """Average precision (PR-AUC) for binary labels y and scores s.
+
+    Tie-independent (sklearn-style): items sharing a score form one
+    threshold step — precision is credited only after the whole tied
+    group is included. The previous item-by-item version let Python's
+    stable sort decide the order inside a tie, so a discrete score's AP
+    depended on the file order of tied items: reproduced 2026-11-28,
+    the same binary scores gave AP 1.0 with positives first among the
+    ties and 0.109 with positives last, and the bootstrap CI excluded
+    the point estimate. With this fix both orderings give the same AP
+    and the CI contains it.
+    """
     order = sorted(range(len(y)), key=lambda i: -s[i])
-    tp = fp = 0
     total_pos = sum(y)
     if total_pos == 0:
         return 0.0
     ap = 0.0
+    tp = fp = 0
     prev_recall = 0.0
-    for i in order:
-        if y[i]:
-            tp += 1
-        else:
-            fp += 1
+    i = 0
+    while i < len(order):
+        j = i
+        while j < len(order) and s[order[j]] == s[order[i]]:
+            j += 1
+        for k in range(i, j):
+            if y[order[k]]:
+                tp += 1
+            else:
+                fp += 1
         precision = tp / (tp + fp)
         recall = tp / total_pos
         ap += precision * (recall - prev_recall)
         prev_recall = recall
+        i = j
     return ap
 
 
 def recall_at_fpr(y, s, fpr_target):
-    """Highest recall at a false-positive rate <= fpr_target."""
+    """Highest recall at a false-positive rate <= fpr_target.
+
+    Same tie rule as average_precision: items sharing a score form one
+    threshold step, so the result does not depend on the input order of
+    tied items.
+    """
     order = sorted(range(len(y)), key=lambda i: -s[i])
     total_pos = sum(y)
     total_neg = len(y) - total_pos
@@ -71,13 +93,19 @@ def recall_at_fpr(y, s, fpr_target):
         return 0.0
     tp = fp = 0
     best = 0.0
-    for i in order:
-        if y[i]:
-            tp += 1
-        else:
-            fp += 1
+    i = 0
+    while i < len(order):
+        j = i
+        while j < len(order) and s[order[j]] == s[order[i]]:
+            j += 1
+        for k in range(i, j):
+            if y[order[k]]:
+                tp += 1
+            else:
+                fp += 1
         if fp / total_neg <= fpr_target:
             best = max(best, tp / total_pos)
+        i = j
     return best
 
 

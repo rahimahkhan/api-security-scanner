@@ -94,12 +94,16 @@ Suspected findings, but a model using it just copies Layer 1).
 for the ML anomaly score, LSTM probability and autoencoder error,
 against a simple rule baseline and the scanner's own verdict, plus the
 ablation (signature only, +ML, +DL). Pooled (n=429, 30 positives,
-base rate 0.07): **ML anomaly 0.225 [0.088, 0.362], LSTM 0.339 [0.199,
-0.517], autoencoder 0.119 [0.051, 0.218] (near chance), signature
-0.797 [0.655, 0.908], rule baseline 0.452, scanner verdict 0.721.
-Ablation: signature + ML 0.730, shipped total 0.769 — adding ML/DL
+base rate 0.07): **ML anomaly 0.225 [0.090, 0.364], LSTM 0.352 [0.199,
+0.523], autoencoder 0.119 [0.052, 0.220] (near chance), signature
+0.751 [0.608, 0.876], rule baseline 0.361, scanner verdict 0.629.
+Ablation: signature + ML 0.730, shipped total 0.768 — adding ML/DL
 LOWERS the score vs signature alone, in every group.** Effective-only
-positives: signature 0.921, total 0.883. The models were trained on the
+positives: signature 0.909, total 0.883. PR-AUC is computed
+tie-independently (sklearn-style: tied scores form one threshold step);
+an earlier item-by-item version let the file order of tied items
+inflate discrete scores (signature 0.797, rule 0.452, verdict 0.721)
+and the bootstrap CI excluded the point estimate — fixed 2026-11-28. The models were trained on the
 old data (not this pilot), so this measures generalization. The
 signature number is optimistic — the signature layer was tuned on
 these same development apps, so it is not a fair estimate for a new

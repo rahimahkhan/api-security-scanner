@@ -7,6 +7,8 @@ useful findings appear in the top-k. PR-AUC alone does not say that.
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent
                        / "evaluation"))
 
@@ -55,3 +57,43 @@ def test_per_scan_p_at_k():
     assert mp == 0.25  # A: 0.5, B: 0.0
     assert mr == 1.0
     assert (np_, nr) == (2, 1)
+
+
+def test_average_precision_is_tie_independent():
+    from measure_models import average_precision, bootstrap_ci
+
+    # Binary score: 4 positives + 20 negatives tie at 1.0, rest at 0.0.
+    # The old item-by-item version gave AP 1.0 with positives first
+    # among the ties and 0.109 with positives last, and the bootstrap CI
+    # excluded the point estimate. Both orderings must now agree, and
+    # the CI must contain the estimate. Tie-independent value: after the
+    # 1.0 group, tp=4, fp=20, precision=4/24, recall=1.0 -> AP=1/6.
+    s = [1.0] * 24 + [0.0] * 142
+    y_first = [1] * 4 + [0] * 20 + [0] * 142
+    y_last = [0] * 20 + [1] * 4 + [0] * 142
+    ap_first = average_precision(y_first, s)
+    ap_last = average_precision(y_last, s)
+    assert ap_first == ap_last == pytest.approx(1 / 6)
+    lo, hi = bootstrap_ci(y_first, s, average_precision)
+    assert lo <= ap_first <= hi
+
+
+def test_average_precision_matches_old_value_without_ties():
+    from measure_models import average_precision
+
+    # Distinct scores: grouping changes nothing. y=[1,0,1,0],
+    # s=[0.9,0.8,0.7,0.6] -> 0.5 + (2/3)*0.5 = 5/6.
+    assert average_precision([1, 0, 1, 0], [0.9, 0.8, 0.7, 0.6]) == pytest.approx(5 / 6)
+    assert average_precision([0, 0], [0.9, 0.1]) == 0.0
+
+
+def test_recall_at_fpr_is_tie_independent():
+    from measure_models import recall_at_fpr
+
+    # One positive and one negative tie at 1.0, FPR target 0.0: the
+    # group as a whole has FPR 1.0, so no threshold qualifies in either
+    # ordering. The old version gave 1.0 or 0.0 depending on order.
+    assert recall_at_fpr([1, 0], [1.0, 1.0], 0.0) == 0.0
+    assert recall_at_fpr([0, 1], [1.0, 1.0], 0.0) == 0.0
+    # Distinct scores keep the old behaviour.
+    assert recall_at_fpr([1, 0, 0], [0.9, 0.8, 0.7], 0.0) == 1.0
