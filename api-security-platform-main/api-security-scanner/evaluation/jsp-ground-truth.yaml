@@ -1,0 +1,92 @@
+# DynaST-Bench ground truth: jsp (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. See
+# ~/workspace/dynast-codespace/mapping-jsp-2026-11-28.md.
+#
+# Item prefix is JP- (JS- is already Juice Shop's).
+items:
+  - id: JP-01
+    template: /reflect.jsp
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-001: JSP scriptlet prints request parameter q directly. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: JP-02
+    template: /import
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: DocumentBuilderFactory defaults allow external entity expansion (type=xml branch). Check exists; requires XML content type + canary proof. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: JP-03
+    template: /search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: search query concatenates q into a JDBC Statement. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: JP-04
+    template: /export
+    parameter: format
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: format parameter appended to /bin/sh command. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: JP-05
+    template: /download
+    parameter: file
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: download path joins the user filename without containment checks. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: JP-06
+    template: /error-demo
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml ERROR-001: verbose error endpoint exposes stack traces/exception text. The scanner's passive verbose-error check fires on a stack trace in any probe response on this endpoint. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but they are unreachable as
+# the scanner runs today because the scanner does not authenticate.
+# They are NOT scored (never TP, never missed) and pairs on them are
+# EXCLUDED from labeling (never positive, never negative). Rule: in scope
+# = matching check AND pre-auth reachability. REDIRECT-001's route is
+# marked pre-auth in the key, but its notes say the redirect fires AFTER
+# authentication — so it belongs here, not in scope.
+needs_auth:
+  - id: SQLI-002
+    template: /report
+    parameter: id
+    category: SQL_Injection
+    how_verified: "VULNERABILITIES.yaml SQLI-002: second-order — stored report title later concatenated into a SQL query. reach=user."
+    date: "2026-11-28"
+  - id: IDOR-001
+    template: /post
+    parameter: id
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /post?id=, post lookup omits the org/owner check and exposes a Globex draft. reach=user."
+    date: "2026-11-28"
+  - id: MASSASSIGN-001
+    template: /profile
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: POST /profile, profile update trusts the role parameter and lets a user self-promote. reach=user."
+    date: "2026-11-28"
+  - id: REDIRECT-001
+    template: /login
+    parameter: next
+    category: Open_Redirect
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: POST /login?next=, login redirects to an arbitrary next URL AFTER authentication. The route is marked pre-auth in the key, but the redirect itself needs a successful login, which the scanner cannot perform. If a scan shows the app redirects on a failed login too, this moves to in scope."
+    date: "2026-11-28"
