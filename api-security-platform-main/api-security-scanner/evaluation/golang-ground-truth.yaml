@@ -1,0 +1,81 @@
+# DynaST-Bench ground truth: golang (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. See
+# ~/workspace/dynast-codespace/mapping-golang-2026-11-28.md.
+items:
+  - id: GO-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: q concatenated with fmt.Sprintf into a pgx query. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GO-02
+    template: /api/reports/export
+    parameter: null
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: report export runs sh -c with the attacker-controlled report name. Pre-auth. The answer key names no field, so the parameter is null."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GO-03
+    template: /api/attachments/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: attachment download joins the raw query path, allowing ../secret.txt traversal. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GO-04
+    template: /goto
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: login-style redirect trusts absolute next URLs. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GO-05
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: search page reflects q into HTML without escaping. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, authenticated Acme user can read a Globex draft post by ID. reach=user."
+    date: "2026-11-28"
+  - id: AUTHZ-001
+    template: /api/admin/users
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml AUTHZ-001: GET /api/admin/users, admin listing only requires authentication, not the admin role. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
+  - id: MASSASSIGN-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: PATCH /api/users/me, profile update applies role/isAdmin from request JSON. reach=user."
+    date: "2026-11-28"
+  - id: XSS-STORED-001
+    template: /posts/{id}/html
+    parameter: id (path)
+    category: XSS
+    how_verified: "VULNERABILITIES.yaml XSS-STORED-001: stored comments concatenated into HTML without escaping. reach=user, and stored (store-then-read flow)."
+    date: "2026-11-28"
