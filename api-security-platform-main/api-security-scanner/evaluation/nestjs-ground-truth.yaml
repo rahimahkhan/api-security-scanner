@@ -1,0 +1,99 @@
+# DynaST-Bench ground truth: nestjs (vulnerable app + safe twin).
+#
+# Written 2026-11-27 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. The 4 signup items are discovery=flow
+# (multi-step wizard): whether the scanner's discovery finds them is
+# unproven until the scan runs. See
+# ~/workspace/dynast-codespace/mapping-nestjs-2026-11-27.md.
+items:
+  - id: NE-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: q interpolated into a raw Postgres query; safe twin uses a bound parameter. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-02
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: search page reflects q directly into HTML. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-03
+    template: /login
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: login next parameter accepts absolute external URLs. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-04
+    template: /api/attachments/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: attachment download joins user filename without containment checking. Pre-auth."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-05
+    template: /uploads../secret.txt
+    parameter: null
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml NGINX-ALIAS-001: nginx alias trailing-slash mismatch lets /uploads../ escape the upload directory. Pre-auth; discovery of a literal traversal path is unproven until the scan."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-06
+    template: /api/signup/profile
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: the profile step writes role and org_slug from the body, so registration can self-assign admin or join another tenant. Pre-auth, discovery=flow."
+    date: "2026-11-27"
+    added_after_scan: false
+  - id: NE-07
+    template: /api/signup/draft/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow."
+    date: "2026-11-27"
+    added_after_scan: false
+
+# needs_auth (2026-11-27): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, any authenticated user can read any post across tenants. reach=user."
+    date: "2026-11-27"
+  - id: OVERPOST-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml OVERPOST-001: PATCH /api/users/me, global ValidationPipe lacks whitelist and the body is applied to user fields. reach=user."
+    date: "2026-11-27"
+  - id: AUTHZ-001
+    template: /api/admin/users
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml AUTHZ-001: GET /api/admin/users, admin listing only requires login, not an admin role. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-27"
+  - id: XSS-STORED-001
+    template: /posts/{id}/html
+    parameter: id (path)
+    category: XSS
+    how_verified: "VULNERABILITIES.yaml XSS-STORED-001: stored comment bodies render through Handlebars triple-stache. reach=user, and stored (store-then-read flow)."
+    date: "2026-11-27"
