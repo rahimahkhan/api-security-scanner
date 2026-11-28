@@ -37,7 +37,7 @@ python3 evaluation/score_scan.py \
 
 ## Freezing a version for evaluation
 
-`eval-freeze-v1` (2026-11-27, commit 4cc01d5) is a **Layer 1 checkpoint**,
+`eval-freeze-v1` (2026-11-27, commit fa3da39b on GitHub — the local tag points at a local-only commit whose tree differs only in evaluation files; the scanner code is identical) is a **Layer 1 checkpoint**,
 not the final freeze — the ML/DL layers have not been retrained yet, so
 the final system does not exist. Freezing then would have spent the one
 untouched target on a system that changes later.
@@ -97,20 +97,21 @@ ablation (signature only, +ML, +DL). Pooled (n=429, 30 positives,
 base rate 0.07): **ML anomaly 0.225 [0.090, 0.364], LSTM 0.352 [0.199,
 0.523], autoencoder 0.119 [0.052, 0.220] (near chance), signature
 0.751 [0.608, 0.876], rule baseline 0.361, scanner verdict 0.629.
-Ablation: signature + ML 0.730, shipped total 0.768 — adding ML/DL
-LOWERS the score vs signature alone, in every group.** Effective-only
-positives: signature 0.909, total 0.883. PR-AUC is computed
-tie-independently (sklearn-style: tied scores form one threshold step);
-an earlier item-by-item version let the file order of tied items
+Ablation: signature + ML 0.730, shipped total 0.768 — the shipped total is statistically indistinguishable from signature alone (0.751 pooled; per group it is above signature on dvwa-replica, tied on toy-app, below on vampi — all well inside the CIs), so the ML/DL layers add no measurable benefit.** Effective-only
+positives: signature 0.909, total 0.883. PR-AUC is scikit-learn's
+`average_precision_score` — our implementation matches it to within
+1e-16 on all eight score columns of this set — so tied scores form
+one threshold step and the value does not depend on row order; an
+earlier item-by-item version let the file order of tied items
 inflate discrete scores (signature 0.797, rule 0.452, verdict 0.721)
 and the bootstrap CI excluded the point estimate — fixed 2026-11-28. The models were trained on the
 old data (not this pilot), so this measures generalization. The
 signature number is optimistic — the signature layer was tuned on
 these same development apps, so it is not a fair estimate for a new
 app; the models' weak scores are the fairer comparison, but the sample
-is still tiny. Full output: `~/workspace/dataset-logs/measurement-2026-11-27.txt`.
+is still tiny. Full output: `~/workspace/dataset-logs/measurement-2026-11-28-fixed.txt` (the 2026-11-27 file is the pre-fix run).
 
-**Consequence (2026-11-27, commit `ca6d3ea`): ML/DL are experimental
+**Consequence (2026-11-27, commit `707e164f`): ML/DL are experimental
 advisory signals, weight 0 in the risk score.** Their points are
 recorded (points_breakdown, ml_result, dl_result) but do not
 contribute to `total_score`, and their agreement no longer discounts

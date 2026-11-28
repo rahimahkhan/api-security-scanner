@@ -8,7 +8,11 @@
 #
 # scanner_commit: the scanner code the scan ran on. `unknown` means it was
 # not recorded at scan time — verify from the codespace git reflog against
-# the file mtime before the card is used in the report.
+# the file mtime before the card is used in the report. Sessions 3/4/5
+# were resolved that way 2026-11-28: the codespace reflog shows the clone
+# at 707e164 with no pull before the scans, and the log mtimes
+# (2026-11-27 19:55/21:24/21:37 PKT) fall between the clone and the next
+# pull — so all three ran on remote 707e164f.
 # harness_commit: the evaluation code the LABELING ran on (label_dataset.py
 # + ground-truth files at that commit). The 2026-11-28 re-label of sessions
 # 3, 4, 6, 7 ran on the pulled 8157cae harness.
@@ -19,7 +23,7 @@ sessions:
     app: fastapi
     tier: development
     mode: vulnerable
-    scanner_commit: unknown
+    scanner_commit: 707e164f
     harness_commit: 8157cae
     run_date: "2026-11-27"
     labeled_date: "2026-11-28"
@@ -28,7 +32,7 @@ sessions:
     app: fastapi
     tier: development
     mode: safe
-    scanner_commit: unknown
+    scanner_commit: 707e164f
     harness_commit: 8157cae
     run_date: "2026-11-27"
     labeled_date: "2026-11-28"
@@ -37,7 +41,7 @@ sessions:
     app: php
     tier: validation
     mode: vulnerable
-    scanner_commit: b46cfb0
+    scanner_commit: 8c2e96b4
     harness_commit: 8157cae
     run_date: "2026-11-27"
     labeled_date: "2026-11-28"
@@ -46,7 +50,7 @@ sessions:
     app: php
     tier: validation
     mode: safe
-    scanner_commit: b46cfb0
+    scanner_commit: 8c2e96b4
     harness_commit: 8157cae
     run_date: "2026-11-27"
     labeled_date: "2026-11-28"
@@ -61,12 +65,12 @@ sessions:
     labeled_date: "2026-11-28"
     file: /home/codespace/dynast-dataset-logs/dataset-session-8-labeled.jsonl
     status: excluded
-    reason: "Mislabeled: the XSS pair on /search logged parameter '' and failed to join NE-02 (parameter q). Fixed by dataset_bound_param (commit 59a8a8d/5e4d0cc); the session is replaced by a re-scan, not repaired in place."
+    reason: "Mislabeled: the XSS pair on /search logged parameter '' and failed to join NE-02 (parameter q). Fixed by dataset_bound_param (remote bf0af98c); the session is replaced by a re-scan, not repaired in place."
   - id: 5
     app: php
     tier: validation
     mode: vulnerable
-    scanner_commit: unknown
+    scanner_commit: 707e164f
     harness_commit: 8157cae
     run_date: "2026-11-27"
     labeled_date: "2026-11-28"

@@ -213,13 +213,15 @@ pipeline survives before the final test.
   and its numbers reported, including any new incidental findings,
   using the written review rule (§5). The php runs (session 6 vuln
   rerun + session 7 safe) already ran on the current scanner code —
-  zero scanner-code commits since the runs (verified 2026-11-28:
-  `git log b46cfb0..HEAD -- main.py detection/ core/ ml_pipeline/`
-  is empty) — so those runs ARE the frozen-scanner validation runs;
+  one scanner-code commit since the runs (bf0af98c, 2026-11-28, "Log
+  the fallback query param name in dataset records"), and it changes
+  only the dataset log's parameter field — the value is passed only
+  to log_dataset_pair, never to the probe, the detector or the score
+  — so those runs ARE the frozen-scanner validation runs;
   what remains is re-scoring and re-labeling them with the current
   harness. No scanner change before php's numbers are reported.
   **Checkable evidence (2026-11-28):** the scanner code sessions 6
-  and 7 ran is the code of commit `b46cfb0` (remote `8c2e96b4`),
+  and 7 ran is the code of commit `8c2e96b4`,
   2026-11-27, "Fix XSS findings stolen by SQL_Injection in evidence
   sweep" — the fix's presence in the runs is proven by the runs
   themselves (PH-06, reflected XSS, was missed in session 5 and
