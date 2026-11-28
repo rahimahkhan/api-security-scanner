@@ -171,12 +171,22 @@ def score(ground_truth_path, findings_path, mode=None,
     # a TP nor an FP — it goes in its own bucket below.
     incidental = [it for it in items if it.get("incidental")]
     items = [it for it in items if not it.get("incidental")]
+    # Near-misses (2026-11-28): bench-documented safe look-alikes on
+    # their own endpoints. A finding on one IS a false positive — the
+    # code is safe by the bench's design — so it counts in the headline
+    # FP and is also listed in its own bucket below.
+    near_misses = gt.get("near_misses", [])
+    if mode:
+        near_misses = [nm for nm in near_misses
+                       if not nm.get("modes") or mode in nm["modes"]]
     for item in items:
         item["_regex"] = template_regex(item["template"])
     for inc in incidental:
         inc["_regex"] = template_regex(inc["template"])
     for na in needs_auth:
         na["_regex"] = template_regex(na["template"])
+    for nm in near_misses:
+        nm["_regex"] = template_regex(nm["template"])
     findings = load_findings(findings_path)
     # Two-part recall (2026-11-27): discovery vs detection. Only when
     # both inputs are given; otherwise the report is unchanged.
@@ -249,6 +259,7 @@ def score(ground_truth_path, findings_path, mode=None,
     fp_confirmed_pairs, fp_suspected_pairs = set(), set()
     needs_auth_pairs = set()
     incidental_pairs = set()
+    near_miss_pairs = set()
     for f in findings:
         if f["status"] not in ("Confirmed", "Suspected"):
             continue
@@ -260,6 +271,11 @@ def score(ground_truth_path, findings_path, mode=None,
         if any(matches(na, f) for na in needs_auth):
             needs_auth_pairs.add((f["path"], f["attack_type"]))
             continue
+        if any(matches(nm, f) for nm in near_misses):
+            # Safe code by the bench's design — a real false alarm.
+            # Recorded in its own bucket AND counted in the FP pairs
+            # below (no `continue`: it stays an FP).
+            near_miss_pairs.add((f["path"], f["attack_type"]))
         key = (f["path"], f["attack_type"])
         if f["status"] == "Confirmed":
             fp_confirmed_pairs.add(key)
@@ -352,6 +368,9 @@ def score(ground_truth_path, findings_path, mode=None,
         "incidental_items": len(incidental),
         "incidental_matches": sorted(f"{p} :: {c}"
                                      for p, c in incidental_pairs),
+        "near_miss_items": len(near_misses),
+        "near_miss_matches": sorted(f"{p} :: {c}"
+                                    for p, c in near_miss_pairs),
         "discovery": discovery,
         "results": results,
         "false_positives": {
@@ -487,6 +506,16 @@ def main():
         md += [f"- {s}" for s in report["incidental_matches"]]
     else:
         md.append("- none")
+    md += ["", "## Findings on documented near-misses (hard negatives)"]
+    md.append("Safe code of the same shape as a scored bug, on its own "
+              "endpoint — so a finding here IS a false positive and is "
+              "counted in the FP numbers above. Listed separately so the "
+              "report can say how many of the FPs were on hard negatives "
+              "the bench documents as safe.")
+    if report["near_miss_matches"]:
+        md += [f"- {s}" for s in report["near_miss_matches"]]
+    else:
+        md.append("- none")
     disc = report.get("discovery")
     if disc:
         md += ["", "## Two-part recall (discovery vs detection)"]
@@ -536,6 +565,8 @@ def main():
           + (", ".join(report["needs_auth_matches"]) or "none"))
     print(f"Incidental matches ({len(report['incidental_matches'])}): "
           + (", ".join(report["incidental_matches"]) or "none"))
+    print(f"Near-miss matches ({len(report['near_miss_matches'])}): "
+          + (", ".join(report["near_miss_matches"]) or "none"))
     disc = report.get("discovery")
     if disc:
         print(f"Discovery: found {disc['found_operations']}/"

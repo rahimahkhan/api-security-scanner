@@ -25,6 +25,29 @@
 # Fields follow vamp-ground-truth.yaml: template, parameter (null =
 # any parameter on the template — used where the mapping names no exact
 # field, rather than guessing one), category, modes, how_verified, date.
+# NEAR-MISSES (2026-11-28, from `dynast-bench vulns fastapi --near` +
+# VULNERABILITIES.yaml `near_misses:` + the vuln/safe app source): the
+# bench lists 9 near-misses for fastapi, but only 2 are ENDPOINT-level
+# explicit negatives — a separately reachable route with a matching
+# scanner category. The other 7 do not qualify: NM-CLASSPOLL-001,
+# NM-AGG-001, NM-SIGNUP-RESEND-001, NM-SIGNUP-TOKEN-001, NM-SSTI-001,
+# NM-DESER-001 are for bug classes with no scanner check (class
+# pollution, code injection, enumeration, weak token, SSTI,
+# deserialization), so no probe category exists to join them on.
+# NM-CACHE-001 is explicitly EXCLUDED even though its endpoint is
+# probed: it is the safe cache-key behaviour on /api/cache/widget-scoped,
+# but that same endpoint carries a VERIFIED REAL reflected XSS
+# (FA-INC-03) — a near-miss for cache poisoning is not a negative for
+# XSS, and adding it with category XSS would contradict the incidental
+# item. The two qualifying near-misses are listed under `near_misses:`
+# below. Labeler: pairs on them label 0 with matched_item set and
+# near_miss: true (deliberate hard negatives, not default negatives).
+# Scorer: a finding on one IS a false positive (the code is safe by the
+# bench's design) — counted in the headline FP, and listed separately
+# in near_miss_matches so the report can say how many FPs were on hard
+# negatives. Both endpoints exist in BOTH twins (verified in
+# safe/app/main.py: /api/posts/list line 218, /api/attachments/
+# avatar-download line 407), so modes are [vulnerable, safe].
 # INCIDENTAL ITEMS (2026-11-28, verified with request + response from
 # the session-4 safe-twin scan, then against the safe twin's source):
 # the scanner's 3 Confirmed XSS on the safe twin are REAL unlisted
@@ -174,3 +197,22 @@ needs_auth:
     category: BOLA_IDOR
     how_verified: "VULNERABILITIES.yaml PRESIGN-IDOR-001: GET /api/attachments/{id}/url, presigned URL for any attachment. reach=user."
     date: "2026-11-27"
+
+# near_misses (2026-11-28): safe code of the same shape as a scored bug.
+# See the header comment for the qualification rule (separately reachable
+# endpoint + matching scanner category) and why only these 2 of 9 qualify.
+near_misses:
+  - id: FA-NM-01
+    template: /api/posts/list
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable, safe]
+    how_verified: "VULNERABILITIES.yaml near_miss NM-SQL-001 (of SQLI-001): GET /api/posts/list?q=, symbol list_posts (vuln/app/main.py:215-220) — same search shape as FA-01 but using bound SQLAlchemy parameters. Verified in both twins' source (safe/app/main.py:218-219). Pre-auth."
+    date: "2026-11-28"
+  - id: FA-NM-02
+    template: /api/attachments/avatar-download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable, safe]
+    how_verified: "VULNERABILITIES.yaml near_miss NM-TRAVERSAL-001 (of TRAVERSAL-001): GET /api/attachments/avatar-download?name=, symbol download_avatar_safe (vuln/app/main.py:394-401) — resolves the path and checks containment under the avatar directory (403 'outside avatar dir'). Verified in both twins' source (safe/app/main.py:407-408). Pre-auth."
+    date: "2026-11-28"

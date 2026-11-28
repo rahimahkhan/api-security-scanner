@@ -20,6 +20,18 @@ them; labeling such a pair 0 would teach a model that a real bug looks
 benign. The scanner's verdict stays in the record as the scanner_label
 feature column — it is a feature, never the label.
 
+A second, opposite list is `near_misses`: bench-documented safe code
+of the same shape as a scored bug, on its own reachable endpoint with
+a matching scanner category (e.g. fastapi's bound-parameter
+/api/posts/list beside the injectable /api/posts/search). A pair on a
+near-miss labels 0 — the code is safe by the bench's design — but with
+`matched_item` set to the near-miss id and `near_miss: true`, so the
+dataset distinguishes a DELIBERATE hard negative from a default
+negative. Only endpoint-level near-misses qualify: code-level
+look-alikes (a dead helper function in the same file, a safe-twin-only
+fix) are not separately observable endpoints and the join cannot
+express them — see METHODOLOGY.md §2 and the ground-truth files.
+
 A pair is positive iff:
   1. its endpoint_url path matches the item's template (same
      template_regex as the scorer), AND
@@ -163,10 +175,17 @@ def label(records, ground_truth_path):
     # neither a positive nor a negative — it is dropped from the labeled
     # output, not labeled 0.
     needs_auth = gt.get("needs_auth", [])
+    # near_misses (2026-11-28): bench-documented safe look-alikes on
+    # their own endpoints. A pair there is a deliberate hard negative:
+    # label 0, but record which near-miss it matched and flag it, so
+    # the dataset can tell a verified-clean endpoint from an untested
+    # one. Checked AFTER items — a real bug outranks its look-alike if
+    # the two ever shared a template (they do not in the current files).
+    near_misses = gt.get("near_misses", [])
     labeled = []
     stats = {"total": 0, "positive": 0, "negative": 0,
              "positive_effective": 0, "positive_not_effective": 0,
-             "excluded_needs_auth": 0,
+             "excluded_needs_auth": 0, "near_miss_negatives": 0,
              "by_category": {}}
     for record in records:
         if match_item(record, needs_auth):
@@ -184,6 +203,7 @@ def label(records, ground_truth_path):
             record["label"] = 1
             record["label_source"] = f"ground_truth:{item.get('id', '?')}"
             record["matched_item"] = item.get("id")
+            record["near_miss"] = False
             stats["positive"] += 1
             bucket["positive"] += 1
             if record["probe_effective"]:
@@ -191,9 +211,17 @@ def label(records, ground_truth_path):
             else:
                 stats["positive_not_effective"] += 1
         else:
+            near_miss = match_item(record, near_misses)
             record["label"] = 0
-            record["label_source"] = "ground_truth:no_match"
-            record["matched_item"] = None
+            record["matched_item"] = (near_miss.get("id")
+                                      if near_miss else None)
+            record["near_miss"] = bool(near_miss)
+            if near_miss:
+                record["label_source"] = (
+                    f"ground_truth:near_miss:{near_miss.get('id', '?')}")
+                stats["near_miss_negatives"] += 1
+            else:
+                record["label_source"] = "ground_truth:no_match"
             stats["negative"] += 1
             bucket["negative"] += 1
         stats["total"] += 1
@@ -220,7 +248,9 @@ def main():
     print(f"  positive: {stats['positive']} "
           f"(effective {stats['positive_effective']}, "
           f"not-effective {stats['positive_not_effective']})  "
-          f"negative: {stats['negative']}  "
+          f"negative: {stats['negative']} "
+          f"(of which deliberate near-miss negatives: "
+          f"{stats['near_miss_negatives']})  "
           f"excluded (needs_auth): {stats['excluded_needs_auth']}")
     for category in sorted(stats["by_category"]):
         b = stats["by_category"][category]

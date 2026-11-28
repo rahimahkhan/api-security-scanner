@@ -372,6 +372,100 @@ def test_labeler_excludes_needs_auth_pairs(tmp_path):
     assert [r["label"] for r in labeled] == [0, 1]
     assert labeled[1]["matched_item"] == "T-01"
 
+
+# --- near-misses (2026-11-28) ----------------------------------------------
+GT_NEAR_MISS = """items:
+  - id: FA-01
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    date: "2026-11-27"
+near_misses:
+  - id: FA-NM-01
+    template: /api/posts/list
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable, safe]
+    date: "2026-11-28"
+  - id: FA-NM-02
+    template: /api/attachments/avatar-download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable, safe]
+    date: "2026-11-28"
+"""
+
+
+def test_scorer_near_miss_is_a_false_positive_but_listed_separately(tmp_path):
+    """A finding on a near-miss endpoint — bench-documented safe code —
+    IS a false positive (it counts in the headline FP), and it is also
+    listed in its own bucket so the report can say how many FPs were on
+    hard negatives. The real bug on the neighbouring endpoint still
+    scores TP; the near-miss never shadows it."""
+    gt = _write(tmp_path, "gt.yaml", GT_NEAR_MISS)
+    findings = _write(tmp_path, "findings.txt",
+        "[Confirmed] CRITICAL SQL_Injection :: "
+        "http://127.0.0.1:13312/api/posts/search?q=x (score=70.0)\n"
+        "[Confirmed] CRITICAL SQL_Injection :: "
+        "http://127.0.0.1:13312/api/posts/list?q=x (score=70.0)\n"
+        "[Suspected] HIGH XSS :: "
+        "http://127.0.0.1:13312/api/other (score=40.0)\n")
+    report = score(gt, findings, mode="vulnerable")
+    assert report["ground_truth_items"] == 1
+    assert report["confirmed"]["tp_unique_bugs"] == 1
+    # The list-endpoint SQLi is an FP; the /api/other XSS is the other.
+    assert report["confirmed"]["fp_unique_pairs"] == 1
+    assert report["confirmed_plus_suspected"]["fp_unique_pairs"] == 2
+    assert report["near_miss_items"] == 2
+    assert report["near_miss_matches"] == [
+        "/api/posts/list :: SQL_Injection"]
+    # Safe mode: the near-miss still applies (modes include safe), so
+    # the list-endpoint finding is still an FP in its bucket — but the
+    # search-endpoint finding is an FP too now (that bug does not exist
+    # in the safe twin).
+    report = score(gt, findings, mode="safe")
+    assert report["ground_truth_items"] == 0
+    assert report["confirmed"]["fp_unique_pairs"] == 2
+    assert report["near_miss_matches"] == [
+        "/api/posts/list :: SQL_Injection"]
+
+
+def test_labeler_labels_near_miss_pairs_negative_with_match(tmp_path):
+    """A pair on a near-miss endpoint labels 0 — the code is safe — but
+    with matched_item set and near_miss True, so the dataset can tell a
+    deliberate hard negative from a default negative. A pair on the
+    neighbouring real bug still labels 1."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                           / "evaluation"))
+    from label_dataset import label
+
+    gt = _write(tmp_path, "gt.yaml", GT_NEAR_MISS)
+    records = [
+        _rec("http://127.0.0.1:13312/api/posts/list?q=x", "q",
+             "SQL_Injection_Error", "vulnerable"),
+        _rec("http://127.0.0.1:13312/api/attachments/avatar-download?name=x",
+             "name", "Local_File_Inclusion", "safe"),
+        _rec("http://127.0.0.1:13312/api/posts/search?q=x", "q",
+             "SQL_Injection_Error", "vulnerable",
+             {"status_changed": True}),
+        _rec("http://127.0.0.1:13312/api/other", "",
+             "SQL_Injection_Error", "vulnerable"),
+    ]
+    labeled, stats = label(records, gt)
+    assert [r["label"] for r in labeled] == [0, 0, 1, 0]
+    assert labeled[0]["matched_item"] == "FA-NM-01"
+    assert labeled[0]["near_miss"] is True
+    assert labeled[1]["matched_item"] == "FA-NM-02"
+    assert labeled[1]["near_miss"] is True
+    assert labeled[2]["matched_item"] == "FA-01"
+    assert labeled[2]["near_miss"] is False
+    assert labeled[3]["matched_item"] is None
+    assert labeled[3]["near_miss"] is False
+    assert stats["positive"] == 1 and stats["negative"] == 3
+    assert stats["near_miss_negatives"] == 2
+
 # --- two-part recall (2026-11-27) -------------------------------------------
 SURFACE_TWO_PART = """app: test
 operations:

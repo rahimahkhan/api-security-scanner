@@ -19,6 +19,25 @@
 # Fields follow fastapi-ground-truth.yaml: template, parameter (null =
 # any parameter on the template — used where the mapping names no exact
 # field, rather than guessing one), category, modes, how_verified, date.
+# NEAR-MISSES (2026-11-28, investigated from VULNERABILITIES.yaml
+# `near_misses:` + the vuln app source): php has ZERO endpoint-level
+# near-misses, so this file has no `near_misses:` list. The three the
+# relay named do not qualify as endpoint negatives. NM-LFI-001 (of
+# LFI-001) is a dead helper function `allowed_page_near_miss` inside
+# page.php itself (lines 5-10) — the file's only HTTP behaviour is the
+# vulnerable include() on line 4, so the helper is not a separately
+# reachable endpoint and the (template, parameter, category) join
+# cannot express it; adding it would collide with PH-01 on the same
+# template/parameter/category. NM-SQL-001 (of SQLI-001) is likewise a
+# dead helper `safe_search_near_miss` inside search.php, never called —
+# same collision with PH-02. NM-XSS-001 (of XSS-REFLECT-001) lives only
+# in the SAFE twin's search.php (htmlspecialchars output) — the safe
+# twin behaving correctly, already covered by PH-06's modes:
+# [vulnerable] (a safe-mode pair on /search.php labels 0 by the modes
+# rule). The other php near-misses (NM-AGG-001, NM-AUTH-001,
+# NM-DESER-001, NM-SIGNUP-RESEND-001, NM-SIGNUP-TOKEN-001) are for bug
+# classes with no scanner check. See the fastapi ground truth for the
+# qualification rule and the two qualifying fastapi near-misses.
 items:
   - id: PH-01
     template: /page.php
