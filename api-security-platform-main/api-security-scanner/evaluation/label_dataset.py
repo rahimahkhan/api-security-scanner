@@ -12,9 +12,13 @@ nothing about the Suspected cases, which are the ones that need ranking.
 The label comes from joining each logged pair to the ground-truth YAML:
 a pair is a POSITIVE for an item when the probe targets that item's
 (template, parameter) with a probe whose category matches the item's
-category. Everything else is a NEGATIVE for its probed category. The
-scanner's verdict stays in the record as the scanner_label feature
-column — it is a feature, never the label.
+category. Everything else is a NEGATIVE for its probed category — with
+one exception: pairs matching a `needs_auth` entry are EXCLUDED from the
+labeled output entirely. Those bugs exist, but their routes need a
+logged-in user the scanner never has, so the probe can never trigger
+them; labeling such a pair 0 would teach a model that a real bug looks
+benign. The scanner's verdict stays in the record as the scanner_label
+feature column — it is a feature, never the label.
 
 A pair is positive iff:
   1. its endpoint_url path matches the item's template (same
@@ -152,12 +156,22 @@ def match_item(record, items):
 
 
 def label(records, ground_truth_path):
-    items = yaml.safe_load(Path(ground_truth_path).read_text())["items"]
+    gt = yaml.safe_load(Path(ground_truth_path).read_text())
+    items = gt["items"]
+    # needs_auth (2026-11-27): bugs that exist but whose routes need a
+    # logged-in user. A pair there can never trigger the bug, so it is
+    # neither a positive nor a negative — it is dropped from the labeled
+    # output, not labeled 0.
+    needs_auth = gt.get("needs_auth", [])
     labeled = []
     stats = {"total": 0, "positive": 0, "negative": 0,
              "positive_effective": 0, "positive_not_effective": 0,
+             "excluded_needs_auth": 0,
              "by_category": {}}
     for record in records:
+        if match_item(record, needs_auth):
+            stats["excluded_needs_auth"] += 1
+            continue
         item = match_item(record, items)
         category = probe_category(record)
         bucket = stats["by_category"].setdefault(
@@ -206,7 +220,8 @@ def main():
     print(f"  positive: {stats['positive']} "
           f"(effective {stats['positive_effective']}, "
           f"not-effective {stats['positive_not_effective']})  "
-          f"negative: {stats['negative']}")
+          f"negative: {stats['negative']}  "
+          f"excluded (needs_auth): {stats['excluded_needs_auth']}")
     for category in sorted(stats["by_category"]):
         b = stats["by_category"][category]
         print(f"  {category}: +{b['positive']} / -{b['negative']}")

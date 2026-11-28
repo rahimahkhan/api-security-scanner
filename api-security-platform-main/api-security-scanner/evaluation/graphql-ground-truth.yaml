@@ -23,3 +23,14 @@ items:
     category: Open_Redirect
     how_verified: "VULNERABILITIES.yaml GQL-REDIRECT-001: auth callback redirects to arbitrary next URL"
     date: "2026-11-27"
+
+# needs_auth (2026-11-27, Claude's check): GQL-ERROR-001 exists but its
+# route needs a logged-in user (reach=user); the scanner does not
+# authenticate. Not scored; pairs on it would be excluded from labeling.
+needs_auth:
+  - id: GQL-ERROR-001
+    template: /graphql
+    parameter: null
+    category: Verbose_Error_Exposure
+    how_verified: "VULNERABILITIES.yaml GQL-ERROR-001: POST /graphql error formatter exposes stack and SQL context, but only on an authenticated request. reach=user."
+    date: "2026-11-27"

@@ -8,7 +8,11 @@ username values are ONE bug, not four.
 
 Input:
   --ground-truth  YAML with items: id, template, parameter, category,
-                  how_verified, date, added_after_scan, modes
+                  how_verified, date, added_after_scan, modes — plus an
+                  optional needs_auth list: bugs that exist but whose
+                  routes need a logged-in user. They are never scored
+                  (never TP, never missed), and a finding on one is
+                  reported separately, never counted as an FP.
   --findings      findings .txt from a scan run (lines like
                   "[Confirmed] CRITICAL SQL_Injection :: <url> (score=100.0)")
   --run-name      label for this run (e.g. vampi-vuln-2026-11-27)
@@ -21,6 +25,17 @@ Input:
                   behaviour (all items apply).
   --out-dir       where to store the dated result files (default: alongside
                   the findings file)
+  --surface       SURFACE.yaml for the target app (DynaST's own endpoint
+                  catalog) and --discovered <file>: the endpoints the scan
+                  actually found — a raw dataset JSONL (endpoint_url +
+                  http_method per pair) or a text file with one URL per
+                  line (optionally "METHOD URL"). With both, the report
+                  splits recall in two (Claude's 2026-11-27 finding that
+                  discovery limits recall more than detection): Part 1,
+                  discovery recall = surface operations found / total;
+                  Part 2, detection given found = ground-truth items on
+                  found endpoints that were detected. Misses split into
+                  missed-by-discovery vs missed-despite-found.
 
 Output: a dated JSON + markdown report with TP / FN / FP, Confirmed and
 Suspected reported separately, plus the list of missed bugs. Precision
@@ -81,7 +96,57 @@ def load_findings(path):
     return findings
 
 
-def score(ground_truth_path, findings_path, mode=None):
+def load_surface(path):
+    """DynaST SURFACE.yaml: the app's endpoint catalog (the discovery
+    denominator). Returns [{id, method, path, reachability}]."""
+    data = yaml.safe_load(Path(path).read_text())
+    ops = []
+    for op in data.get("operations", []):
+        if op.get("kind", "http") != "http":
+            continue
+        ops.append({
+            "id": op.get("id", "?"),
+            "method": (op.get("method") or "").upper(),
+            "path": op.get("path", ""),
+            "reachability": op.get("reachability"),
+        })
+    return ops
+
+
+_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+
+def load_discovered(path):
+    """Endpoints the scan actually found, as a set of
+    (method-or-None, normalized-path) pairs. Accepts a raw dataset JSONL
+    (endpoint_url + http_method per pair) or a text file with one URL per
+    line, optionally prefixed with the method ("GET /api/x")."""
+    found = set()
+    text = Path(path).read_text()
+    if str(path).endswith(".jsonl"):
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            url = r.get("endpoint_url") or ""
+            method = (r.get("http_method") or "").upper() or None
+            if url:
+                found.add((method, normalize_path(url)))
+        return found
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[0].upper() in _METHODS:
+            found.add((parts[0].upper(), normalize_path(parts[1])))
+        else:
+            found.add((None, normalize_path(line)))
+    return found
+
+
+def score(ground_truth_path, findings_path, mode=None,
+          surface_path=None, discovered_path=None):
     """Score one findings file against a ground-truth YAML.
 
     Returns the report dict (also written to disk by main()). Counts
@@ -93,12 +158,35 @@ def score(ground_truth_path, findings_path, mode=None):
     """
     gt = yaml.safe_load(Path(ground_truth_path).read_text())
     items = gt["items"]
+    # needs_auth (2026-11-27): bugs that exist but need a login. They are
+    # not scored items, and a finding on one is neither a TP nor an FP —
+    # it goes in its own bucket below.
+    needs_auth = gt.get("needs_auth", [])
     if mode:
         items = [it for it in items
                  if not it.get("modes") or mode in it["modes"]]
+    # Incidental items (2026-11-28): real bugs the bench's answer key
+    # does not list, found on a safe twin and verified with request +
+    # response. They are NOT scored items — a finding on one is neither
+    # a TP nor an FP — it goes in its own bucket below.
+    incidental = [it for it in items if it.get("incidental")]
+    items = [it for it in items if not it.get("incidental")]
     for item in items:
         item["_regex"] = template_regex(item["template"])
+    for inc in incidental:
+        inc["_regex"] = template_regex(inc["template"])
+    for na in needs_auth:
+        na["_regex"] = template_regex(na["template"])
     findings = load_findings(findings_path)
+    # Two-part recall (2026-11-27): discovery vs detection. Only when
+    # both inputs are given; otherwise the report is unchanged.
+    surface_ops, discovered = None, None
+    if surface_path and discovered_path:
+        surface_ops = load_surface(surface_path)
+        for op in surface_ops:
+            op["_regex"] = template_regex(op["path"])
+        discovered = load_discovered(discovered_path)
+    discovered_paths = {p for (_, p) in discovered} if discovered else None
 
     def matches(item, finding):
         if finding["attack_type"] != item["category"]:
@@ -148,15 +236,29 @@ def score(ground_truth_path, findings_path, mode=None):
             "confirmed_findings": len(confirmed),
             "suspected_findings": len(suspected),
             "added_after_scan": bool(item.get("added_after_scan")),
+            "discovered": (None if discovered_paths is None else
+                           any(item["_regex"].match(p)
+                               for p in discovered_paths)),
         })
 
     # False positives: findings matching NO ground-truth item, counted as
     # unique (template-normalized path, category) pairs, not raw rows.
+    # Findings on a needs_auth template are not false alarms — the bug
+    # exists there, the scanner just cannot reach it without a login —
+    # so they go in their own bucket, never into FP.
     fp_confirmed_pairs, fp_suspected_pairs = set(), set()
+    needs_auth_pairs = set()
+    incidental_pairs = set()
     for f in findings:
         if f["status"] not in ("Confirmed", "Suspected"):
             continue
         if any(matches(item, f) for item in items):
+            continue
+        if any(matches(inc, f) for inc in incidental):
+            incidental_pairs.add((f["path"], f["attack_type"]))
+            continue
+        if any(matches(na, f) for na in needs_auth):
+            needs_auth_pairs.add((f["path"], f["attack_type"]))
             continue
         key = (f["path"], f["attack_type"])
         if f["status"] == "Confirmed":
@@ -168,6 +270,51 @@ def score(ground_truth_path, findings_path, mode=None):
     recall_confirmed = tp_confirmed / total if total else 0.0
     recall_any = (tp_confirmed + tp_suspected) / total if total else 0.0
     fp_c, fp_s = len(fp_confirmed_pairs), len(fp_suspected_pairs)
+    # Part 1 (discovery recall) and Part 2 (detection given found).
+    discovery = None
+    if surface_ops is not None and discovered is not None:
+        def op_found(op):
+            return any((m is None or m == op["method"])
+                       and op["_regex"].match(p)
+                       for (m, p) in discovered)
+        found_ops = [op for op in surface_ops if op_found(op)]
+        pre_ops = [op for op in surface_ops
+                   if op.get("reachability") == "pre-auth"]
+        pre_found = [op for op in pre_ops if op_found(op)]
+        found_results = [r for r in results if r["discovered"]]
+        tp_found_c = sum(1 for r in found_results
+                         if r["verdict"] == "TP-Confirmed")
+        tp_found_any = sum(1 for r in found_results
+                           if r["verdict"].startswith("TP"))
+        discovery = {
+            "surface_operations": len(surface_ops),
+            "found_operations": len(found_ops),
+            "discovery_recall": round(
+                len(found_ops) / len(surface_ops), 3) if surface_ops else 0.0,
+            "pre_auth_operations": len(pre_ops),
+            "pre_auth_found": len(pre_found),
+            "pre_auth_recall": round(
+                len(pre_found) / len(pre_ops), 3) if pre_ops else 0.0,
+            "missed_operations": sorted(
+                f"{op['method']} {op['path']}" for op in surface_ops
+                if not op_found(op)),
+            "ground_truth_on_found_endpoints": len(found_results),
+            "detected_given_found_confirmed": {
+                "tp": tp_found_c, "total": len(found_results),
+                "recall": round(tp_found_c / len(found_results), 3)
+                          if found_results else 0.0,
+            },
+            "detected_given_found_any": {
+                "tp": tp_found_any, "total": len(found_results),
+                "recall": round(tp_found_any / len(found_results), 3)
+                          if found_results else 0.0,
+            },
+            "missed_by_discovery": [r["id"] for r in results
+                                    if not r["discovered"]],
+            "missed_despite_found": [
+                r["id"] for r in results
+                if r["discovered"] and r["verdict"].startswith("FN")],
+        }
     # Precision is reported with its n (TP + FP unique bugs). Three
     # confirmations is a tiny sample — "100% precision" without n=3
     # would overstate the evidence.
@@ -199,6 +346,13 @@ def score(ground_truth_path, findings_path, mode=None):
         },
         "missed_bugs": [r for r in results if r["verdict"].startswith("FN")],
         "detected_wrong_category": wrong_category,
+        "needs_auth_items": len(needs_auth),
+        "needs_auth_matches": sorted(f"{p} :: {c}"
+                                     for p, c in needs_auth_pairs),
+        "incidental_items": len(incidental),
+        "incidental_matches": sorted(f"{p} :: {c}"
+                                     for p, c in incidental_pairs),
+        "discovery": discovery,
         "results": results,
         "false_positives": {
             "confirmed": sorted(f"{p} :: {c}" for p, c in fp_confirmed_pairs),
@@ -216,10 +370,19 @@ def main():
                     help="run mode to score in (e.g. vulnerable, safe); "
                          "ground-truth items not listed for this mode "
                          "are excluded")
+    ap.add_argument("--surface", default=None,
+                    help="SURFACE.yaml for the target app (DynaST's "
+                         "endpoint catalog — the discovery denominator)")
+    ap.add_argument("--discovered", default=None,
+                    help="endpoints the scan found: a raw dataset JSONL "
+                         "or a text file with one URL per line "
+                         "(optionally 'METHOD URL')")
     ap.add_argument("--out-dir", default=None)
     args = ap.parse_args()
 
-    report = score(args.ground_truth, args.findings, mode=args.mode)
+    report = score(args.ground_truth, args.findings, mode=args.mode,
+                   surface_path=args.surface,
+                   discovered_path=args.discovered)
     today = date.today().isoformat()
     report["run"] = args.run_name
     report["date"] = today
@@ -309,6 +472,49 @@ def main():
         md += [f"- {p} :: {c}" for p, c in sorted(fp_suspected_pairs)]
     if not fp_confirmed_pairs and not fp_suspected_pairs:
         md.append("- none")
+    md += ["", "## Findings on needs_auth items"]
+    md.append("The bug exists here, but the route needs a login the "
+              "scanner never has — so these are neither TP nor FP.")
+    if report["needs_auth_matches"]:
+        md += [f"- {s}" for s in report["needs_auth_matches"]]
+    else:
+        md.append("- none")
+    md += ["", "## Incidental findings (verified, unlisted bugs)"]
+    md.append("Real bugs the bench's answer key does not list, verified "
+              "with request + response on a safe twin — so these are "
+              "neither TP nor FP, and pairs on them are labeled 1.")
+    if report["incidental_matches"]:
+        md += [f"- {s}" for s in report["incidental_matches"]]
+    else:
+        md.append("- none")
+    disc = report.get("discovery")
+    if disc:
+        md += ["", "## Two-part recall (discovery vs detection)"]
+        md.append(f"- Discovery: found {disc['found_operations']}/"
+                  f"{disc['surface_operations']} surface operations — "
+                  f"recall **{disc['discovery_recall']:.0%}** "
+                  f"(pre-auth {disc['pre_auth_found']}/"
+                  f"{disc['pre_auth_operations']}, "
+                  f"{disc['pre_auth_recall']:.0%})")
+        md.append(f"- Detection given found: Confirmed "
+                  f"{disc['detected_given_found_confirmed']['tp']}/"
+                  f"{disc['detected_given_found_confirmed']['total']} "
+                  f"({disc['detected_given_found_confirmed']['recall']:.0%}), "
+                  f"Confirmed+Suspected "
+                  f"{disc['detected_given_found_any']['tp']}/"
+                  f"{disc['detected_given_found_any']['total']} "
+                  f"({disc['detected_given_found_any']['recall']:.0%})")
+        md.append("- Missed by discovery (endpoint never found): "
+                  + (", ".join(f"`{i}`" for i in disc["missed_by_discovery"])
+                     or "none"))
+        md.append("- Missed despite found (detection misses): "
+                  + (", ".join(f"`{i}`" for i in disc["missed_despite_found"])
+                     or "none"))
+        md.append("- Missed surface operations:")
+        if disc["missed_operations"]:
+            md += [f"  - `{o}`" for o in disc["missed_operations"]]
+        else:
+            md.append("  - none")
     md_path = out_dir / f"{stem}.md"
     md_path.write_text("\n".join(md) + "\n")
 
@@ -326,6 +532,29 @@ def main():
     print(f"Missed ({len(missed)}): " + (", ".join(r['id'] for r in missed) or "none"))
     print(f"Detected, wrong category ({len(wrong_category)}): "
           + (", ".join(w['id'] for w in wrong_category) or "none"))
+    print(f"Needs_auth matches ({len(report['needs_auth_matches'])}): "
+          + (", ".join(report["needs_auth_matches"]) or "none"))
+    print(f"Incidental matches ({len(report['incidental_matches'])}): "
+          + (", ".join(report["incidental_matches"]) or "none"))
+    disc = report.get("discovery")
+    if disc:
+        print(f"Discovery: found {disc['found_operations']}/"
+              f"{disc['surface_operations']} surface operations "
+              f"(recall {disc['discovery_recall']:.0%}; pre-auth "
+              f"{disc['pre_auth_found']}/{disc['pre_auth_operations']}, "
+              f"{disc['pre_auth_recall']:.0%})")
+        print(f"Detection given found: Confirmed "
+              f"{disc['detected_given_found_confirmed']['tp']}/"
+              f"{disc['detected_given_found_confirmed']['total']} "
+              f"({disc['detected_given_found_confirmed']['recall']:.0%}), "
+              f"Confirmed+Suspected "
+              f"{disc['detected_given_found_any']['tp']}/"
+              f"{disc['detected_given_found_any']['total']} "
+              f"({disc['detected_given_found_any']['recall']:.0%})")
+        print(f"Missed by discovery: "
+              + (", ".join(disc["missed_by_discovery"]) or "none"))
+        print(f"Missed despite found: "
+              + (", ".join(disc["missed_despite_found"]) or "none"))
     print(f"Wrote {json_path} and {md_path}")
     return 0
 

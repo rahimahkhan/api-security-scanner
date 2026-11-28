@@ -25,6 +25,25 @@
 # Fields follow vamp-ground-truth.yaml: template, parameter (null =
 # any parameter on the template — used where the mapping names no exact
 # field, rather than guessing one), category, modes, how_verified, date.
+# INCIDENTAL ITEMS (2026-11-28, verified with request + response from
+# the session-4 safe-twin scan, then against the safe twin's source):
+# the scanner's 3 Confirmed XSS on the safe twin are REAL unlisted
+# reflected XSS, present in BOTH twins. Session-4 evidence, all with
+# payload <script>alert('xss')</script>, payload_reflected=1,
+# unsafe_reflection=1: (1) GET /api/reports/dashboard?name=... →
+# probe "<p>Dashboard for <script>alert('xss')</script></p>" vs
+# baseline "<p>Dashboard for guest</p>"; (2) GET
+# /api/cache/widget?key=... → probe body carries the script tag in the
+# canonical href AND the <p> vs baseline "home"; (3) GET
+# /api/cache/widget-scoped?key=... → same. Source: safe/app/main.py —
+# dashboard uses a bare jinja2.Template (no autoescape, line 273-275);
+# both widgets interpolate `key` raw into an f-string HTML body
+# (460-472, 474-484). The safe twin FIXED the cache-poisoning (host
+# folded into the cache key) but left the `key` reflection — the bench's
+# "safe" label covers the cache bug, not the reflection. These items
+# carry incidental: true and modes [vulnerable, safe]: the scorer
+# excludes findings on them from BOTH TP and FP (own bucket), the
+# labeler labels pairs on them 1 in either mode. Scored items stay 9.
 items:
   - id: FA-01
     template: /api/posts/search
@@ -99,3 +118,59 @@ items:
     how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow — same caveat as FA-09."
     date: "2026-11-27"
     added_after_scan: false
+  - id: FA-INC-01
+    template: /api/reports/dashboard
+    parameter: name
+    category: XSS
+    modes: [vulnerable, safe]
+    incidental: true
+    how_verified: "INCIDENTAL 2026-11-28 (session-4 safe-twin scan): GET /api/reports/dashboard?name=<script>alert('xss')</script> → probe body '<p>Dashboard for <script>alert('xss')</script></p>' vs baseline '<p>Dashboard for guest</p>'; payload_reflected=1, unsafe_reflection=1. Source: safe/app/main.py:273-275, bare jinja2.Template (no autoescape). Same Confirmed on the vuln run (session 3). Real unlisted reflected XSS, present in both twins; not in the bench's answer key."
+    date: "2026-11-28"
+    added_after_scan: true
+  - id: FA-INC-02
+    template: /api/cache/widget
+    parameter: key
+    category: XSS
+    modes: [vulnerable, safe]
+    incidental: true
+    how_verified: "INCIDENTAL 2026-11-28 (session-4 safe-twin scan): GET /api/cache/widget?key=<script>alert('xss')</script> → probe body carries the script tag in the canonical href AND the <p> vs baseline 'home'; payload_reflected=1, unsafe_reflection=1. Source: safe/app/main.py:460-472, f-string interpolates `key` raw into HTML. Safe twin fixed the cache-poisoning (host in cache key) but left the reflection. Same Confirmed on the vuln run (session 3)."
+    date: "2026-11-28"
+    added_after_scan: true
+  - id: FA-INC-03
+    template: /api/cache/widget-scoped
+    parameter: key
+    category: XSS
+    modes: [vulnerable, safe]
+    incidental: true
+    how_verified: "INCIDENTAL 2026-11-28 (session-4 safe-twin scan): GET /api/cache/widget-scoped?key=<script>alert('xss')</script> → probe body carries the script tag in the canonical href AND the <p> vs baseline 'home'; payload_reflected=1, unsafe_reflection=1. Source: safe/app/main.py:474-484, same f-string pattern as FA-INC-02. Same Confirmed on the vuln run (session 3)."
+    date: "2026-11-28"
+    added_after_scan: true
+
+# needs_auth (2026-11-27, Claude's check, confirmed against the answer
+# keys' reachability field): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative — labeling one 0 would teach a model
+# that a real bug looks benign). The rule: in scope = matching check
+# AND pre-auth reachability. Originally 13 in scope; 3 need auth, 1 is
+# CORS (removed) — 9 scored items remain.
+needs_auth:
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, any authenticated user can read any post across tenants. reach=user."
+    date: "2026-11-27"
+  - id: MASSASSIGN-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: PATCH /api/users/me, reach=user."
+    date: "2026-11-27"
+  - id: PRESIGN-IDOR-001
+    template: /api/attachments/{id}/url
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml PRESIGN-IDOR-001: GET /api/attachments/{id}/url, presigned URL for any attachment. reach=user."
+    date: "2026-11-27"

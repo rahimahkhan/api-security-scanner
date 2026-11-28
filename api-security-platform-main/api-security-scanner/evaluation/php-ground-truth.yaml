@@ -92,3 +92,25 @@ items:
     how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft on GET /api/signup/draft.php; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow — same caveat as PH-08. Parameter left null: the mapping names no draft-identifier field, so none is guessed."
     date: "2026-11-27"
     added_after_scan: false
+
+# needs_auth (2026-11-27, Claude's check, confirmed against the answer
+# keys' reachability field): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). The rule: in scope = matching check
+# AND pre-auth reachability. Originally 12 in scope; 2 need auth, 1 is
+# CORS (removed) — 9 scored items remain.
+needs_auth:
+  - id: IDOR-001
+    template: /posts.php
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /posts.php, any authenticated user can read any post across tenants. reach=user."
+    date: "2026-11-27"
+  - id: MASSASSIGN-001
+    template: /profile.php
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: POST /profile.php, reach=user."
+    date: "2026-11-27"
