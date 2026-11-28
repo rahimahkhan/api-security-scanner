@@ -1,0 +1,99 @@
+# DynaST-Bench ground truth: gin (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. See
+# ~/workspace/dynast-codespace/mapping-gin-2026-11-28.md.
+items:
+  - id: GI-01
+    template: /api/debug/info
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml INFO-001: debug endpoint dumps the full process environment (DB credentials, APP_SECRET). The passive sensitive-data check fires on secrets in a response. Pre-auth; discovery of /api/debug/info is unproven until the scan."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GI-02
+    template: /api/images/thumbnail
+    parameter: null
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml RCE-001: thumbnail geometry concatenated into sh -c \"convert ...\". Pre-auth. The answer key names no field, so the parameter is null."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GI-03
+    template: /goto
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: the /goto redirect trusts an absolute external next URL. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GI-04
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: search page reflects q into HTML without escaping. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: GI-05
+    template: /api/orgs/{org}/drafts
+    parameter: org (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml GROUP-ORDER-001: the workspace route group registers /drafts before group.Use(requireOrgMember), so the membership check never runs and anyone unauthenticated reads any workspace's drafts. Pre-auth. The BOLA check is the matching check (object route); whether its canary logic fires on an unauthenticated cross-tenant read is unproven until the scan."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: IDOR-001
+    template: /api/grants/{token}
+    parameter: token (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: multi-step — POST /api/posts/{id}/grant mints a grant for ANY post id, then GET /api/grants/{token} returns the body with no org check. reach=user."
+    date: "2026-11-28"
+  - id: MASSASSIGN-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: PATCH /api/users/me, profile update binds role/isAdmin from the request body. reach=user."
+    date: "2026-11-28"
+  - id: SQLI-001
+    template: /api/reports/timeline
+    parameter: null
+    category: SQL_Injection
+    how_verified: "VULNERABILITIES.yaml SQLI-001: second-order — display_name stored safely, then interpolated with fmt.Sprintf into a raw query on a later request. reach=user."
+    date: "2026-11-28"
+  - id: AUTHZ-001
+    template: /api/admin/users
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml AUTHZ-001: GET /api/admin/users, admin listing only requires authentication, not the admin role. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
+  - id: TENANT-SRC-001
+    template: /api/orgs/{org}/posts
+    parameter: org_id
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml TENANT-SRC-001: GET /api/orgs/{org}/posts?org_id=, authorization reads the workspace from the path while the listing binds org_id from the query string. reach=user."
+    date: "2026-11-28"
+  - id: SHARE-ESCALATE-001
+    template: /api/share/{token}/redeem
+    parameter: token (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml SHARE-ESCALATE-001: redeeming a read-only share link binds a permission from the request body, so a Globex user redeems with {\"permission\":\"edit\"} and rewrites the Acme post. reach=user, 2 actors, 3 steps."
+    date: "2026-11-28"
+  - id: EXPORT-STATE-001
+    template: /api/exports/{id}/download
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml EXPORT-STATE-001: the download checks ownership only inside the \"still running\" branch, so a finished export is served to anyone who names its id. reach=user."
+    date: "2026-11-28"
