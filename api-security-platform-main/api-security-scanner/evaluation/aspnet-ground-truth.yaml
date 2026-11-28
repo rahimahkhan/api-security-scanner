@@ -1,0 +1,110 @@
+# DynaST-Bench ground truth: aspnet (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. See
+# ~/workspace/dynast-codespace/mapping-aspnet-2026-11-28.md.
+items:
+  - id: AS-01
+    template: /api/import/xml
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: XmlDocument expands external entities. Check exists; requires XML content type + canary proof. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-02
+    template: /api/posts/search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: search concatenates q into SqlCommand. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-03
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-002: search q renders with Html.Raw. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-04
+    template: /api/export
+    parameter: format
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: export format passed to /bin/sh -c. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-05
+    template: /api/files/download
+    parameter: name
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: download lacks path containment. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-06
+    template: /api/debug/crash
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml ERROR-001: Developer exception page enabled in Production. The scanner's passive verbose-error check fires on a stack trace in any probe response on this endpoint. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: AS-07
+    template: /api/config/client
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CONFIG-001: plaintext appsettings secret is exposed. The passive sensitive-data check fires on secrets in a response. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but they are unreachable as
+# the scanner runs today because the scanner does not authenticate.
+# They are NOT scored (never TP, never missed) and pairs on them are
+# EXCLUDED from labeling (never positive, never negative). Rule: in scope
+# = matching check AND pre-auth reachability. OPENREDIR-001's route is
+# marked pre-auth in the key, but a login page's returnUrl redirect fires
+# only after a successful login — so it belongs here, not in scope.
+needs_auth:
+  - id: OVERPOST-001
+    template: /api/users/me
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml OVERPOST-001: POST /api/users/me, profile update binds Role/IsAdmin from the request body and persists them. reach=user."
+    date: "2026-11-28"
+  - id: SQLI-002
+    template: /api/reports/run
+    parameter: null
+    category: SQL_Injection
+    how_verified: "VULNERABILITIES.yaml SQLI-002: second-order — stored report filter later concatenated into SQL. reach=user."
+    date: "2026-11-28"
+  - id: XSS-001
+    template: /comments
+    parameter: null
+    category: XSS
+    how_verified: "VULNERABILITIES.yaml XSS-001: stored comments render with Html.Raw. reach=user, and stored (store-then-read flow)."
+    date: "2026-11-28"
+  - id: IDOR-001
+    template: /api/posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /api/posts/{id}, Acme user reads a Globex draft by id. reach=user."
+    date: "2026-11-28"
+  - id: BFLA-001
+    template: /api/admin/users
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml BFLA-001: GET /api/admin/users, admin listing lacks a role check. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
+  - id: OPENREDIR-001
+    template: /login
+    parameter: returnUrl
+    category: Open_Redirect
+    how_verified: "VULNERABILITIES.yaml OPENREDIR-001: GET /login?returnUrl=, login redirects to an arbitrary returnUrl — but only after a successful login, which the scanner cannot perform. The route is marked pre-auth in the key; the redirect itself is not. If a scan shows a GET probe redirects, this moves to in scope."
+    date: "2026-11-28"
