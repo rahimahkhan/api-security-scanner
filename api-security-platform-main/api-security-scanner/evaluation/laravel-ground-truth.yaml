@@ -1,0 +1,129 @@
+# DynaST-Bench ground truth: laravel (vulnerable app + safe twin).
+#
+# Written 2026-11-28 from VULNERABILITIES.yaml (fork rahimahkhan/dynast-bench),
+# BEFORE any scan. Scored items are the pre-auth in-scope bugs only:
+# in scope = matching check AND pre-auth reachability. Login-only bugs are
+# listed under needs_auth (never scored, never labeled). The other bugs are
+# coverage gaps — never negatives. The 2 signup items are discovery=flow
+# (multi-step wizard): whether the scanner's discovery finds them is
+# unproven until the scan runs. See
+# ~/workspace/dynast-codespace/mapping-laravel-2026-11-28.md.
+items:
+  - id: LA-01
+    template: /search
+    parameter: q
+    category: SQL_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SQLI-001: search term concatenated into a raw DB::select string. Pre-auth. Note: TrimStrings is active, so PoCs comment with #, not -- ."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-02
+    template: /search
+    parameter: q
+    category: XSS
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XSS-REFLECT-001: raw query echoed via Blade's unescaped {!! !!}. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-03
+    template: /tools/export
+    parameter: format
+    category: Command_Injection
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml CMD-001: format interpolated into shell_exec(). Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-04
+    template: /tools/download
+    parameter: file
+    category: Local_File_Inclusion
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml TRAVERSAL-001: file joined to a base dir with no containment check, read with file_get_contents(). Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-05
+    template: /go
+    parameter: next
+    category: Open_Redirect
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml REDIRECT-001: next passed to redirect()->away() verbatim. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-06
+    template: /diagnostics
+    parameter: null
+    category: Verbose_Error_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml DEBUG-001: APP_DEBUG=true in production; an uncaught error renders a full stack trace + framework paths. The scanner's passive verbose-error check fires on a stack trace in any probe response on this endpoint. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-07
+    template: /.env.backup
+    parameter: null
+    category: Sensitive_Data_Exposure
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SECRET-001: a leftover .env backup served from the web root leaks app secrets. The sensitive-data check fires on secrets in a response — whether discovery finds /.env.backup is unproven until the scan. Pre-auth."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-08
+    template: /api/tools/import-mapping
+    parameter: null
+    category: XXE
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml XXE-001: hidden import-mapping endpoint (Advanced panel JS only); parses XML with LIBXML_NOENT|LIBXML_DTDLOAD, so a SYSTEM entity reads local files. Check exists; requires XML content type + canary proof. Pre-auth, discovery=js-runtime."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-09
+    template: /api/signup/profile
+    parameter: null
+    category: Mass_Assignment
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: the profile step fills the draft from the request body, which carries role and org_slug. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+  - id: LA-10
+    template: /api/signup/draft/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    modes: [vulnerable]
+    how_verified: "VULNERABILITIES.yaml SIGNUP-IDOR-001: unauthenticated disclosure of a signup draft by id; Suspected per AUDIT-5, never Confirmed on disclosure alone. Pre-auth, discovery=flow."
+    date: "2026-11-28"
+    added_after_scan: false
+
+# needs_auth (2026-11-28): these bugs EXIST, but their routes need a
+# logged-in user (reach=user) and the scanner does not authenticate, so
+# they are unreachable as the scanner runs today. They are NOT scored
+# (never TP, never missed) and pairs on them are EXCLUDED from labeling
+# (never positive, never negative). Rule: in scope = matching check
+# AND pre-auth reachability.
+needs_auth:
+  - id: SQLI-002
+    template: /reports/titles
+    parameter: null
+    category: SQL_Injection
+    how_verified: "VULNERABILITIES.yaml SQLI-002: second-order — a stored post title is concatenated into a raw query. reach=user."
+    date: "2026-11-28"
+  - id: XSS-STORED-001
+    template: /posts/{id}/comments
+    parameter: id (path)
+    category: XSS
+    how_verified: "VULNERABILITIES.yaml XSS-STORED-001: stored comment body rendered unescaped on GET /posts/{id}. reach=user, and stored (store-then-read flow)."
+    date: "2026-11-28"
+  - id: IDOR-001
+    template: /posts/{id}
+    parameter: id (path)
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml IDOR-001: GET /posts/{id}, route-model binding with no org/owner/status check. reach=user."
+    date: "2026-11-28"
+  - id: AUTHZ-001
+    template: /admin/users
+    parameter: null
+    category: BOLA_IDOR
+    how_verified: "VULNERABILITIES.yaml AUTHZ-001: GET /admin/users, route is behind auth but not the admin middleware. reach=user — needs a logged-in non-admin session."
+    date: "2026-11-28"
+  - id: MASSASSIGN-001
+    template: /profile
+    parameter: null
+    category: Mass_Assignment
+    how_verified: "VULNERABILITIES.yaml MASSASSIGN-001: POST /profile, User model has $guarded = [], so profile update lets a user set is_admin/role. reach=user."
+    date: "2026-11-28"
