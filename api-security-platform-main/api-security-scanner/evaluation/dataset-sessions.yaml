@@ -1,0 +1,76 @@
+# Dataset sessions — the human-maintained record for dataset_card.py.
+# One entry per scan session. A session marked `excluded` or `superseded`
+# is listed with its reason and left out of the card's counts; its records
+# must be REMOVED from the dataset directory, not just ignored (the same
+# endpoint must not appear twice with different timing — that leaks
+# between folds). File paths are codespace paths: the card is generated
+# in the codespace, where the logs live.
+#
+# scanner_commit: the scanner code the scan ran on. `unknown` means it was
+# not recorded at scan time — verify from the codespace git reflog against
+# the file mtime before the card is used in the report.
+# harness_commit: the evaluation code the LABELING ran on (label_dataset.py
+# + ground-truth files at that commit). The 2026-11-28 re-label of sessions
+# 3, 4, 6, 7 ran on the pulled 8157cae harness.
+
+version: v1
+sessions:
+  - id: 3
+    app: fastapi
+    tier: development
+    mode: vulnerable
+    scanner_commit: unknown
+    harness_commit: 8157cae
+    run_date: "2026-11-27"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-3-labeled.jsonl
+  - id: 4
+    app: fastapi
+    tier: development
+    mode: safe
+    scanner_commit: unknown
+    harness_commit: 8157cae
+    run_date: "2026-11-27"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-4-labeled.jsonl
+  - id: 6
+    app: php
+    tier: validation
+    mode: vulnerable
+    scanner_commit: b46cfb0
+    harness_commit: 8157cae
+    run_date: "2026-11-27"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-6-labeled.jsonl
+  - id: 7
+    app: php
+    tier: validation
+    mode: safe
+    scanner_commit: b46cfb0
+    harness_commit: 8157cae
+    run_date: "2026-11-27"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-7-labeled.jsonl
+  - id: 8
+    app: nestjs
+    tier: development
+    mode: vulnerable
+    scanner_commit: 8157cae
+    harness_commit: 8157cae
+    run_date: "2026-11-28"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-8-labeled.jsonl
+    status: excluded
+    reason: "Mislabeled: the XSS pair on /search logged parameter '' and failed to join NE-02 (parameter q). Fixed by dataset_bound_param (commit 59a8a8d/5e4d0cc); the session is replaced by a re-scan, not repaired in place."
+  - id: 5
+    app: php
+    tier: validation
+    mode: vulnerable
+    scanner_commit: unknown
+    harness_commit: 8157cae
+    run_date: "2026-11-27"
+    labeled_date: "2026-11-28"
+    file: /home/codespace/dynast-dataset-logs/dataset-session-5-labeled.jsonl
+    status: superseded
+    superseded_by: 6
+    reason: "Same 44 pairs as session 6, scanned on pre-fix code (PH-06 missed by the XSS evidence-sweep bug). Session 6 is the same run on fixed code."

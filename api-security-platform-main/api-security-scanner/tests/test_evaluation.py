@@ -603,3 +603,26 @@ def test_labeler_matches_fa06_on_name_not_filename():
     assert [r["label"] for r in labeled] == [1, 0]
     assert labeled[0]["matched_item"] == "FA-06"
     assert stats["positive"] == 1 and stats["negative"] == 1
+
+
+def test_dataset_card_summarize_counts():
+    from dataset_card import summarize
+
+    records = [
+        {"label": 1, "probe_effective": True, "near_miss": False,
+         "category": "XSS", "probe_type": "Cross_Site_Scripting"},
+        {"label": 1, "probe_effective": False, "near_miss": False,
+         "category": "SQL_Injection", "probe_type": "SQL_Injection_GET"},
+        {"label": 0, "probe_effective": False, "near_miss": True,
+         "category": "SQL_Injection", "probe_type": "SQL_Injection_GET"},
+        {"label": 0, "probe_effective": False, "near_miss": False,
+         "category": "XSS", "probe_type": "Cross_Site_Scripting"},
+    ]
+    s = summarize(records)
+    assert s["pairs"] == 4
+    assert s["positive"] == 2
+    assert s["positive_effective"] == 1
+    assert s["negative"] == 2
+    assert s["near_miss_negatives"] == 1
+    assert s["by_category"]["XSS"] == {"positive": 1, "negative": 1}
+    assert s["by_category"]["SQL_Injection"] == {"positive": 1, "negative": 1}
