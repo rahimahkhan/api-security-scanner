@@ -31,6 +31,29 @@ examiner can judge whether a number means what it claims.
   item's `how_verified`) may be corrected, with the correction
   documented in the item. There is a regression test for FA-06
   (`tests/test_evaluation.py`).
+- **Near-misses (hard negatives, 2026-11-28).** The bench documents
+  safe code of the same shape as a scored bug. A near-miss qualifies
+  as an explicit negative, listed under `near_misses:` in the
+  ground-truth file, only when it is a **separately reachable
+  endpoint** with a **matching scanner category**, verified in the
+  app's source. Code-level look-alikes do **not** qualify: a dead
+  helper function in the same file as the bug and a safe-twin-only fix
+  are not separately observable endpoints, and the (template,
+  parameter, category) join cannot express them. A finding on a
+  near-miss **is** a false positive — the code is safe by the bench's
+  design — so it counts in the headline FP and is also listed in the
+  scorer's `near_miss_matches` bucket. The labeler labels pairs on
+  one 0 with `matched_item` set and `near_miss: true`, so the dataset
+  distinguishes a deliberate hard negative from a default negative.
+  FastAPI 2026-11-28: 2 of 9 near-misses qualify (NM-SQL-001 →
+  FA-NM-01 `/api/posts/list`; NM-TRAVERSAL-001 → FA-NM-02
+  `/api/attachments/avatar-download`). NM-CACHE-001 is explicitly
+  excluded: its endpoint `/api/cache/widget-scoped` carries a verified
+  real XSS (FA-INC-03) — a near-miss for cache poisoning is not a
+  negative for XSS. PHP 2026-11-28: 0 qualify — NM-LFI-001 and
+  NM-SQL-001 are dead helpers in the same files as PH-01/PH-02, and
+  NM-XSS-001 is the safe twin's fixed search.php, already covered by
+  PH-06's `modes: [vulnerable]`.
 - The DynaST-Bench mappings (which vulnerability types map to which
   scanner categories) are written before scanning, saved with a date,
   under `~/workspace/dynast-codespace/mapping-*.md`. DynaST-Bench is
