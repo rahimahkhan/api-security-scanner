@@ -78,18 +78,20 @@ items:
     added_after_scan: false
   - id: FA-02
     template: /api/reports/export
-    parameter: null
+    parameter: name
+    input: json_body:name
     category: Command_Injection
     modes: [vulnerable]
-    how_verified: "VULNERABILITIES.yaml CMD-001: field-bound command injection on POST /api/reports/export. Pre-auth."
+    how_verified: "VULNERABILITIES.yaml CMD-001: field-bound command injection on POST /api/reports/export. Pre-auth. GT audit 2026-11-28: the single session-3 pair logged parameter '' (dispatched as GET with no binding; the sink needs JSON field `name`), so the join is restricted to parameter `name` — its session-3 positive drops to 0 on re-label."
     date: "2026-11-27"
     added_after_scan: false
   - id: FA-03
     template: /api/import/xml
     parameter: null
+    input: body (raw XML)
     category: XXE
     modes: [vulnerable]
-    how_verified: "VULNERABILITIES.yaml XXE-001: POST /api/import/xml; scanner check requires XML content type + canary proof. Pre-auth."
+    how_verified: "VULNERABILITIES.yaml XXE-001: POST /api/import/xml; scanner check requires XML content type + canary proof. Pre-auth. GT audit 2026-11-28: the single session-3 pair logged parameter '' — the raw XML body, the only input channel — so parameter stays null."
     date: "2026-11-27"
     added_after_scan: false
   - id: FA-05
@@ -111,9 +113,10 @@ items:
   - id: FA-07
     template: /api/error
     parameter: null
+    input: none (passive)
     category: Verbose_Error_Exposure
     modes: [vulnerable]
-    how_verified: "VULNERABILITIES.yaml DEBUG-001: GET /api/error returns a stack trace + hardcoded secret; passive check. Pre-auth."
+    how_verified: "VULNERABILITIES.yaml DEBUG-001: GET /api/error returns a stack trace + hardcoded secret; passive check. Pre-auth. GT audit 2026-11-28: the single session-3 pair logged parameter '' — the endpoint takes no input (passive) — so parameter stays null."
     date: "2026-11-27"
     added_after_scan: false
     also_detected_by: [Sensitive_Data_Exposure]
@@ -128,9 +131,10 @@ items:
   - id: FA-09
     template: /api/signup/profile
     parameter: null
+    input: json_body (role, org_slug)
     category: Mass_Assignment
     modes: [vulnerable]
-    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: POST /api/signup/profile; scanner check exists, generically Suspected only. Pre-auth, discovery=flow (signup wizard) — whether discovery finds it is unproven until the scan."
+    how_verified: "VULNERABILITIES.yaml SIGNUP-MASSASSIGN-001: POST /api/signup/profile; scanner check exists, generically Suspected only. Pre-auth, discovery=flow (signup wizard) — whether discovery finds it is unproven until the scan. GT audit 2026-11-28: the single session-3 pair logged parameter '' — the whole JSON body is the tested channel (role, org_slug) — so parameter stays null."
     date: "2026-11-27"
     added_after_scan: false
   - id: FA-10
